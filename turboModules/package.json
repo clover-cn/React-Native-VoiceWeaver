@@ -1,0 +1,28 @@
+{
+  "name": "bridge-func",
+  "description": "rn bridge functions",
+  "react-native": "src/index",
+  "types": "src/index",
+  "version": "0.0.6",
+  "author": "test",
+  "license": "MIT",
+  "engines": {
+    "node": ">=0.10.0"
+  },
+  "scripts": {
+    "test": "mocha"
+  },
+  "harmony": {
+    "alias": "bridge-func",
+    "codegenConfig": {
+      "specPaths": [
+        "./src"
+      ]
+    }
+  },
+  "codegenConfig": {
+    "name": "BridgeTurboModuleSpecs",
+    "type": "all",
+    "jsSrcsDir": "src"
+  }
+}

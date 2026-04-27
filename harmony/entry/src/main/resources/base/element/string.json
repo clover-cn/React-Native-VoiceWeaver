@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "织音"
+    },
+    {
+      "name": "reason2",
+      "value": "用于碰一碰跨设备分享"
+    },
+    {
+      "name": "reason_keep_background_running",
+      "value": "用于听书音频后台连续播放与控制中心播控"
+    }
+  ]
+}

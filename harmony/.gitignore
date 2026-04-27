@@ -1,0 +1,17 @@
+# Dependency file
+rnoh*.har
+# *.tgz
+
+# Real-time file generation
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/oh-package-lock.json5

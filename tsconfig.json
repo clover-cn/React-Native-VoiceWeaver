@@ -1,0 +1,20 @@
+{
+  "extends": [
+    "@tsconfig/react-native/tsconfig.json",
+  ],
+  "exclude": [
+    "./harmony/cpp",
+    "node_modules"
+  ],
+  "compilerOptions": {
+    "types": [
+      "node",
+      "jest"
+    ],
+    "jsx": "react-native",  // React Native项目推荐此配置
+    "jsxFactory": "React.createElement",  // 可选，指定JSX工厂函数
+    "jsxFragmentFactory": "React.Fragment",  // 可选，指定JSX片段工厂
+    "esModuleInterop": true,        // 关键配置：允许默认导入非ES模块
+    "allowSyntheticDefaultImports": true  // 允许合成默认导入（不影响编译输出，仅类型检查）
+  }
+}

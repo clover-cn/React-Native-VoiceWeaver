@@ -1,0 +1,12 @@
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "id": "10000",
+    "avatar": "",
+    "token": "mock_token",
+    "phone": "12345678900",
+    "maskedPhoneNumber": "123******00",
+    "nickname": "华为用户"
+  }
+}

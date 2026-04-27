@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1px" height="40px" viewBox="0 0 1 40" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>路径 7</title>
+    <g id="页面-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="订单详情-待评价详情-物流详情" transform="translate(-21.000000, -426.000000)" stroke="#000000" stroke-width="0.5" stroke-dasharray="3,2" stroke-opacity="0.2">
+            <!-- 8段虚线：每段实线3px+间隔2px，8段总长度=8*(3+2) = 40px（刚好适配height=40px） -->
+            <line x1="21.5" y1="426.5" x2="21.5" y2="466.5" id="路径-7"></line>
+        </g>
+    </g>
+</svg>

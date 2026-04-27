@@ -1,0 +1,66 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\zytx\\.ohos\\config\\default_harmony_jQrn3vkL5GwQaRTX5Vb9_EgZNwwN2y6VgCISehUGPS8=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A98F0F3AB786718661FFD0554128511211F9138E9CFCFBCC417959122A1BE8972DF0989D82B7B",
+          "profile": "C:\\Users\\zytx\\.ohos\\config\\default_harmony_jQrn3vkL5GwQaRTX5Vb9_EgZNwwN2y6VgCISehUGPS8=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\zytx\\.ohos\\config\\default_harmony_jQrn3vkL5GwQaRTX5Vb9_EgZNwwN2y6VgCISehUGPS8=.p12",
+          "storePassword": "0000001AA3B6584A34A5ADC2EB569E079EF51198EA7A205640328053AFA0F23502A1EEDEBB799E4CB590"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "targetSdkVersion": "6.0.2(22)"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+        "buildOption": {   //配置项目在构建过程中使用的相关配置
+          //cpp相关编译配置
+          "externalNativeOptions": {
+            "path": "./entry/src/main/cpp/CMakeLists.txt",  //CMake配置文件，提供CMake构建脚本
+            "arguments": [],  //传递给CMake的可选编译参数
+            "abiFilters": [  //HarmonyOS当前支持的ABI编译环境
+              "arm64-v8a",
+              "x86_64"
+            ],
+            "cppFlags": ""  //设置C++编译器的可选参数
+          }
+        }
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aggregated_login",
+      "srcPath": "./aggregated_login"
+    }
+  ]
+}

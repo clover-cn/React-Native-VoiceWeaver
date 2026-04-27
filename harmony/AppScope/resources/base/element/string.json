@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "织音"
+    },
+    {
+      "name": "agcit_huawei_rn_shopping_fp",
+      "value": "1.0.0"
+    },
+    {
+      "name": "agcittype_huawei_rn_shopping_fp",
+      "value": "industryTemplate"
+    }
+  ]
+}
