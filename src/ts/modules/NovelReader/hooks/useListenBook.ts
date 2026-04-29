@@ -54,6 +54,7 @@ export interface UseListenBookReturn {
     index: number,
     chapter: Chapter,
     list: Chapter[],
+    chapterText?: string,
   ) => void;
   resetListen: (skipCancel?: boolean) => void;
   checkListenCache: (project: string, index: number) => void;
@@ -239,6 +240,7 @@ export const useListenBook = (): UseListenBookReturn => {
       chapterIndex: number,
       chapter: Chapter,
       chapterList: Chapter[],
+      chapterText?: string,
     ) => {
       curProjectRef.current = projectName;
 
@@ -271,7 +273,9 @@ export const useListenBook = (): UseListenBookReturn => {
               projectName,
               chapterIndex,
               chapterUrl: chapter.bookUrl,
+              chapterTitle: chapter.title,
               chapterList,
+              chapterText: chapterText || '',
             }),
           },
         );

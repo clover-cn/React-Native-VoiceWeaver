@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,16 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Platform,
   SafeAreaView,
 } from 'react-native';
-import { Book } from '../types/reader';
+import {Book} from '../types/reader';
+import LocalBookSourceService from '../bookSource/LocalBookSourceService';
 
 interface SourceSwitchModalProps {
   visible: boolean;
   currentBook: Book | null;
   onClose: () => void;
   onSourceSelect: (source: any) => void;
-  apiBase: string;
 }
 
 export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
@@ -25,41 +24,34 @@ export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
   currentBook,
   onClose,
   onSourceSelect,
-  apiBase,
 }) => {
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const fetchSources = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = currentBook
+        ? await LocalBookSourceService.searchBookSources(currentBook)
+        : [];
+      setSources(list);
+    } catch (e) {
+      console.warn('获取书源失败', e);
+      setError('获取书源异常：本地解析失败或网络超时');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentBook]);
+
   useEffect(() => {
     if (visible && currentBook) {
       fetchSources();
     }
-  }, [visible, currentBook]);
+  }, [fetchSources, visible, currentBook]);
 
-  const fetchSources = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const targetUrl = `${apiBase}/api/reader/searchBookSource?url=${encodeURIComponent(
-        currentBook?.bookUrl || ''
-      )}&lastIndex=0`;
-      const response = await fetch(targetUrl);
-      const data = await response.json();
-      if (data.isSuccess && data.data && data.data.list) {
-        setSources(data.data.list);
-      } else {
-        setError('获取书源失败，请稍后重试');
-      }
-    } catch (e) {
-      console.warn('获取书源失败', e);
-      setError('获取书源异常：网络错误或超时');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderItem = ({ item }: { item: any }) => {
+  const renderItem = ({item}: {item: any}) => {
     const isCurrent = item.bookUrl === currentBook?.bookUrl;
 
     return (
@@ -112,7 +104,9 @@ export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
             ) : error ? (
               <View style={styles.centerContainer}>
                 <Text style={styles.errorText}>{error}</Text>
-                <TouchableOpacity style={styles.retryBtn} onPress={fetchSources}>
+                <TouchableOpacity
+                  style={styles.retryBtn}
+                  onPress={fetchSources}>
                   <Text style={styles.retryText}>重新获取</Text>
                 </TouchableOpacity>
               </View>
@@ -150,7 +144,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     height: '75%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
+    shadowOffset: {width: 0, height: -2},
     shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 8,
@@ -193,7 +187,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 2,

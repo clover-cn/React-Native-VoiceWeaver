@@ -36,6 +36,7 @@ import {
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
+import LocalBookSourceService from './bookSource/LocalBookSourceService';
 
 export type ViewState = 'home' | 'search' | 'reader';
 
@@ -351,6 +352,7 @@ const NovelReaderApp: React.FC = () => {
   const [chapterList, setChapterList] = useState<Chapter[]>([]);
   const [currentChapterIndex, setCurrentChapterIndex] = useState<number>(-1);
   const [contentParagraphs, setContentParagraphs] = useState<string[]>([]);
+  const [currentChapterText, setCurrentChapterText] = useState<string>('');
   const [isListenMode, setIsListenMode] = useState<boolean>(false);
   const [continueReadingRecord, setContinueReadingRecord] =
     useState<ReadingRecord | null>(null);
@@ -490,12 +492,7 @@ const NovelReaderApp: React.FC = () => {
       const index = payload?.index ?? currentChapterIndex;
       const currentChapter = list[index];
       const requestUrl =
-        payload?.requestUrl ??
-        (currentChapter
-          ? `${API_BASE}/api/reader/getBookContent?url=${encodeURIComponent(
-              currentChapter.bookUrl,
-            )}&index=${index}`
-          : '');
+        payload?.requestUrl ?? (currentChapter ? currentChapter.bookUrl : '');
 
       if (!book || !currentChapter || !requestUrl) {
         return;
@@ -536,32 +533,25 @@ const NovelReaderApp: React.FC = () => {
     setViewState('reader');
 
     try {
-      const targetUrl = `${API_BASE}/api/reader/getChapterList?url=${encodeURIComponent(
-        book.bookUrl,
-      )}&bookSourceUrl=${encodeURIComponent(book.origin || '')}`;
-      const data = await requestJson<{isSuccess?: boolean; data?: Chapter[]}>(
-        targetUrl,
-      );
-
-      if (data.isSuccess && data.data) {
-        setChapterList(data.data);
-        if (data.data.length > 0) {
-          const resumeIndex =
-            continueReadingRecord?.book.bookUrl === book.bookUrl
-              ? continueReadingRecord.currentChapterIndex
-              : 0;
-          const safeIndex = Math.min(
-            Math.max(resumeIndex, 0),
-            data.data.length - 1,
-          );
-          loadChapterContent(data.data, safeIndex, book);
-        }
+      const data = await LocalBookSourceService.getChapterList(book);
+      setSelectedBook(data.book);
+      setChapterList(data.chapters);
+      if (data.chapters.length > 0) {
+        const resumeIndex =
+          continueReadingRecord?.book.bookUrl === book.bookUrl
+            ? continueReadingRecord.currentChapterIndex
+            : 0;
+        const safeIndex = Math.min(
+          Math.max(resumeIndex, 0),
+          data.chapters.length - 1,
+        );
+        loadChapterContent(data.chapters, safeIndex, data.book);
       } else {
-        Alert.alert('获取目录失败');
+        Alert.alert('获取目录失败', '本地书源未解析到章节目录。');
       }
     } catch (e) {
       console.warn('Get chapter failed.', e);
-      Alert.alert('获取目录失败', '请检查服务端是否正常运行。');
+      Alert.alert('获取目录失败', '请检查本地书源规则或目标站点网络。');
     }
   };
 
@@ -579,36 +569,34 @@ const NovelReaderApp: React.FC = () => {
       setIsListenMode(false);
       setCurrentChapterIndex(index);
       setContentParagraphs([]);
+      setCurrentChapterText('');
 
       const chap = list[index];
       const curProjectName = `reader_${book?.name || 'unknown'}`;
 
       try {
-        const targetUrl = `${API_BASE}/api/reader/getBookContent?url=${encodeURIComponent(
-          chap.bookUrl,
-        )}&index=${index}`;
-        const data = await requestJson<{isSuccess?: boolean; data?: string}>(
-          targetUrl,
-        );
-        if (data.isSuccess && data.data) {
-          const paras = data.data
-            .split('\n')
-            .map((p: string) => p.trim())
-            .filter((p: string) => p.length > 0);
-          setContentParagraphs(paras);
-          await persistReadingProgress({
-            book,
-            list,
-            index,
-            requestUrl: targetUrl,
-            requestBody: null,
-          });
+        if (!book) {
+          return null;
         }
+        const data = await LocalBookSourceService.getBookContent(book, chap);
+        setContentParagraphs(data.paragraphs);
+        setCurrentChapterText(data.text);
+        await persistReadingProgress({
+          book,
+          list,
+          index,
+          requestUrl: data.requestUrl,
+          requestBody: null,
+        });
+        checkListenCache(curProjectName, index);
+        return data;
       } catch (e) {
         console.warn('Get content failed.', e);
+        Alert.alert('获取正文失败', '本地书源未能解析该章节正文。');
       }
 
       checkListenCache(curProjectName, index);
+      return null;
     },
     [checkListenCache, persistReadingProgress, resetListen, selectedBook],
   );
@@ -622,7 +610,7 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
-      await loadChapterContent(list, index, book);
+      const content = await loadChapterContent(list, index, book);
       const chapter = list[index];
       const currentProjectName = `reader_${book.name || 'unknown'}`;
 
@@ -631,7 +619,7 @@ const NovelReaderApp: React.FC = () => {
       }
 
       setIsListenMode(true);
-      startListening(currentProjectName, index, chapter, list);
+      startListening(currentProjectName, index, chapter, list, content?.text);
     },
     [loadChapterContent, startListening],
   );
@@ -647,28 +635,21 @@ const NovelReaderApp: React.FC = () => {
     setSelectedBook(newBook);
 
     try {
-      const targetUrl = `${API_BASE}/api/reader/getChapterList?url=${encodeURIComponent(
-        newBook.bookUrl,
-      )}&bookSourceUrl=${encodeURIComponent(newBook.origin || '')}`;
-      const data = await requestJson<{isSuccess?: boolean; data?: Chapter[]}>(
-        targetUrl,
-      );
-
-      if (data.isSuccess && data.data) {
-        setChapterList(data.data);
-        if (data.data.length > 0) {
-          const safeIndex = Math.min(
-            Math.max(currentChapterIndex, 0),
-            data.data.length - 1,
-          );
-          await loadChapterContent(data.data, safeIndex, newBook);
-        }
+      const data = await LocalBookSourceService.getChapterList(newBook);
+      setSelectedBook(data.book);
+      setChapterList(data.chapters);
+      if (data.chapters.length > 0) {
+        const safeIndex = Math.min(
+          Math.max(currentChapterIndex, 0),
+          data.chapters.length - 1,
+        );
+        await loadChapterContent(data.chapters, safeIndex, data.book);
       } else {
         Alert.alert('切换书源失败', '无法拉取新书源的章节目录');
       }
     } catch (e) {
       console.warn('Switch source failed.', e);
-      Alert.alert('切换书源失败', '请检查网络或服务端是否正常运行。');
+      Alert.alert('切换书源失败', '请检查本地书源规则或目标站点网络。');
     } finally {
       setLoadingMenuItemId(null);
     }
@@ -882,7 +863,13 @@ const NovelReaderApp: React.FC = () => {
     const curProjectName = `reader_${selectedBook.name || 'unknown'}`;
     const chapter = chapterList[currentChapterIndex];
     if (chapter) {
-      startListening(curProjectName, currentChapterIndex, chapter, chapterList);
+      startListening(
+        curProjectName,
+        currentChapterIndex,
+        chapter,
+        chapterList,
+        currentChapterText,
+      );
     }
   };
 
@@ -1369,7 +1356,6 @@ const NovelReaderApp: React.FC = () => {
       <SourceSwitchModal
         visible={sourceModalVisible}
         currentBook={selectedBook}
-        apiBase={API_BASE}
         onClose={() => setSourceModalVisible(false)}
         onSourceSelect={handleSourceSelect}
       />

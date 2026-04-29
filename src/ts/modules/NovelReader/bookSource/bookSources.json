@@ -1,0 +1,77 @@
+[
+  {
+    "bookSourceUrl": "https://apibi.cc",
+    "bookSourceName": "笔趣阁阁楼API",
+    "bookSourceGroup": "JSON",
+    "bookSourceType": 0,
+    "bookUrlPattern": "",
+    "customOrder": 0,
+    "enabled": true,
+    "enabledExplore": false,
+    "enabledCookieJar": false,
+    "loginUrl": "",
+    "bookSourceComment": "基于 m.bqgl.cc 实际调用的 apibi.cc 接口制作",
+    "lastUpdateTime": 0,
+    "respondTime": 180000,
+    "weight": 0,
+    "exploreUrl": "",
+    "ruleExplore": {},
+    "searchUrl": "/api/search?q={{key}}",
+    "ruleSearch": {
+        "bookList": "$.data[*]",
+        "name": "$.title",
+        "author": "$.author",
+        "intro": "$.intro##^简介：##",
+        "bookUrl": "/api/book?id={$.id}"
+    },
+    "ruleBookInfo": {
+        "name": "$.title",
+        "author": "$.author",
+        "intro": "$.intro##^简介：##",
+        "kind": "$.sortname",
+        "lastChapter": "$.lastchapter",
+        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
+        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
+    },
+    "ruleToc": {
+        "chapterList": "$.list[*]",
+        "chapterName": "<js>result=String(result)</js>",
+        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
+        "nextTocUrl": ""
+    },
+    "ruleContent": {
+        "content": "$.txt",
+        "nextContentUrl": ""
+    },
+    "tag": "笔趣阁阁楼API",
+    "searchRule": {
+        "bookList": "$.data[*]",
+        "name": "$.title",
+        "author": "$.author",
+        "intro": "$.intro##^简介：##",
+        "bookUrl": "/api/book?id={$.id}"
+    },
+    "exploreRule": {},
+    "bookInfoRule": {
+        "name": "$.title",
+        "author": "$.author",
+        "intro": "$.intro##^简介：##",
+        "kind": "$.sortname",
+        "lastChapter": "$.lastchapter",
+        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
+        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
+    },
+    "tocRule": {
+        "chapterList": "$.list[*]",
+        "chapterName": "<js>result=String(result)</js>",
+        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
+        "nextTocUrl": ""
+    },
+    "contentRule": {
+        "content": "$.txt",
+        "nextContentUrl": ""
+    },
+    "loginJs": "",
+    "key": "https://apibi.cc"
+}
+]

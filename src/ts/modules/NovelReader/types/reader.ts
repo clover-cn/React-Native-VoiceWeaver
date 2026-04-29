@@ -7,6 +7,7 @@ export interface Book {
   originName?: string;
   latestChapterTitle?: string;
   bookUrl: string;
+  tocUrl?: string;
 }
 
 export interface Chapter {
@@ -14,6 +15,8 @@ export interface Chapter {
   bookUrl: string; // 本章的具体源URL或者索引标识
   isVolume?: boolean; // 是否是卷名
   index: number;
+  sourceId?: string;
+  baseUrl?: string;
 }
 
 export interface AudioReferenceConfig {

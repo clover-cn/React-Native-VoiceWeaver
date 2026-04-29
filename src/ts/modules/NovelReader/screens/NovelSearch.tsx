@@ -12,12 +12,13 @@ import {
   Image,
 } from 'react-native';
 import {Book} from '../types/reader';
-import {API_BASE, fetchWithTimeout} from '../hooks/useListenBook';
 import {
   addSearchHistory,
   clearSearchHistory,
   loadSearchHistory,
 } from '../utils/readerStorage';
+import LocalBookSourceService from '../bookSource/LocalBookSourceService';
+import {BookSourceDiagnostic} from '../bookSource/types';
 
 interface NovelSearchProps {
   onBack: () => void;
@@ -30,6 +31,10 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
   const [hasSearched, setHasSearched] = useState(false);
   const [results, setResults] = useState<Book[]>([]);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchDiagnostics, setSearchDiagnostics] = useState<
+    BookSourceDiagnostic[]
+  >([]);
 
   useEffect(() => {
     loadSearchHistory().then(setSearchHistory);
@@ -44,20 +49,30 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
     setIsSearching(true);
     setHasSearched(false);
     setResults([]);
+    setSearchError(null);
+    setSearchDiagnostics([]);
 
     try {
-      // 与原 Vue 代码一致，使用普通 GET 请求（非 SSE 流式）
-      // 多源搜索可能耗时较长，给 30 秒超时
-      const targetUrl = `${API_BASE}/api/reader/searchBookMultiSSE?key=${encodeURIComponent(
-        term,
-      )}&concurrentCount=4`;
-      const res = await fetchWithTimeout(targetUrl, undefined, 30000);
-      const json = await res.json();
-      setResults(json.data || []);
+      const {books, diagnostics} =
+        await LocalBookSourceService.searchBooksWithDiagnostics(term);
+      setResults(books);
+      setSearchDiagnostics(diagnostics);
+      if (books.length === 0) {
+        const failedCount = diagnostics.filter(item => !item.ok).length;
+        const summary = diagnostics
+          .map(item => `${item.sourceName}: ${item.message}`)
+          .join('\n');
+        setSearchError(
+          failedCount === diagnostics.length
+            ? `所有书源搜索失败。\n${summary}`
+            : `没有解析到有效搜索结果。\n${summary}`,
+        );
+      }
       const nextHistory = await addSearchHistory(term);
       setSearchHistory(nextHistory);
     } catch (e) {
       console.error('搜索失败:', e);
+      setSearchError(e instanceof Error ? e.message : String(e));
       setResults([]);
     } finally {
       setIsSearching(false);
@@ -173,6 +188,21 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
       {hasSearched && results.length === 0 && !isSearching && (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>未找到相关作品，换个关键词试试？</Text>
+          {searchError ? (
+            <Text style={styles.debugText}>{searchError}</Text>
+          ) : null}
+          {searchDiagnostics.length > 0 ? (
+            <View style={styles.debugPanel}>
+              {searchDiagnostics.map(item => (
+                <Text key={item.sourceUrl} style={styles.debugLine} selectable>
+                  {item.ok ? 'OK' : 'FAIL'} {item.sourceName} | 阶段:
+                  {item.stage} | 列表:
+                  {item.listCount ?? '-'} | 结果:
+                  {item.resultCount ?? '-'}
+                </Text>
+              ))}
+            </View>
+          ) : null}
         </View>
       )}
 
@@ -281,6 +311,25 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#8E8E93',
     fontSize: 16,
+  },
+  debugText: {
+    color: '#FF3B30',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 12,
+    paddingHorizontal: 20,
+    textAlign: 'left',
+  },
+  debugPanel: {
+    marginTop: 12,
+    paddingHorizontal: 20,
+    width: '100%',
+  },
+  debugLine: {
+    color: '#636366',
+    fontSize: 11,
+    lineHeight: 17,
+    marginBottom: 4,
   },
   card: {
     flexDirection: 'row',
