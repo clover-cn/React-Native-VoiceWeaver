@@ -397,6 +397,21 @@ describe('本地书源规则解析', () => {
     expect(request.headers['X-Test']).toBe('1');
   });
 
+  it('请求 URL 中的中文关键词会在最终请求前编码', () => {
+    const request = resolveRequest(
+      {
+        bookSourceName: '小说网',
+        bookSourceUrl: 'https://crxs.me',
+      },
+      'https://crxs.me/fictions/keyword-{{key}}/sort-read/{{page}}.html',
+      {key: '我的', page: 1},
+    );
+
+    expect(request.url).toBe(
+      'https://crxs.me/fictions/keyword-%E6%88%91%E7%9A%84/sort-read/1.html',
+    );
+  });
+
   it('支持搜索 URL 中的可选模板片段', () => {
     const request = resolveRequest(
       {

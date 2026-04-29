@@ -28,6 +28,14 @@ const splitUrlOption = (rawUrl: string) => {
   return {url, option};
 };
 
+const encodeRequestUrl = (url: string): string => {
+  try {
+    return encodeURI(url);
+  } catch (_error) {
+    return url;
+  }
+};
+
 export const buildHeaders = (
   source: LegadoBookSource,
   baseUrl: string,
@@ -65,7 +73,7 @@ export const resolveRequest = (
   const resolvedUrl = resolveUrl(url, baseUrl);
 
   return {
-    url: stripUrlHash(resolvedUrl),
+    url: encodeRequestUrl(stripUrlHash(resolvedUrl)),
     method,
     headers: {
       ...buildHeaders(source, baseUrl),
