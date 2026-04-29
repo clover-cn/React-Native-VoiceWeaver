@@ -78,10 +78,11 @@ const readRuleField = (
   baseUrl: string,
   item?: RuleItem,
   key?: string,
+  vars?: Record<string, unknown>,
 ) => {
   return evaluateString(
     rule,
-    createRuleContext(raw, baseUrl, item),
+    createRuleContext(raw, baseUrl, item, vars),
     key ? URL_RULE_KEYS.has(key) : false,
   );
 };
@@ -225,6 +226,7 @@ const searchWithSource = async (
 const getBookInfo = async (
   source: LegadoBookSource,
   book: Book,
+  vars: Record<string, unknown>,
 ): Promise<Book> => {
   const request = resolveRequest(source, book.bookUrl, {}, book.bookUrl);
   const raw = await requestText(request, source.respondTime || 20000);
@@ -233,11 +235,17 @@ const getBookInfo = async (
   const nextBook: Book = {
     ...book,
     name:
-      readRuleField(rules.name, raw, request.url, undefined, 'name') ||
+      readRuleField(rules.name, raw, request.url, undefined, 'name', vars) ||
       book.name,
     author:
-      readRuleField(rules.author, raw, request.url, undefined, 'author') ||
-      book.author,
+      readRuleField(
+        rules.author,
+        raw,
+        request.url,
+        undefined,
+        'author',
+        vars,
+      ) || book.author,
     coverUrl:
       readRuleField(
         rules.coverUrl,
@@ -245,9 +253,10 @@ const getBookInfo = async (
         getBookInfoFieldBaseUrl(source, request.url, 'coverUrl'),
         undefined,
         'coverUrl',
+        vars,
       ) || book.coverUrl,
     intro:
-      readRuleField(rules.intro, raw, request.url, undefined, 'intro') ||
+      readRuleField(rules.intro, raw, request.url, undefined, 'intro', vars) ||
       book.intro,
     latestChapterTitle:
       readRuleField(
@@ -256,6 +265,7 @@ const getBookInfo = async (
         request.url,
         undefined,
         'lastChapter',
+        vars,
       ) || book.latestChapterTitle,
     tocUrl:
       readRuleField(
@@ -264,6 +274,7 @@ const getBookInfo = async (
         getBookInfoFieldBaseUrl(source, request.url, 'tocUrl'),
         undefined,
         'tocUrl',
+        vars,
       ) ||
       book.tocUrl ||
       book.bookUrl,
@@ -285,6 +296,7 @@ const loadTocPage = async (
   book: Book,
   tocUrl: string,
   startIndex: number,
+  vars: Record<string, unknown>,
 ): Promise<{chapters: Chapter[]; nextUrl: string}> => {
   const request = resolveRequest(source, tocUrl, {}, tocUrl);
   const raw = await requestText(request, source.respondTime || 20000);
@@ -301,12 +313,18 @@ const loadTocPage = async (
 
   const chapters = list
     .map((item, offset) => {
+      const ruleVars = {
+        ...vars,
+        chapter: {index: startIndex + offset},
+        index: startIndex + offset,
+      };
       const title = readRuleField(
         rules.chapterName,
         raw,
         request.url,
         item,
         'chapterName',
+        ruleVars,
       );
       const chapterUrl = readRuleField(
         rules.chapterUrl,
@@ -314,6 +332,7 @@ const loadTocPage = async (
         request.url,
         item,
         'chapterUrl',
+        ruleVars,
       );
 
       if (!title || !chapterUrl || seen.has(chapterUrl)) {
@@ -343,6 +362,7 @@ const loadTocPage = async (
     request.url,
     undefined,
     'nextTocUrl',
+    vars,
   );
 
   return {chapters, nextUrl};
@@ -432,7 +452,8 @@ export const LocalBookSourceService = {
       bookName: book.name,
       bookUrl: book.bookUrl,
     });
-    const detailedBook = await getBookInfo(source, book);
+    const vars: Record<string, unknown> = {};
+    const detailedBook = await getBookInfo(source, book, vars);
     const firstTocUrl = detailedBook.tocUrl || detailedBook.bookUrl;
     const visited = new Set<string>();
     const chapters: Chapter[] = [];
@@ -449,6 +470,7 @@ export const LocalBookSourceService = {
         detailedBook,
         nextUrl,
         chapters.length,
+        vars,
       );
       chapters.push(...result.chapters);
       nextUrl = result.nextUrl;

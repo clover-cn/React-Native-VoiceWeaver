@@ -1,4 +1,3 @@
-import {BUILTIN_BOOK_SOURCES} from '../builtinBookSources';
 import {
   createRuleContext,
   evaluateList,
@@ -14,7 +13,28 @@ import {
   stripUrlHash,
 } from '../ruleUtils';
 
-const source = BUILTIN_BOOK_SOURCES[0];
+const source = {
+  bookSourceUrl: 'https://www.sudugu.org/',
+  ruleSearch: {
+    bookList: '.item',
+    name: '.itemtxt h3 a@text',
+    author: '.itemtxt p a@text##^作者：##',
+    bookUrl: 'a@href',
+  },
+  ruleBookInfo: {
+    tocUrl: 'h1 a@href',
+  },
+  ruleToc: {
+    chapterList: '#list ul li',
+    chapterName: 'a@text',
+    chapterUrl: 'a@href',
+    nextTocUrl: '#pages a.gr@href',
+  },
+  ruleContent: {
+    content: '.con@html',
+    replaceRegex: 'all##首页速读谷菜单##',
+  },
+};
 
 describe('本地书源规则解析', () => {
   it('解析速读谷搜索列表字段', () => {
@@ -60,6 +80,12 @@ describe('本地书源规则解析', () => {
     expect(
       resolveUrl('/167/', 'https://www.sudugu.org/i/sor.aspx?key=我的'),
     ).toBe('https://www.sudugu.org/167/');
+    expect(
+      resolveUrl(
+        '/api/chapter?id=5569&chapterid=1',
+        'https://apibi.cc/api/booklist?id=5569',
+      ),
+    ).toBe('https://apibi.cc/api/chapter?id=5569&chapterid=1');
   });
 
   it('详情页目录锚点按书源根地址补全，发请求前移除 hash', () => {
@@ -157,5 +183,63 @@ describe('本地书源规则解析', () => {
     );
 
     expect(splitParagraphs(text)).toEqual(['第一段内容。', '第二段内容。']);
+  });
+
+  it('解析 JSON API 搜索项里的单花括号 JSONPath 占位', () => {
+    const item = {
+      id: '5569',
+      title: '在你心尖上起舞',
+      author: '白芷陈流',
+      intro: '简介：傍晚，舞蹈室里。',
+    };
+    const raw = JSON.stringify({data: [item]});
+    const context = createRuleContext(
+      raw,
+      'https://apibi.cc/api/search?q=我的',
+    );
+    const list = evaluateList('$.data[*]', context);
+    const itemContext = createRuleContext(raw, 'https://apibi.cc', list[0]);
+
+    expect(list).toHaveLength(1);
+    expect(evaluateString('$.title', itemContext)).toBe('在你心尖上起舞');
+    expect(evaluateString('$.intro##^简介：##', itemContext)).toBe(
+      '傍晚，舞蹈室里。',
+    );
+    expect(evaluateString('/api/book?id={$.id}', itemContext, true)).toBe(
+      'https://apibi.cc/api/book?id=5569',
+    );
+  });
+
+  it('支持 JSON API 书源的脚本变量与章节序号', () => {
+    const vars: Record<string, unknown> = {};
+    const bookContext = createRuleContext(
+      JSON.stringify({id: '5569', dirid: '7788'}),
+      'https://apibi.cc/api/book?id=5569',
+      undefined,
+      vars,
+    );
+    const tocUrl = evaluateString(
+      "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result",
+      bookContext,
+      true,
+    );
+    const chapterContext = createRuleContext(
+      JSON.stringify({list: ['第一章 起点']}),
+      'https://apibi.cc/api/booklist?id=7788',
+      '第一章 起点',
+      {...vars, chapter: {index: 0}},
+    );
+
+    expect(tocUrl).toBe('https://apibi.cc/api/booklist?id=7788');
+    expect(
+      evaluateString('<js>result=String(result)</js>', chapterContext),
+    ).toBe('第一章 起点');
+    expect(
+      evaluateString(
+        "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
+        chapterContext,
+        true,
+      ),
+    ).toBe('https://apibi.cc/api/chapter?id=7788&chapterid=1');
   });
 });

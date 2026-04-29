@@ -83,6 +83,13 @@ export const resolveUrl = (value: string, baseUrl: string): string => {
     return cleanUrl.startsWith('//') ? `https:${cleanUrl}` : cleanUrl;
   }
 
+  if (cleanUrl.startsWith('/')) {
+    const match = baseUrl.match(/^(https?:\/\/[^/?#]+)/i);
+    return match
+      ? collapseDuplicatedNumericPathSegment(`${match[1]}${cleanUrl}`)
+      : cleanUrl;
+  }
+
   const rootLikeUrl = resolveRootLikeRelativeUrl(cleanUrl, baseUrl);
   if (rootLikeUrl) {
     return rootLikeUrl;
@@ -191,6 +198,15 @@ export const renderTemplate = (
   });
 };
 
+export const renderJsonPathPlaceholders = (
+  template: string,
+  data: unknown,
+): string => {
+  return template.replace(/\{\s*(\$[.\w[\]*]+)\s*\}/g, (_match, path) =>
+    readJsonPathLite(data, String(path)),
+  );
+};
+
 export const readJsonPathLite = (data: unknown, path: string): string => {
   if (!path.startsWith('$.')) {
     return '';
@@ -198,6 +214,7 @@ export const readJsonPathLite = (data: unknown, path: string): string => {
 
   const parts = path
     .slice(2)
+    .replace(/\[(\d+)\]/g, '.$1')
     .split('.')
     .map(item => item.trim())
     .filter(Boolean);
@@ -205,6 +222,9 @@ export const readJsonPathLite = (data: unknown, path: string): string => {
   for (const part of parts) {
     if (current == null) {
       return '';
+    }
+    if (part === '*') {
+      return Array.isArray(current) ? current.join(',') : '';
     }
     current = current[part];
   }

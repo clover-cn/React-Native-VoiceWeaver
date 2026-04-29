@@ -10,6 +10,7 @@ import {
   htmlToText,
   normalizeWhitespace,
   readJsonPathLite,
+  renderJsonPathPlaceholders,
   renderTemplate,
   resolveUrl,
   splitRegexTail,
@@ -23,7 +24,13 @@ type AnyNode = any;
 type Element = any;
 type Text = {data: string};
 
-export type RuleItem = AnyNode | Record<string, unknown> | RegexMatchContext;
+export type RuleItem =
+  | AnyNode
+  | Record<string, unknown>
+  | RegexMatchContext
+  | string
+  | number
+  | boolean;
 
 export interface RuleContext {
   raw: string;
@@ -181,11 +188,13 @@ export const createRuleContext = (
   raw: string,
   baseUrl: string,
   item?: RuleItem,
+  vars?: Record<string, unknown>,
 ): RuleContext => ({
   raw,
   baseUrl,
   item,
   json: parseJson(raw),
+  vars,
 });
 
 export const evaluateList = (
@@ -263,6 +272,13 @@ const evaluateRawString = (rule: string, context: RuleContext): string => {
     return context.raw;
   }
 
+  if (rule.includes('{') && rule.includes('}') && !rule.includes('{{')) {
+    return renderJsonPathPlaceholders(
+      rule,
+      item && !isNode(item) ? item : context.json,
+    );
+  }
+
   if (rule.includes('{{')) {
     return renderTemplate(rule, {
       ...(context.vars || {}),
@@ -275,15 +291,36 @@ const evaluateRawString = (rule: string, context: RuleContext): string => {
   return rule;
 };
 
+const defaultRuleResult = (context: RuleContext): string => {
+  const item = context.item;
+  if (isRegexContext(item)) {
+    return item.__regexMatch[0] || '';
+  }
+  if (isNode(item)) {
+    return normalizeWhitespace(extractFromNode(item, 'text'));
+  }
+  if (item != null) {
+    return typeof item === 'string' ? item : JSON.stringify(item);
+  }
+  return context.raw;
+};
+
 const executeRuleJs = (
   script: string,
   result: string,
   context: RuleContext,
 ): string => {
   try {
+    const vars = context.vars || {};
+    context.vars = vars;
     const java = {
       encodeURI: (value: string) => encodeURIComponent(String(value)),
       log: (value: unknown) => console.log('[bookSource:js]', value),
+      put: (key: string, value: unknown) => {
+        vars[key] = value;
+        return value;
+      },
+      get: (key: string) => vars[key],
       getString: (rule: string, isUrl = false) =>
         evaluateString(rule, context, isUrl),
       getStringList: (rule: string, isUrl = false) =>
@@ -298,15 +335,31 @@ const executeRuleJs = (
       'java',
       'baseUrl',
       'src',
-      `return (${script});`,
+      'chapter',
+      'vars',
+      `${script}; return result;`,
     );
-    const value = fn(result, java, context.baseUrl, context.raw);
+    const value = fn(
+      result,
+      java,
+      context.baseUrl,
+      context.raw,
+      vars.chapter || {},
+      vars,
+    );
     return value == null ? '' : String(value);
   } catch (error) {
     console.warn('[bookSource] JS 规则执行失败', script, error);
     return '';
   }
 };
+
+const isUrlLiteralRule = (rule: string) =>
+  /^(https?:)?\/\//i.test(rule) ||
+  rule.startsWith('/') ||
+  rule.startsWith('./') ||
+  rule.startsWith('../') ||
+  /\{\s*\$[.\w[\]*]+\s*\}/.test(rule);
 
 export const evaluateString = (
   rule: string | undefined,
@@ -323,36 +376,48 @@ export const evaluateString = (
   let value = '';
 
   try {
-    const jsIndex = targetRule.indexOf('@js:');
-    if (jsIndex > 0) {
-      const beforeJs = targetRule.slice(0, jsIndex);
-      const script = targetRule.slice(jsIndex + 4);
-      const result = evaluateString(beforeJs, context, asUrl);
-      value = executeRuleJs(script, result, context);
-    } else if (targetRule.startsWith('@js:')) {
-      value = executeRuleJs(targetRule.slice(4), context.raw, context);
-    } else if (targetRule.startsWith('@json:') || targetRule.startsWith('$')) {
-      value =
-        context.item && !isNode(context.item)
-          ? readJsonPathLite(context.item, targetRule.replace(/^@json:/i, ''))
-          : String(evalJsonPath(targetRule, context)[0] || '');
-    } else if (
-      targetRule.startsWith('@XPath:') ||
-      targetRule.startsWith('@xpath:') ||
-      targetRule.startsWith('//')
-    ) {
-      const result = evalXPath(targetRule, context)[0] as
-        | {value?: string}
-        | undefined;
-      value = result?.value || '';
-    } else if (
-      targetRule.startsWith('@css:') ||
-      /[.#:[\]> ]/.test(targetRule) ||
-      targetRule.includes('@')
-    ) {
-      value = evaluateCssString(targetRule, context, asUrl);
+    const legadoJs = targetRule.match(/^<js>([\s\S]*)<\/js>$/i);
+    if (legadoJs) {
+      value = executeRuleJs(legadoJs[1], defaultRuleResult(context), context);
     } else {
-      value = evaluateRawString(targetRule, context);
+      const jsIndex = targetRule.indexOf('@js:');
+      if (jsIndex > 0) {
+        const beforeJs = targetRule.slice(0, jsIndex);
+        const script = targetRule.slice(jsIndex + 4);
+        const result = evaluateString(beforeJs, context, false);
+        value = executeRuleJs(script, result, context);
+      } else if (targetRule.startsWith('@js:')) {
+        value = executeRuleJs(
+          targetRule.slice(4),
+          defaultRuleResult(context),
+          context,
+        );
+      } else if (
+        targetRule.startsWith('@json:') ||
+        targetRule.startsWith('$')
+      ) {
+        value =
+          context.item && !isNode(context.item)
+            ? readJsonPathLite(context.item, targetRule.replace(/^@json:/i, ''))
+            : String(evalJsonPath(targetRule, context)[0] || '');
+      } else if (
+        targetRule.startsWith('@XPath:') ||
+        targetRule.startsWith('@xpath:') ||
+        targetRule.startsWith('//')
+      ) {
+        const result = evalXPath(targetRule, context)[0] as
+          | {value?: string}
+          | undefined;
+        value = result?.value || '';
+      } else if (
+        targetRule.startsWith('@css:') ||
+        (!isUrlLiteralRule(targetRule) && /[.#:[\]> ]/.test(targetRule)) ||
+        targetRule.includes('@')
+      ) {
+        value = evaluateCssString(targetRule, context, asUrl);
+      } else {
+        value = evaluateRawString(targetRule, context);
+      }
     }
   } catch (error) {
     console.warn('[bookSource] 字符串规则解析失败', cleanRule, error);
