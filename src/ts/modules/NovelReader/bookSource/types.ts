@@ -14,6 +14,7 @@ export interface LegadoRuleSearch {
 }
 
 export interface LegadoRuleBookInfo {
+  bookInfoInit?: string;
   name?: string;
   author?: string;
   kind?: string;

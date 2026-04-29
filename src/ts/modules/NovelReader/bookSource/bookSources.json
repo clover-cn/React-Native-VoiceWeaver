@@ -1,122 +1,43 @@
 [
   {
-    "bookSourceComment": "速读谷",
-    "bookSourceGroup": "自定义,-自制",
-    "bookSourceName": "速读谷",
+    "bookSourceGroup": "a小说",
+    "bookSourceName": "小说网",
     "bookSourceType": 0,
-    "bookSourceUrl": "https://www.sudugu.org/",
-    "customOrder": 0,
+    "bookSourceUrl": "https://crxs.me",
+    "customOrder": 2,
     "enabled": true,
-    "enabledCookieJar": true,
-    "enabledExplore": false,
-    "header": "{\"User-Agent\": \"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36\", \"Referer\": \"{{baseUrl}}\", \"Accept-Language\": \"zh-CN,zh;q=0.9,en;q=0.8\"}",
-    "lastUpdateTime": "1777305620479",
-    "respondTime": 180000,
-    "ruleBookInfo": {
-      "author": ".itemtxt p:nth-child(3) a@text##作者：(.*?)##$1",
-      "coverUrl": ".item img@src",
-      "intro": ".des@text",
-      "kind": ".itemtxt p:nth-child(2) span:nth-child(2)@text",
-      "lastChapter": ".itemtxt ul li:first-child a@text",
-      "name": ".item h1 a@text",
-      "tocUrl": ".item a@href"
-    },
-    "ruleContent": {
-      "content": ".con@html",
-      "nextContentUrl": ".prenext span:last-child a@href",
-      "replaceRegex": "##首页速读谷菜单|玄幻小说仙侠小说都市小说历史小说军事小说科幻小说言情小说|共1本小说|© 2026 速读谷 谷内无错 可以速读"
-    },
-    "ruleExplore": [],
-    "ruleSearch": {
-      "author": ".itemtxt p:nth-child(3) a@text##作者：(.*?)##$1",
-      "bookList": ".item",
-      "bookUrl": ".item a@href",
-      "checkKeyWord": "我有一枚命运魔骰",
-      "kind": ".itemtxt p:nth-child(2) span:nth-child(2)@text",
-      "name": ".itemtxt h3 a@text"
-    },
-    "ruleToc": {
-      "chapterList": "#list ul li",
-      "chapterName": "a@text",
-      "chapterUrl": "a@href",
-      "nextTocUrl": "#pages a.gr@href"
-    },
-    "searchUrl": "/i/sor.aspx?key={{key}}",
-    "weight": 0
-  },
-  {
-    "bookSourceUrl": "https://apibi.cc",
-    "bookSourceName": "笔趣阁阁楼API",
-    "bookSourceGroup": "JSON",
-    "bookSourceType": 0,
-    "bookUrlPattern": "",
-    "customOrder": 0,
-    "enabled": true,
-    "enabledExplore": false,
     "enabledCookieJar": false,
-    "loginUrl": "",
-    "bookSourceComment": "基于 m.bqgl.cc 实际调用的 apibi.cc 接口制作",
-    "lastUpdateTime": 0,
-    "respondTime": 180000,
-    "weight": 0,
-    "exploreUrl": "",
-    "ruleExplore": {},
-    "searchUrl": "/api/search?q={{key}}",
-    "ruleSearch": {
-        "bookList": "$.data[*]",
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "bookUrl": "/api/book?id={$.id}"
-    },
+    "enabledExplore": true,
+    "exploreUrl": "@js:\nlet list = [];\r\nlet html = java.ajax(\"https://crxs.me/categories.html\"); \r\nlist.push({\r\n    \"title\": \"小说分类\",\r\n    \"url\": \"\",\r\n    \"style\": { \"layout_flexGrow\": 1, \"layout_flexBasisPercent\": 1 }\r\n});\r\n\r\nlet reg = /href=\"(\\/fictions\\/tag-\\d+)\\.html\"[\\s\\S]*?<div class=\"title\">([^<]+)<\\/div>/g;\r\nlet match;\r\nwhile ((match = reg.exec(html)) !== null) {\r\n    list.push({\r\n        \"title\": match[2],        \r\n        \"url\": match[1] + \"/{{page}}.html\", \r\n        \"style\": {\r\n            \"layout_flexGrow\": 1,\r\n            \"layout_flexBasisPercent\": 0.2\r\n        }\r\n    });\r\n}\r\nJSON.stringify(list);",
+    "lastUpdateTime": "1777220930138",
+    "respondTime": 246146,
     "ruleBookInfo": {
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "kind": "$.sortname",
-        "lastChapter": "$.lastchapter",
-        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
-        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
-    },
-    "ruleToc": {
-        "chapterList": "$.list[*]",
-        "chapterName": "<js>result=String(result)</js>",
-        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
-        "nextTocUrl": ""
+      "author": "text.作者@a@.tag@text",
+      "coverUrl": ".fiction-cover@style##background-image: url\\((https://.*\\.\\w+)\\);##$1",
+      "intro": ".fiction-overview-brief@ownText",
+      "kind": "text.标签@a@.tag@text",
+      "lastChapter": "text.章节@text##章节：",
+      "name": ".right-5 .title@text",
+      "wordCount": "text.字数@text##字数："
     },
     "ruleContent": {
-        "content": "$.txt",
-        "nextContentUrl": ""
+      "content": ".fiction-body p@text##（看精彩成人小说上《成人小说网》：https://crxs.me）"
     },
-    "tag": "笔趣阁阁楼API",
-    "searchRule": {
-        "bookList": "$.data[*]",
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "bookUrl": "/api/book?id={$.id}"
+    "ruleExplore": {},
+    "ruleSearch": {
+      "author": ".tags@text.作者@text##作者：",
+      "bookList": ".item.fiction",
+      "bookUrl": "a@href",
+      "coverUrl": "div.img@style##background-image:url\\('(https://.*\\.\\w+)'\\);##$1",
+      "intro": ".brief@text",
+      "name": ".title>a@text##[《》]"
     },
-    "exploreRule": {},
-    "bookInfoRule": {
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "kind": "$.sortname",
-        "lastChapter": "$.lastchapter",
-        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
-        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
+    "ruleToc": {
+      "chapterList": ".chapter-container >a || .title",
+      "chapterName": "text",
+      "chapterUrl": "href"
     },
-    "tocRule": {
-        "chapterList": "$.list[*]",
-        "chapterName": "<js>result=String(result)</js>",
-        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
-        "nextTocUrl": ""
-    },
-    "contentRule": {
-        "content": "$.txt",
-        "nextContentUrl": ""
-    },
-    "loginJs": "",
-    "key": "https://apibi.cc"
-}
+    "searchUrl": "https://crxs.me/fictions/keyword-{{key}}/sort-read/{{page}}.html",
+    "weight": 0
+  }
 ]

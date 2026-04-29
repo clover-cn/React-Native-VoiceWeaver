@@ -167,7 +167,7 @@ export const renderTemplate = (
   template: string,
   vars: Record<string, unknown>,
 ): string => {
-  return template.replace(/\{\{([\s\S]*?)\}\}/g, (_match, rawExpr) => {
+  const renderExpr = (rawExpr: string) => {
     const expr = String(rawExpr).trim();
     if (!expr) {
       return '';
@@ -195,7 +195,17 @@ export const renderTemplate = (
       console.warn('[bookSource] 模板执行失败', expr, error);
       return '';
     }
-  });
+  };
+
+  return template
+    .replace(
+      /<([^<>]*?)\{\{([\s\S]*?)\}\}([^<>]*?)>/g,
+      (_match, before, expr, after) => {
+        const value = renderExpr(expr);
+        return value ? `${before}${value}${after}` : '';
+      },
+    )
+    .replace(/\{\{([\s\S]*?)\}\}/g, (_match, rawExpr) => renderExpr(rawExpr));
 };
 
 export const renderJsonPathPlaceholders = (
@@ -239,6 +249,7 @@ export interface RegexTail {
   baseRule: string;
   regex?: string;
   replacement: string;
+  onlyOne?: boolean;
 }
 
 export const splitRegexTail = (rule: string): RegexTail => {
@@ -262,6 +273,7 @@ export const splitRegexTail = (rule: string): RegexTail => {
     baseRule: rule.slice(0, first),
     regex: rule.slice(first + 2, second),
     replacement: rule.slice(second + 2, end),
+    onlyOne: third >= 0,
   };
 };
 
@@ -269,13 +281,14 @@ export const applyRegexTail = (
   value: string,
   regex?: string,
   replacement = '',
+  onlyOne = false,
 ): string => {
   if (!regex) {
     return value;
   }
 
   try {
-    return value.replace(new RegExp(regex, 'g'), replacement);
+    return value.replace(new RegExp(regex, onlyOne ? '' : 'g'), replacement);
   } catch (error) {
     console.warn('[bookSource] 正则处理失败', regex, error);
     return value;

@@ -68,8 +68,8 @@ const applyReplaceRegex = (text: string, replaceRegex?: string) => {
   if (!replaceRegex) {
     return text;
   }
-  const {regex, replacement} = splitRegexTail(replaceRegex);
-  return applyRegexTail(text, regex, replacement);
+  const {regex, replacement, onlyOne} = splitRegexTail(replaceRegex);
+  return applyRegexTail(text, regex, replacement, onlyOne);
 };
 
 const readRuleField = (
@@ -85,6 +85,41 @@ const readRuleField = (
     createRuleContext(raw, baseUrl, item, vars),
     key ? URL_RULE_KEYS.has(key) : false,
   );
+};
+
+const readBookInfoInit = (
+  rule: string | undefined,
+  raw: string,
+  baseUrl: string,
+  vars: Record<string, unknown>,
+): RuleItem | undefined => {
+  const cleanRule = String(rule || '').trim();
+  if (!cleanRule) {
+    return undefined;
+  }
+
+  const context = createRuleContext(raw, baseUrl, undefined, vars);
+  if (cleanRule.startsWith(':') || cleanRule.startsWith('-:')) {
+    return evaluateList(cleanRule, context)[0];
+  }
+
+  const text = readRuleField(
+    cleanRule,
+    raw,
+    baseUrl,
+    undefined,
+    undefined,
+    vars,
+  );
+  if (!text) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch (_error) {
+    return text;
+  }
 };
 
 const getSearchFieldBaseUrl = (
@@ -231,39 +266,35 @@ const getBookInfo = async (
   const request = resolveRequest(source, book.bookUrl, {}, book.bookUrl);
   const raw = await requestText(request, source.respondTime || 20000);
   const rules = source.ruleBookInfo || {};
+  vars.book = book;
+  const initItem = readBookInfoInit(rules.bookInfoInit, raw, request.url, vars);
 
   const nextBook: Book = {
     ...book,
     name:
-      readRuleField(rules.name, raw, request.url, undefined, 'name', vars) ||
+      readRuleField(rules.name, raw, request.url, initItem, 'name', vars) ||
       book.name,
     author:
-      readRuleField(
-        rules.author,
-        raw,
-        request.url,
-        undefined,
-        'author',
-        vars,
-      ) || book.author,
+      readRuleField(rules.author, raw, request.url, initItem, 'author', vars) ||
+      book.author,
     coverUrl:
       readRuleField(
         rules.coverUrl,
         raw,
         getBookInfoFieldBaseUrl(source, request.url, 'coverUrl'),
-        undefined,
+        initItem,
         'coverUrl',
         vars,
       ) || book.coverUrl,
     intro:
-      readRuleField(rules.intro, raw, request.url, undefined, 'intro', vars) ||
+      readRuleField(rules.intro, raw, request.url, initItem, 'intro', vars) ||
       book.intro,
     latestChapterTitle:
       readRuleField(
         rules.lastChapter,
         raw,
         request.url,
-        undefined,
+        initItem,
         'lastChapter',
         vars,
       ) || book.latestChapterTitle,
@@ -272,7 +303,7 @@ const getBookInfo = async (
         rules.tocUrl,
         raw,
         getBookInfoFieldBaseUrl(source, request.url, 'tocUrl'),
-        undefined,
+        initItem,
         'tocUrl',
         vars,
       ) ||
@@ -301,7 +332,7 @@ const loadTocPage = async (
   const request = resolveRequest(source, tocUrl, {}, tocUrl);
   const raw = await requestText(request, source.respondTime || 20000);
   const rules = source.ruleToc || {};
-  const context = createRuleContext(raw, request.url);
+  const context = createRuleContext(raw, request.url, undefined, vars);
   const list = evaluateList(rules.chapterList, context);
   const seen = new Set<string>();
   bookSourceLogger.log('toc', '目录列表规则匹配完成', {
@@ -315,6 +346,7 @@ const loadTocPage = async (
     .map((item, offset) => {
       const ruleVars = {
         ...vars,
+        book,
         chapter: {index: startIndex + offset},
         index: startIndex + offset,
       };
@@ -499,6 +531,7 @@ export const LocalBookSourceService = {
 
     const visited = new Set<string>();
     const chunks: string[] = [];
+    const vars: Record<string, unknown> = {book, chapter, title: chapter.title};
     let nextUrl = chapter.bookUrl;
     let firstRequestUrl = chapter.bookUrl;
 
@@ -532,6 +565,7 @@ export const LocalBookSourceService = {
         request.url,
         undefined,
         'content',
+        vars,
       );
       if (content) {
         chunks.push(content);
@@ -549,6 +583,7 @@ export const LocalBookSourceService = {
         request.url,
         undefined,
         'nextContentUrl',
+        vars,
       );
       if (nextUrl && !isSameContentPageGroup(chapter.bookUrl, nextUrl)) {
         bookSourceLogger.log('content', '正文下一页指向其他章节，停止跟随', {
