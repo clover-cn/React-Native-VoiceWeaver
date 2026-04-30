@@ -10,6 +10,7 @@ import {
   SafeAreaView,
   Platform,
   Image,
+  ScrollView,
 } from 'react-native';
 import {Book} from '../types/reader';
 import {
@@ -18,7 +19,11 @@ import {
   loadSearchHistory,
 } from '../utils/readerStorage';
 import LocalBookSourceService from '../bookSource/LocalBookSourceService';
-import {BookSourceDiagnostic} from '../bookSource/types';
+import {
+  BookSourceDiagnostic,
+  BookSourceSearchGroup,
+  LegadoBookSource,
+} from '../bookSource/types';
 
 interface NovelSearchProps {
   onBack: () => void;
@@ -29,16 +34,29 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
   const [keyword, setKeyword] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [results, setResults] = useState<Book[]>([]);
+  const [results, setResults] = useState<BookSourceSearchGroup[]>([]);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [availableSources, setAvailableSources] = useState<LegadoBookSource[]>(
+    [],
+  );
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [searchDiagnostics, setSearchDiagnostics] = useState<
     BookSourceDiagnostic[]
   >([]);
 
   useEffect(() => {
     loadSearchHistory().then(setSearchHistory);
+    setAvailableSources(LocalBookSourceService.getSources());
   }, []);
+
+  const toggleSource = (sourceId: string) => {
+    setSelectedSourceIds(current =>
+      current.includes(sourceId)
+        ? current.filter(item => item !== sourceId)
+        : [...current, sourceId],
+    );
+  };
 
   const handleSearch = async (customKeyword?: string) => {
     const term = (customKeyword ?? keyword).trim();
@@ -54,7 +72,11 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
 
     try {
       const {books, diagnostics} =
-        await LocalBookSourceService.searchBooksWithDiagnostics(term);
+        await LocalBookSourceService.searchBookGroupsWithDiagnostics(
+          term,
+          1,
+          selectedSourceIds,
+        );
       setResults(books);
       setSearchDiagnostics(diagnostics);
       if (books.length === 0) {
@@ -90,10 +112,60 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
     setSearchHistory([]);
   };
 
-  const renderItem = ({item}: {item: Book}) => (
+  const renderSourceFilters = () => {
+    if (availableSources.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.sourceFilterSection}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.sourceFilterList}>
+          <TouchableOpacity
+            style={[
+              styles.sourceChip,
+              selectedSourceIds.length === 0 && styles.activeSourceChip,
+            ]}
+            onPress={() => setSelectedSourceIds([])}
+            activeOpacity={0.8}>
+            <Text
+              style={[
+                styles.sourceChipText,
+                selectedSourceIds.length === 0 && styles.activeSourceChipText,
+              ]}>
+              全部书源
+            </Text>
+          </TouchableOpacity>
+          {availableSources.map(source => {
+            const active = selectedSourceIds.includes(source.bookSourceUrl);
+            return (
+              <TouchableOpacity
+                key={source.bookSourceUrl}
+                style={[styles.sourceChip, active && styles.activeSourceChip]}
+                onPress={() => toggleSource(source.bookSourceUrl)}
+                activeOpacity={0.8}>
+                <Text
+                  style={[
+                    styles.sourceChipText,
+                    active && styles.activeSourceChipText,
+                  ]}
+                  numberOfLines={1}>
+                  {source.bookSourceName}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderItem = ({item}: {item: BookSourceSearchGroup}) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => onBookSelect(item)}
+      onPress={() => onBookSelect(item.primary)}
       activeOpacity={0.8}>
       {item.coverUrl ? (
         <Image
@@ -118,10 +190,22 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
           <View style={styles.tagWrap}>
             <Text style={styles.tagText}>{item.originName}</Text>
           </View>
+          {item.sourceCount > 1 ? (
+            <View style={styles.multiSourceTag}>
+              <Text style={styles.multiSourceTagText}>
+                共 {item.sourceCount} 个源
+              </Text>
+            </View>
+          ) : null}
           <Text style={styles.latest} numberOfLines={1}>
             最新: {item.latestChapterTitle}
           </Text>
         </View>
+        {item.sourceCount > 1 ? (
+          <Text style={styles.sourceSummary} numberOfLines={1}>
+            {item.sourceNames.join('、')}
+          </Text>
+        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -162,6 +246,8 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
           )}
         </View>
       </View>
+
+      {renderSourceFilters()}
 
       {searchHistory.length > 0 && !hasSearched && (
         <View style={styles.historySection}>
@@ -267,6 +353,34 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 40,
+  },
+  sourceFilterSection: {
+    paddingBottom: 12,
+  },
+  sourceFilterList: {
+    paddingHorizontal: 16,
+  },
+  sourceChip: {
+    maxWidth: 128,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D1D1D6',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginRight: 8,
+  },
+  activeSourceChip: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  sourceChipText: {
+    fontSize: 13,
+    color: '#3A3A3C',
+    fontWeight: '500',
+  },
+  activeSourceChipText: {
+    color: '#FFFFFF',
   },
   historySection: {
     paddingHorizontal: 16,
@@ -401,10 +515,27 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
+  multiSourceTag: {
+    backgroundColor: 'rgba(52,199,89,0.12)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 8,
+  },
+  multiSourceTagText: {
+    color: '#248A3D',
+    fontSize: 11,
+    fontWeight: '500',
+  },
   latest: {
     flex: 1,
     color: '#8E8E93',
     fontSize: 11,
+  },
+  sourceSummary: {
+    color: '#8E8E93',
+    fontSize: 11,
+    marginTop: 6,
   },
 });
 

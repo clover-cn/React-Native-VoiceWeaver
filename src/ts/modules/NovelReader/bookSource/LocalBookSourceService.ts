@@ -17,10 +17,12 @@ import {
 import {
   BookSourceCancelToken,
   BookSourceDiagnostic,
+  BookSourceSearchGroup,
   BookSourceSearchResult,
   ChapterListResult,
   ContentResult,
   LegadoBookSource,
+  SearchBookGroupsResult,
   SearchBooksResult,
 } from './types';
 import {bookSourceLogger} from './bookSourceLogger';
@@ -64,6 +66,76 @@ const sourceById = (sourceId?: string) => {
     enabledSources().find(source => source.bookSourceUrl === sourceId) ||
     enabledSources()[0]
   );
+};
+
+export const filterSearchSources = (
+  sources: LegadoBookSource[],
+  sourceIds?: string[],
+) => {
+  const selectedIds = (sourceIds || []).filter(Boolean);
+  if (selectedIds.length === 0) {
+    return sources;
+  }
+
+  const selectedSet = new Set(selectedIds);
+  return sources.filter(source => selectedSet.has(source.bookSourceUrl));
+};
+
+const normalizeMergeText = (value: string | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[《》<>「」『』“”"'[\]【】（）()·.,，。:：;；\-_—\s]/g, '');
+
+const normalizeAuthorForMerge = (value: string | undefined) =>
+  normalizeMergeText(value).replace(/^作者/, '');
+
+const isValidMergeAuthor = (author: string) =>
+  Boolean(author) &&
+  !['未知作者', '未知', '佚名', '无', 'null', 'undefined'].includes(author);
+
+const mergeKeyForBook = (book: BookSourceSearchResult, index: number) => {
+  const name = normalizeMergeText(book.name);
+  const author = normalizeAuthorForMerge(book.author);
+  if (name && isValidMergeAuthor(author)) {
+    return `strict:${name}:${author}`;
+  }
+  return `single:${name}:${author}:${book.sourceId}:${book.bookUrl}:${index}`;
+};
+
+export const mergeBookSourceSearchResults = (
+  books: BookSourceSearchResult[],
+): BookSourceSearchGroup[] => {
+  const groups = new Map<string, BookSourceSearchResult[]>();
+  books.forEach((book, index) => {
+    const key = mergeKeyForBook(book, index);
+    const list = groups.get(key);
+    if (list) {
+      list.push(book);
+    } else {
+      groups.set(key, [book]);
+    }
+  });
+
+  return Array.from(groups.values()).map(groupBooks => {
+    const primary = groupBooks[0] as BookSourceSearchResult;
+    const sourceNames: string[] = [];
+    const sourceIds = new Set<string>();
+    groupBooks.forEach(book => {
+      if (!sourceIds.has(book.sourceId)) {
+        sourceIds.add(book.sourceId);
+        sourceNames.push(book.originName || '未知书源');
+      }
+    });
+
+    return {
+      ...primary,
+      primary,
+      sources: groupBooks,
+      sourceCount: sourceIds.size,
+      sourceNames,
+    };
+  });
 };
 
 const normalizeBook = (
@@ -448,8 +520,9 @@ export const LocalBookSourceService = {
   async searchBooksWithDiagnostics(
     keyword: string,
     page = 1,
+    sourceIds?: string[],
   ): Promise<SearchBooksResult> {
-    const sources = enabledSources();
+    const sources = filterSearchSources(enabledSources(), sourceIds);
     bookSourceLogger.log('search', '开始本地多书源搜索', {
       keyword,
       page,
@@ -488,11 +561,35 @@ export const LocalBookSourceService = {
     return {books, diagnostics};
   },
 
+  async searchBookGroupsWithDiagnostics(
+    keyword: string,
+    page = 1,
+    sourceIds?: string[],
+  ): Promise<SearchBookGroupsResult> {
+    const result = await this.searchBooksWithDiagnostics(
+      keyword,
+      page,
+      sourceIds,
+    );
+    const groupedBooks = mergeBookSourceSearchResults(result.books);
+    bookSourceLogger.log('search', '本地多书源搜索结果合并完成', {
+      keyword,
+      totalBooks: result.books.length,
+      groupedBooks: groupedBooks.length,
+    });
+    return {
+      books: groupedBooks,
+      diagnostics: result.diagnostics,
+    };
+  },
+
   async searchBooks(
     keyword: string,
     page = 1,
+    sourceIds?: string[],
   ): Promise<BookSourceSearchResult[]> {
-    return (await this.searchBooksWithDiagnostics(keyword, page)).books;
+    return (await this.searchBooksWithDiagnostics(keyword, page, sourceIds))
+      .books;
   },
 
   async searchBookSources(book: Book): Promise<BookSourceSearchResult[]> {

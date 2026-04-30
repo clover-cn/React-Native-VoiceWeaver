@@ -86,6 +86,14 @@ export interface BookSourceSearchResult extends Book {
   sourceId: string;
 }
 
+export interface BookSourceSearchGroup extends Book {
+  sourceId: string;
+  primary: BookSourceSearchResult;
+  sources: BookSourceSearchResult[];
+  sourceCount: number;
+  sourceNames: string[];
+}
+
 export interface ChapterListResult {
   book: Book;
   chapters: Chapter[];
@@ -112,5 +120,10 @@ export interface BookSourceDiagnostic {
 
 export interface SearchBooksResult {
   books: BookSourceSearchResult[];
+  diagnostics: BookSourceDiagnostic[];
+}
+
+export interface SearchBookGroupsResult {
+  books: BookSourceSearchGroup[];
   diagnostics: BookSourceDiagnostic[];
 }
