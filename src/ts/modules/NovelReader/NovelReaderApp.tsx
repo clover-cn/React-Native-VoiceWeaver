@@ -25,6 +25,7 @@ import {
   Book,
   Chapter,
   GlobalAudioBindings,
+  ListenBookPrescanText,
   ListenSegment,
 } from './types/reader';
 import {AudioOption} from './types/audio';
@@ -37,6 +38,10 @@ import {
 import AudioLibraryModal from './components/AudioLibraryModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
 import LocalBookSourceService from './bookSource/LocalBookSourceService';
+import {
+  buildListenProjectName,
+  normalizeChapterTextForRequest,
+} from './utils/listenBook';
 
 export type ViewState = 'home' | 'search' | 'reader';
 
@@ -97,6 +102,12 @@ interface ListenTaskStatusResponse {
   segments?: ListenSegment[];
   failedIndexes?: number[];
   error?: string;
+}
+
+interface ListenBookConfigResponse {
+  success?: boolean;
+  prefetchCount?: number;
+  prescanCount?: number;
 }
 
 const requestJson = async <T,>(
@@ -379,6 +390,7 @@ const NovelReaderApp: React.FC = () => {
   const currentChapterIndexRef = useRef<number>(-1);
   const selectedBookRef = useRef<Book | null>(null);
   const autoGeneratingSegmentIndexesRef = useRef<Set<number>>(new Set());
+  const prefetchedChapterKeyRef = useRef<string>('');
 
   useEffect(() => {
     chapterListRef.current = chapterList;
@@ -403,9 +415,7 @@ const NovelReaderApp: React.FC = () => {
     cancelListenTask,
   } = useListenBook();
 
-  const projectName = selectedBook
-    ? `reader_${selectedBook.name || 'unknown'}`
-    : '';
+  const projectName = selectedBook ? buildListenProjectName(selectedBook) : '';
 
   useEffect(() => {
     loadReadingRecord().then(setContinueReadingRecord);
@@ -572,7 +582,7 @@ const NovelReaderApp: React.FC = () => {
       setCurrentChapterText('');
 
       const chap = list[index];
-      const curProjectName = `reader_${book?.name || 'unknown'}`;
+      const curProjectName = buildListenProjectName(book);
 
       try {
         if (!book) {
@@ -588,18 +598,161 @@ const NovelReaderApp: React.FC = () => {
           requestUrl: data.requestUrl,
           requestBody: null,
         });
-        checkListenCache(curProjectName, index);
+        checkListenCache(curProjectName, index, data.text);
         return data;
       } catch (e) {
         console.warn('Get content failed.', e);
         Alert.alert('获取正文失败', '本地书源未能解析该章节正文。');
       }
 
-      checkListenCache(curProjectName, index);
       return null;
     },
     [checkListenCache, persistReadingProgress, resetListen, selectedBook],
   );
+
+  const fetchListenBookConfig = useCallback(async () => {
+    try {
+      return await requestJson<ListenBookConfigResponse>(
+        `${API_BASE}/api/listen-book/config`,
+      );
+    } catch (error) {
+      console.warn('[NovelReaderApp] 获取听书配置失败，使用默认配置', error);
+      return {success: false, prefetchCount: 2, prescanCount: 10};
+    }
+  }, []);
+
+  const loadChapterTextForTts = useCallback(
+    async (
+      book: Book,
+      list: Chapter[],
+      index: number,
+      cachedText?: string,
+    ): Promise<ListenBookPrescanText | null> => {
+      const chapter = list[index];
+      if (!chapter || chapter.isVolume) {
+        return null;
+      }
+
+      const normalizedCachedText = normalizeChapterTextForRequest(cachedText);
+      if (normalizedCachedText) {
+        return {
+          chapterIndex: index,
+          chapterTitle: chapter.title || '',
+          text: normalizedCachedText,
+        };
+      }
+
+      const data = await LocalBookSourceService.getBookContent(book, chapter);
+      const text = normalizeChapterTextForRequest(data.text);
+      if (!text) {
+        return null;
+      }
+
+      return {
+        chapterIndex: index,
+        chapterTitle: chapter.title || '',
+        text,
+      };
+    },
+    [],
+  );
+
+  const buildPrescanTexts = useCallback(
+    async (
+      book: Book,
+      list: Chapter[],
+      startIndex: number,
+      prescanCount: number,
+      currentText: string,
+    ): Promise<ListenBookPrescanText[]> => {
+      if (prescanCount <= 0) {
+        return [];
+      }
+
+      const output: ListenBookPrescanText[] = [];
+      for (
+        let index = startIndex;
+        index < list.length && output.length < prescanCount;
+        index += 1
+      ) {
+        try {
+          const item = await loadChapterTextForTts(
+            book,
+            list,
+            index,
+            index === startIndex ? currentText : undefined,
+          );
+          if (item) {
+            output.push(item);
+          }
+        } catch (error) {
+          console.warn('[NovelReaderApp] 预扫描章节正文拉取失败', {
+            chapterIndex: index,
+            error,
+          });
+        }
+      }
+
+      return output;
+    },
+    [loadChapterTextForTts],
+  );
+
+  const triggerPrefetch = useCallback(async () => {
+    const book = selectedBookRef.current;
+    const list = chapterListRef.current;
+    const fromIndex = currentChapterIndexRef.current;
+    const requestProjectName = buildListenProjectName(book);
+
+    if (
+      !book ||
+      !requestProjectName ||
+      requestProjectName === 'reader_unknown'
+    ) {
+      return;
+    }
+
+    const config = await fetchListenBookConfig();
+    const prefetchCount = Number.isFinite(config.prefetchCount)
+      ? Math.max(0, Number(config.prefetchCount))
+      : 2;
+    if (prefetchCount <= 0) {
+      return;
+    }
+
+    for (let offset = 1; offset <= prefetchCount; offset += 1) {
+      const chapterIndex = fromIndex + offset;
+      const chapter = list[chapterIndex];
+      if (!chapter || chapter.isVolume) {
+        continue;
+      }
+
+      loadChapterTextForTts(book, list, chapterIndex)
+        .then(item => {
+          if (!item) {
+            return null;
+          }
+
+          return requestJson(`${API_BASE}/api/listen-book/generate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              projectName: requestProjectName,
+              chapterIndex,
+              chapterTitle: item.chapterTitle,
+              chapterText: item.text,
+              prescanTexts: [],
+            }),
+          });
+        })
+        .catch(error => {
+          console.warn('[NovelReaderApp] 后台预生成章节失败', {
+            chapterIndex,
+            error,
+          });
+        });
+    }
+  }, [fetchListenBookConfig, loadChapterTextForTts]);
 
   const startListenForChapter = useCallback(
     async (index: number) => {
@@ -612,14 +765,24 @@ const NovelReaderApp: React.FC = () => {
 
       const content = await loadChapterContent(list, index, book);
       const chapter = list[index];
-      const currentProjectName = `reader_${book.name || 'unknown'}`;
+      const currentProjectName = buildListenProjectName(book);
 
       if (!chapter) {
         return;
       }
 
+      const chapterText = normalizeChapterTextForRequest(content?.text);
+      if (!chapterText) {
+        Alert.alert('听书失败', '当前章节正文为空，无法生成语音。');
+        return;
+      }
+
       setIsListenMode(true);
-      startListening(currentProjectName, index, chapter, list, content?.text);
+      startListening(currentProjectName, index, {
+        chapterTitle: chapter.title || '',
+        chapterText,
+        prescanTexts: [],
+      });
     },
     [loadChapterContent, startListening],
   );
@@ -706,7 +869,7 @@ const NovelReaderApp: React.FC = () => {
         });
 
         const latestProjectName = selectedBookRef.current
-          ? `reader_${selectedBookRef.current.name || 'unknown'}`
+          ? buildListenProjectName(selectedBookRef.current)
           : '';
         if (
           currentChapterIndexRef.current !== requestChapterIndex ||
@@ -771,6 +934,28 @@ const NovelReaderApp: React.FC = () => {
     handleChapterFinished,
     handleAutoGenerateMissingSegment,
   );
+
+  useEffect(() => {
+    if (!isListenMode || !isGenerationComplete || currentChapterIndex < 0) {
+      return;
+    }
+
+    const prefetchKey = `${projectName}_${currentChapterIndex}`;
+    if (!projectName || prefetchedChapterKeyRef.current === prefetchKey) {
+      return;
+    }
+
+    prefetchedChapterKeyRef.current = prefetchKey;
+    triggerPrefetch().catch(error => {
+      console.warn('[NovelReaderApp] 后台预生成调度失败', error);
+    });
+  }, [
+    currentChapterIndex,
+    isGenerationComplete,
+    isListenMode,
+    projectName,
+    triggerPrefetch,
+  ]);
 
   const exitReaderToHome = useCallback(async () => {
     await persistReadingProgress();
@@ -854,21 +1039,54 @@ const NovelReaderApp: React.FC = () => {
     };
   }, [requestExitReaderToHome, showExitPrompt, viewState]);
 
-  const handleStartListen = () => {
+  const handleStartListen = async () => {
     if (!selectedBook) {
       return;
     }
 
-    setIsListenMode(true);
-    const curProjectName = `reader_${selectedBook.name || 'unknown'}`;
+    const curProjectName = buildListenProjectName(selectedBook);
     const chapter = chapterList[currentChapterIndex];
-    if (chapter) {
-      startListening(
-        curProjectName,
-        currentChapterIndex,
-        chapter,
+    if (!chapter) {
+      return;
+    }
+
+    try {
+      const currentChapter = await loadChapterTextForTts(
+        selectedBook,
         chapterList,
+        currentChapterIndex,
         currentChapterText,
+      );
+      const chapterText = normalizeChapterTextForRequest(currentChapter?.text);
+
+      if (!chapterText) {
+        Alert.alert('听书失败', '当前章节正文为空，无法生成语音。');
+        return;
+      }
+
+      const config = await fetchListenBookConfig();
+      const prescanCount = Number.isFinite(config.prescanCount)
+        ? Math.max(0, Number(config.prescanCount))
+        : 10;
+      const prescanTexts = await buildPrescanTexts(
+        selectedBook,
+        chapterList,
+        currentChapterIndex,
+        prescanCount,
+        chapterText,
+      );
+
+      setIsListenMode(true);
+      startListening(curProjectName, currentChapterIndex, {
+        chapterTitle: chapter.title || '',
+        chapterText,
+        prescanTexts,
+      });
+    } catch (error) {
+      console.warn('[NovelReaderApp] 启动听书失败', error);
+      Alert.alert(
+        '听书失败',
+        error instanceof Error ? error.message : '无法获取章节正文。',
       );
     }
   };
@@ -1033,7 +1251,7 @@ const NovelReaderApp: React.FC = () => {
           transientErrorCount = 0;
 
           const latestProjectName = selectedBookRef.current
-            ? `reader_${selectedBookRef.current.name || 'unknown'}`
+            ? buildListenProjectName(selectedBookRef.current)
             : '';
           if (
             latestProjectName !== requestProjectName ||
@@ -1140,7 +1358,7 @@ const NovelReaderApp: React.FC = () => {
 
       normalizedBase.autoEmotionAudioMap = manualEmotionMap
         ? cloneConfig(manualEmotionMap)
-        : normalizedBase.autoEmotionAudioMap || null;
+        : normalizedBase.autoEmotionAudioMap || undefined;
       normalizedBase.referenceAudio = manualEmotionMap
         ? pickReferenceAudioByEmotion(
             manualEmotionMap,
@@ -1160,42 +1378,44 @@ const NovelReaderApp: React.FC = () => {
         nextVoiceActor || normalizedBase.autoAssignedVoiceActor || null;
 
       const invalidatedIndexes: number[] = [];
-      const nextSegments = segments.map((segment, segIndex) => {
-        if (segIndex === index) {
-          invalidatedIndexes.push(segIndex);
-          return cloneConfig(normalizedBase);
-        }
+      const nextSegments: ListenSegment[] = segments.map(
+        (segment, segIndex) => {
+          if (segIndex === index) {
+            invalidatedIndexes.push(segIndex);
+            return cloneConfig(normalizedBase);
+          }
 
-        if (
-          payload.selectedAudioId &&
-          normalizedBase.type === 'dialogue' &&
-          segment.role === normalizedBase.role
-        ) {
-          invalidatedIndexes.push(segIndex);
-          return {
-            ...segment,
-            referenceAudio: manualEmotionMap
-              ? pickReferenceAudioByEmotion(
-                  manualEmotionMap,
-                  segment.emotion || 'neutral',
-                  missingEmotionPolicy,
-                ) || cloneConfig(manualEmotionMap.neutral)
-              : {id: payload.selectedAudioId, mode: 1, emoWeight: 0.65},
-            autoAssignedVoiceActor: nextVoiceActor,
-            autoEmotionAudioMap: manualEmotionMap
-              ? cloneConfig(manualEmotionMap)
-              : null,
-            manualAssigned: true,
-            audioUrl: null,
-            cacheKey: createSegmentCacheToken(),
-            localAudioUrl: null,
-            cacheState: 'idle',
-            lastCacheError: null,
-          };
-        }
+          if (
+            payload.selectedAudioId &&
+            normalizedBase.type === 'dialogue' &&
+            segment.role === normalizedBase.role
+          ) {
+            invalidatedIndexes.push(segIndex);
+            return {
+              ...segment,
+              referenceAudio: manualEmotionMap
+                ? pickReferenceAudioByEmotion(
+                    manualEmotionMap,
+                    segment.emotion || 'neutral',
+                    missingEmotionPolicy,
+                  ) || cloneConfig(manualEmotionMap.neutral)
+                : {id: payload.selectedAudioId, mode: 1, emoWeight: 0.65},
+              autoAssignedVoiceActor: nextVoiceActor,
+              autoEmotionAudioMap: manualEmotionMap
+                ? cloneConfig(manualEmotionMap)
+                : undefined,
+              manualAssigned: true,
+              audioUrl: null,
+              cacheKey: createSegmentCacheToken(),
+              localAudioUrl: null,
+              cacheState: 'idle',
+              lastCacheError: null,
+            };
+          }
 
-        return segment;
-      });
+          return segment;
+        },
+      );
 
       const normalizedInvalidatedIndexes = Array.from(
         new Set(invalidatedIndexes),

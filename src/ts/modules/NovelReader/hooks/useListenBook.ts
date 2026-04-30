@@ -1,5 +1,9 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
-import {ListenSegment, Chapter} from '../types/reader';
+import {ListenBookGeneratePayload, ListenSegment} from '../types/reader';
+import {
+  createTextHash,
+  normalizeChapterTextForRequest,
+} from '../utils/listenBook';
 
 // ⚠️ 重要：模拟器/真机上 localhost 指向设备自身，必须改为开发电脑的局域网IP
 // 例如：'http://192.168.1.100:3000'
@@ -52,12 +56,14 @@ export interface UseListenBookReturn {
   startListening: (
     project: string,
     index: number,
-    chapter: Chapter,
-    list: Chapter[],
-    chapterText?: string,
+    payload: ListenBookGeneratePayload,
   ) => void;
   resetListen: (skipCancel?: boolean) => void;
-  checkListenCache: (project: string, index: number) => void;
+  checkListenCache: (
+    project: string,
+    index: number,
+    chapterText?: string,
+  ) => void;
   replaceSegments: (nextSegments: ListenSegment[]) => void;
   updateListenRuntime: (
     nextState: 'idle' | 'loading' | 'ready' | 'error',
@@ -206,18 +212,29 @@ export const useListenBook = (): UseListenBookReturn => {
   );
 
   const checkListenCache = useCallback(
-    async (projectName: string, chapterIndex: number) => {
+    async (projectName: string, chapterIndex: number, chapterText?: string) => {
       curProjectRef.current = projectName;
       try {
+        const normalizedText = normalizeChapterTextForRequest(chapterText);
         const res = await fetchWithTimeout(
           `${API_BASE}/api/listen-book/check`,
           {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({projectName, chapterIndex}),
+            body: JSON.stringify({
+              projectName,
+              chapterIndex,
+              ...(normalizedText
+                ? {contentHash: createTextHash(normalizedText)}
+                : {}),
+            }),
           },
         );
         const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data?.error || `缓存检查失败(${res.status})`);
+        }
 
         if (data.exists) {
           setSegments(data.segments);
@@ -238,11 +255,17 @@ export const useListenBook = (): UseListenBookReturn => {
     async (
       projectName: string,
       chapterIndex: number,
-      chapter: Chapter,
-      chapterList: Chapter[],
-      chapterText?: string,
+      payload: ListenBookGeneratePayload,
     ) => {
       curProjectRef.current = projectName;
+      const chapterText = normalizeChapterTextForRequest(payload.chapterText);
+
+      if (!chapterText) {
+        setListenState('error');
+        cachedListenStateRef.current = 'idle';
+        console.warn('Trigger listening skipped: empty chapter text');
+        return;
+      }
 
       if (cachedListenStateRef.current === 'ready' && segments.length > 0) {
         setListenState('ready');
@@ -272,14 +295,17 @@ export const useListenBook = (): UseListenBookReturn => {
             body: JSON.stringify({
               projectName,
               chapterIndex,
-              chapterUrl: chapter.bookUrl,
-              chapterTitle: chapter.title,
-              chapterList,
-              chapterText: chapterText || '',
+              chapterTitle: payload.chapterTitle || '',
+              chapterText,
+              prescanTexts: payload.prescanTexts || [],
             }),
           },
         );
         const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data?.error || `启动听书失败(${res.status})`);
+        }
 
         if (data.alreadyDone) {
           listenTaskIdRef.current = data.taskId || null;

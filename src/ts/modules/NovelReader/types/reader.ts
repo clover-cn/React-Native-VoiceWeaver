@@ -42,6 +42,18 @@ export interface ListenSegment {
   referenceAudioFallback?: string;
 }
 
+export interface ListenBookPrescanText {
+  chapterIndex: number;
+  chapterTitle: string;
+  text: string;
+}
+
+export interface ListenBookGeneratePayload {
+  chapterTitle?: string;
+  chapterText: string;
+  prescanTexts?: ListenBookPrescanText[];
+}
+
 export interface GenerationSettings {
   projectName: string;
   missingEmotionPolicy: 'strict' | 'fallback_neutral';
