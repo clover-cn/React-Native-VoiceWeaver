@@ -26,6 +26,7 @@ import {
   SearchBooksResult,
 } from './types';
 import {bookSourceLogger} from './bookSourceLogger';
+import {loadUserBookSourceRecords} from './userBookSourceStorage';
 
 const MAX_TOC_PAGES = 30;
 const MAX_CONTENT_PAGES = 10;
@@ -56,15 +57,35 @@ const throwIfCancelled = (cancelToken?: BookSourceCancelToken) => {
   }
 };
 
-const enabledSources = () =>
-  BUILTIN_BOOK_SOURCES.filter(
+const mergeBookSources = (userSources: LegadoBookSource[]) => {
+  const sourceMap = new Map<string, LegadoBookSource>();
+
+  BUILTIN_BOOK_SOURCES.forEach(source => {
+    if (source.bookSourceUrl) {
+      sourceMap.set(source.bookSourceUrl, source);
+    }
+  });
+
+  userSources.forEach(source => {
+    if (source.bookSourceUrl) {
+      sourceMap.set(source.bookSourceUrl, source);
+    }
+  });
+
+  return Array.from(sourceMap.values());
+};
+
+const enabledSources = async () => {
+  const userRecords = await loadUserBookSourceRecords();
+  return mergeBookSources(userRecords.map(record => record.source)).filter(
     source => source.enabled !== false && source.bookSourceType !== 1,
   );
+};
 
-const sourceById = (sourceId?: string) => {
+const sourceById = async (sourceId?: string) => {
+  const sources = await enabledSources();
   return (
-    enabledSources().find(source => source.bookSourceUrl === sourceId) ||
-    enabledSources()[0]
+    sources.find(source => source.bookSourceUrl === sourceId) || sources[0]
   );
 };
 
@@ -513,7 +534,7 @@ const loadTocPage = async (
 };
 
 export const LocalBookSourceService = {
-  getSources(): LegadoBookSource[] {
+  async getSources(): Promise<LegadoBookSource[]> {
     return enabledSources();
   },
 
@@ -522,7 +543,7 @@ export const LocalBookSourceService = {
     page = 1,
     sourceIds?: string[],
   ): Promise<SearchBooksResult> {
-    const sources = filterSearchSources(enabledSources(), sourceIds);
+    const sources = filterSearchSources(await enabledSources(), sourceIds);
     bookSourceLogger.log('search', '开始本地多书源搜索', {
       keyword,
       page,
@@ -614,7 +635,7 @@ export const LocalBookSourceService = {
     book: Book,
     cancelToken?: BookSourceCancelToken,
   ): Promise<ChapterListResult> {
-    const source = sourceById(book.origin);
+    const source = await sourceById(book.origin);
     if (!source) {
       throw new Error('未找到可用书源');
     }
@@ -671,7 +692,7 @@ export const LocalBookSourceService = {
     chapter: Chapter,
     cancelToken?: BookSourceCancelToken,
   ): Promise<ContentResult> {
-    const source = sourceById(book.origin || chapter.sourceId);
+    const source = await sourceById(book.origin || chapter.sourceId);
     if (!source) {
       throw new Error('未找到可用书源');
     }

@@ -52,6 +52,26 @@ interface NativeUploadResult {
   message?: string;
 }
 
+interface NativeSelectedJsonResult {
+  cancelled: boolean;
+  name: string;
+  size: number;
+  content: string;
+  error?: string;
+}
+
+interface NativeJsonExportPayload {
+  fileName: string;
+  content: string;
+}
+
+interface NativeJsonExportResult {
+  success: boolean;
+  cancelled: boolean;
+  uri?: string;
+  error?: string;
+}
+
 interface NativeCachedUploadFile {
   path: string;
   uri: string;
@@ -176,6 +196,14 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     return JSON.stringify(result)
   }
 
+  private stringifySelectedJsonResult(result: NativeSelectedJsonResult): string {
+    return JSON.stringify(result)
+  }
+
+  private stringifyJsonExportResult(result: NativeJsonExportResult): string {
+    return JSON.stringify(result)
+  }
+
   private createUploadResult(
     success: boolean,
     error?: string,
@@ -281,6 +309,13 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     return `${cacheDir}/audio_upload_${Date.now()}${suffix}`
   }
 
+  private buildJsonImportTempPath(fileName: string): string {
+    const cacheDir = getContext().cacheDir
+    const extension = this.getFileExtension(fileName)
+    const suffix = extension ? `.${extension}` : '.json'
+    return `${cacheDir}/book_source_import_${Date.now()}${suffix}`
+  }
+
   private buildUploadInternalCacheUri(tempPath: string): string {
     const cacheDir = getContext().cacheDir
     if (!tempPath.startsWith(cacheDir)) {
@@ -360,6 +395,15 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
       return trimmedName
     }
     return `audio_${Date.now()}.mp3`
+  }
+
+  private getSafeJsonFileName(fileName: string): string {
+    const trimmedName = fileName.trim().replace(/[\\/:*?"<>|]/g, '_')
+    const baseName = trimmedName.length > 0 ? trimmedName : `book_sources_${Date.now()}.json`
+    if (baseName.toLowerCase().endsWith('.json')) {
+      return baseName
+    }
+    return `${baseName}.json`
   }
 
   private getFileNameFromPath(path: string): string {
@@ -1042,6 +1086,152 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     } catch (error) {
       Logger.error(TAG, `uploadAudio exception: ${JSON.stringify(this.parseBusinessError(error))}`)
       finish(this.createUploadResult(false, '上传参数解析失败'))
+    }
+  }
+
+  selectJsonDocument(callback: ((result: string) => void) | undefined): void {
+    Logger.info(TAG, 'selectJsonDocument')
+    const finish = (result: NativeSelectedJsonResult) => {
+      callback?.(this.stringifySelectedJsonResult(result))
+    }
+
+    try {
+      const documentSelectOptions = new picker.DocumentSelectOptions()
+      documentSelectOptions.maxSelectNumber = 1
+      const documentPicker = new picker.DocumentViewPicker(getContext(this) as common.UIAbilityContext)
+      documentPicker.select(documentSelectOptions)
+        .then(async (result: Array<string>) => {
+          const selectedUri = result.length > 0 ? result[0] : ''
+          if (!selectedUri) {
+            finish({
+              cancelled: true,
+              name: '',
+              size: 0,
+              content: '',
+            })
+            return
+          }
+
+          let file: fs.File | undefined = undefined
+          let tempPath = ''
+          try {
+            const sourceFileName = this.getFileNameFromUri(selectedUri)
+            tempPath = this.buildJsonImportTempPath(sourceFileName)
+            file = fs.openSync(selectedUri, fs.OpenMode.READ_ONLY)
+            fs.copyFileSync(file.fd, tempPath)
+            const stat = await fs.stat(tempPath)
+            const content = fs.readTextSync(tempPath)
+            finish({
+              cancelled: false,
+              name: sourceFileName,
+              size: Number(stat.size ?? 0),
+              content: content,
+            })
+          } catch (error) {
+            const businessError = this.parseBusinessError(error)
+            Logger.error(TAG, `selectJsonDocument read failed: ${JSON.stringify(businessError)}`)
+            finish({
+              cancelled: true,
+              name: this.getFileNameFromUri(selectedUri),
+              size: 0,
+              content: '',
+              error: businessError.message ?? '读取 JSON 文件失败',
+            })
+          } finally {
+            if (file) {
+              fs.closeSync(file)
+            }
+            this.safeDeleteFile(tempPath)
+          }
+        })
+        .catch((error: BusinessError) => {
+          Logger.warn(TAG, `selectJsonDocument failed: ${JSON.stringify(error)}`)
+          finish({
+            cancelled: true,
+            name: '',
+            size: 0,
+            content: '',
+            error: error.message ?? '选择 JSON 文件失败',
+          })
+        })
+    } catch (error) {
+      const businessError = this.parseBusinessError(error)
+      Logger.error(TAG, `selectJsonDocument exception: ${JSON.stringify(businessError)}`)
+      finish({
+        cancelled: true,
+        name: '',
+        size: 0,
+        content: '',
+        error: businessError.message ?? '当前设备不支持 JSON 文件选择',
+      })
+    }
+  }
+
+  exportJsonDocument(payload: string, callback: ((result: string) => void) | undefined): void {
+    Logger.info(TAG, `exportJsonDocument payload length: ${payload.length}`)
+    const finish = (result: NativeJsonExportResult) => {
+      callback?.(this.stringifyJsonExportResult(result))
+    }
+
+    try {
+      const parsed = JSON.parse(payload) as NativeJsonExportPayload
+      const fileName = this.getSafeJsonFileName(parsed.fileName ?? '')
+      const content = parsed.content ?? ''
+      const documentSaveOptions = new picker.DocumentSaveOptions()
+      documentSaveOptions.newFileNames = [fileName]
+      const documentPicker = new picker.DocumentViewPicker(getContext(this) as common.UIAbilityContext)
+
+      documentPicker.save(documentSaveOptions)
+        .then((result: Array<string>) => {
+          const targetUri = result.length > 0 ? result[0] : ''
+          if (!targetUri) {
+            finish({
+              success: false,
+              cancelled: true,
+            })
+            return
+          }
+
+          let file: fs.File | undefined = undefined
+          try {
+            file = fs.openSync(targetUri, fs.OpenMode.READ_WRITE)
+            fs.writeSync(file.fd, content)
+            finish({
+              success: true,
+              cancelled: false,
+              uri: targetUri,
+            })
+          } catch (error) {
+            const businessError = this.parseBusinessError(error)
+            Logger.error(TAG, `exportJsonDocument write failed: ${JSON.stringify(businessError)}`)
+            finish({
+              success: false,
+              cancelled: false,
+              uri: targetUri,
+              error: businessError.message ?? '写入 JSON 文件失败',
+            })
+          } finally {
+            if (file) {
+              fs.closeSync(file)
+            }
+          }
+        })
+        .catch((error: BusinessError) => {
+          Logger.warn(TAG, `exportJsonDocument save failed: ${JSON.stringify(error)}`)
+          finish({
+            success: false,
+            cancelled: true,
+            error: error.message ?? '保存 JSON 文件失败',
+          })
+        })
+    } catch (error) {
+      const businessError = this.parseBusinessError(error)
+      Logger.error(TAG, `exportJsonDocument exception: ${JSON.stringify(businessError)}`)
+      finish({
+        success: false,
+        cancelled: false,
+        error: businessError.message ?? '导出参数解析失败',
+      })
     }
   }
 

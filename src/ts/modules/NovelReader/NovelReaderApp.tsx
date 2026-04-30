@@ -36,6 +36,7 @@ import {
   saveReadingRecord,
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
+import BookSourceManagerModal from './components/BookSourceManagerModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
 import LocalBookSourceService from './bookSource/LocalBookSourceService';
 import {BookSourceCancelToken} from './bookSource/types';
@@ -394,6 +395,8 @@ const NovelReaderApp: React.FC = () => {
   const [missingEmotionPolicy, setMissingEmotionPolicy] =
     useState<MissingEmotionPolicy>('fallback_neutral');
   const [sourceModalVisible, setSourceModalVisible] = useState(false);
+  const [bookSourceManagerVisible, setBookSourceManagerVisible] =
+    useState(false);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
   const [readerLoading, setReaderLoading] = useState<ReaderLoadingState | null>(
     null,
@@ -1659,6 +1662,11 @@ const NovelReaderApp: React.FC = () => {
   );
 
   const handleMenuItemClick = useCallback((id: string) => {
+    if (id === 'sourceManage') {
+      setBookSourceManagerVisible(true);
+      return;
+    }
+
     if (id === 'source') {
       setSourceModalVisible(true);
       return;
@@ -1738,6 +1746,10 @@ const NovelReaderApp: React.FC = () => {
         currentBook={selectedBook}
         onClose={() => setSourceModalVisible(false)}
         onSourceSelect={handleSourceSelect}
+      />
+      <BookSourceManagerModal
+        visible={bookSourceManagerVisible}
+        onClose={() => setBookSourceManagerVisible(false)}
       />
       <AudioLibraryModal
         visible={audioLibraryVisible}

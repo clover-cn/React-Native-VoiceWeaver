@@ -30,6 +30,8 @@ BridgeTurboModule::BridgeTurboModule(const ArkTSTurboModule::Context ctx, const 
         ARK_METHOD_METADATA(selectPicture, 2),
         ARK_METHOD_METADATA(selectAudio, 1),
         ARK_METHOD_METADATA(uploadAudio, 2),
+        ARK_METHOD_METADATA(selectJsonDocument, 1),
+        ARK_METHOD_METADATA(exportJsonDocument, 2),
         ARK_METHOD_METADATA(cacheListenBookAudio, 2),
         ARK_METHOD_METADATA(cleanupListenBookAudioCache, 2),
         ARK_METHOD_METADATA(openLink, 1),

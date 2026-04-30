@@ -67,6 +67,10 @@ export interface Spec extends TurboModule {
 
   uploadAudio(payload: string, callback: (result: string) => void): void;
 
+  selectJsonDocument(callback: (result: string) => void): void;
+
+  exportJsonDocument(payload: string, callback: (result: string) => void): void;
+
   cacheListenBookAudio(
     payload: string,
     callback: (result: string) => void,

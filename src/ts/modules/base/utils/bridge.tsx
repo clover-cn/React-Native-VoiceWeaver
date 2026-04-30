@@ -115,6 +115,23 @@ class Bridge2Native {
   }
 
   /**
+   * 选择并读取 JSON 文档，仅鸿蒙已实现。
+   */
+  selectJsonDocument(callback?: (result: string) => void): void {
+    return BridgeTurboModule.selectJsonDocument(callback || (() => {}));
+  }
+
+  /**
+   * 导出 JSON 文档，仅鸿蒙已实现。
+   */
+  exportJsonDocument(
+    payload: string,
+    callback?: (result: string) => void,
+  ): void {
+    return BridgeTurboModule.exportJsonDocument(payload, callback || (() => {}));
+  }
+
+  /**
    *
    * @param tag
    * @param content

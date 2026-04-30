@@ -47,7 +47,7 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
 
   useEffect(() => {
     loadSearchHistory().then(setSearchHistory);
-    setAvailableSources(LocalBookSourceService.getSources());
+    LocalBookSourceService.getSources().then(setAvailableSources);
   }, []);
 
   const toggleSource = (sourceId: string) => {
