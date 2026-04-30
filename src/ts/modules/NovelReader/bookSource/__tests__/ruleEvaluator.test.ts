@@ -244,6 +244,43 @@ describe('本地书源规则解析', () => {
     ).toBe('https://apibi.cc/api/chapter?id=7788&chapterid=1');
   });
 
+  it('支持目录列表规则用 @js 返回章节对象数组', () => {
+    const context = createRuleContext(
+      '<div id="content">正文</div>',
+      'https://book.qingse.site/article/14420',
+    );
+    const list = evaluateList(
+      '@js:\n[{"title":"全一章", "href":baseUrl}]',
+      context,
+    );
+    const itemContext = createRuleContext(
+      context.raw,
+      context.baseUrl,
+      list[0],
+    );
+
+    expect(list).toHaveLength(1);
+    expect(evaluateString('title', itemContext)).toBe('全一章');
+    expect(evaluateString('href', itemContext, true)).toBe(
+      'https://book.qingse.site/article/14420',
+    );
+  });
+
+  it('支持目录列表规则用 @js 返回 JSON 字符串数组', () => {
+    const context = createRuleContext('', 'https://example.com/book/1');
+    const list = evaluateList(
+      '@js:result=JSON.stringify([{title:"第一章",href:"/chapter/1.html"}])',
+      context,
+    );
+    const itemContext = createRuleContext('', context.baseUrl, list[0]);
+
+    expect(list).toHaveLength(1);
+    expect(evaluateString('title', itemContext)).toBe('第一章');
+    expect(evaluateString('href', itemContext, true)).toBe(
+      'https://example.com/chapter/1.html',
+    );
+  });
+
   it('支持 legado Default 规则链、索引和反序列表', () => {
     const html = `
       <section>

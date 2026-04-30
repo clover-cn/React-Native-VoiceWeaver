@@ -63,62 +63,62 @@
     "ruleExplore": {},
     "searchUrl": "/api/search?q={{key}}",
     "ruleSearch": {
-        "bookList": "$.data[*]",
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "bookUrl": "/api/book?id={$.id}"
+      "bookList": "$.data[*]",
+      "name": "$.title",
+      "author": "$.author",
+      "intro": "$.intro##^简介：##",
+      "bookUrl": "/api/book?id={$.id}"
     },
     "ruleBookInfo": {
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "kind": "$.sortname",
-        "lastChapter": "$.lastchapter",
-        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
-        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
+      "name": "$.title",
+      "author": "$.author",
+      "intro": "$.intro##^简介：##",
+      "kind": "$.sortname",
+      "lastChapter": "$.lastchapter",
+      "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
+      "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
     },
     "ruleToc": {
-        "chapterList": "$.list[*]",
-        "chapterName": "<js>result=String(result)</js>",
-        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
-        "nextTocUrl": ""
+      "chapterList": "$.list[*]",
+      "chapterName": "<js>result=String(result)</js>",
+      "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
+      "nextTocUrl": ""
     },
     "ruleContent": {
-        "content": "$.txt",
-        "nextContentUrl": ""
+      "content": "$.txt",
+      "nextContentUrl": ""
     },
     "tag": "笔趣阁阁楼API",
     "searchRule": {
-        "bookList": "$.data[*]",
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "bookUrl": "/api/book?id={$.id}"
+      "bookList": "$.data[*]",
+      "name": "$.title",
+      "author": "$.author",
+      "intro": "$.intro##^简介：##",
+      "bookUrl": "/api/book?id={$.id}"
     },
     "exploreRule": {},
     "bookInfoRule": {
-        "name": "$.title",
-        "author": "$.author",
-        "intro": "$.intro##^简介：##",
-        "kind": "$.sortname",
-        "lastChapter": "$.lastchapter",
-        "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
-        "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
+      "name": "$.title",
+      "author": "$.author",
+      "intro": "$.intro##^简介：##",
+      "kind": "$.sortname",
+      "lastChapter": "$.lastchapter",
+      "coverUrl": "$.id@js:result='https://www.bqg613.cc/bookimg/'+Math.floor(Number(result)/1000)+'/'+result+'.jpg'",
+      "tocUrl": "$.dirid@js:java.put('bqglDirId',String(result));result='/api/booklist?id='+result"
     },
     "tocRule": {
-        "chapterList": "$.list[*]",
-        "chapterName": "<js>result=String(result)</js>",
-        "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
-        "nextTocUrl": ""
+      "chapterList": "$.list[*]",
+      "chapterName": "<js>result=String(result)</js>",
+      "chapterUrl": "<js>result='/api/chapter?id='+java.get('bqglDirId')+'&chapterid='+(Number(chapter.index)+1)</js>",
+      "nextTocUrl": ""
     },
     "contentRule": {
-        "content": "$.txt",
-        "nextContentUrl": ""
+      "content": "$.txt",
+      "nextContentUrl": ""
     },
     "loginJs": "",
     "key": "https://apibi.cc"
-},
+  },
   {
     "bookSourceComment": "同站https://www.larouwen .com/\nhttps://www.yedyge.com/（搜索页只能显示第一页）",
     "bookSourceGroup": "天子门生",
@@ -157,6 +157,37 @@
       "chapterUrl": "a@href "
     },
     "searchUrl": "https://www.yiyechunxiao.com/search/?q={{key}}",
+    "weight": 0
+  },
+  {
+    "bookSourceGroup": "洛制",
+    "bookSourceName": "xx短篇",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://book.qingse.site/",
+    "customButton": false,
+    "customOrder": 0,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "eventListener": false,
+    "lastUpdateTime": "1777064181077",
+    "respondTime": 180000,
+    "ruleBookInfo": {},
+    "ruleContent": {
+      "content": "id.content@html"
+    },
+    "ruleExplore": {},
+    "ruleSearch": {
+      "bookList": "class.list-group@tag.li",
+      "bookUrl": "tag.a@href",
+      "name": "text"
+    },
+    "ruleToc": {
+      "chapterList": "@js:\n[{\"title\":\"全一章\", \"href\":baseUrl}]",
+      "chapterName": "title",
+      "chapterUrl": "href"
+    },
+    "searchUrl": "article/index?q={{key}}",
     "weight": 0
   }
 ]

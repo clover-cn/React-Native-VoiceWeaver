@@ -668,7 +668,20 @@ export const evaluateList = (
   }
 
   let result: RuleItem[] = [];
-  if (cleanRule.startsWith('@json:') || cleanRule.startsWith('$')) {
+  const legadoJs = cleanRule.match(/^<js>([\s\S]*)<\/js>$/i);
+  if (legadoJs) {
+    result = normalizeJsListResult(
+      executeRuleJsValue(legadoJs[1], defaultRuleResult(context), context),
+    );
+  } else if (cleanRule.startsWith('@js:')) {
+    result = normalizeJsListResult(
+      executeRuleJsValue(
+        cleanRule.slice(4),
+        defaultRuleResult(context),
+        context,
+      ),
+    );
+  } else if (cleanRule.startsWith('@json:') || cleanRule.startsWith('$')) {
     result = evalJsonPath(cleanRule, context);
   } else if (
     cleanRule.startsWith('@XPath:') ||
@@ -846,11 +859,26 @@ type RuleJsFunction = (
 const ruleExpressionJsCache = new Map<string, RuleJsFunction>();
 const ruleStatementJsCache = new Map<string, RuleJsFunction>();
 
-const executeRuleJs = (
+const stringifyRuleJsValue = (value: unknown): string =>
+  value == null
+    ? ''
+    : typeof value === 'string'
+    ? value
+    : JSON.stringify(value);
+
+const isRuleJsExpression = (script: string) => {
+  const trimmed = script.trim();
+  return (
+    /^[\[{]/.test(trimmed) ||
+    /^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed)
+  );
+};
+
+const executeRuleJsValue = (
   script: string,
   result: string,
   context: RuleContext,
-): string => {
+): unknown => {
   try {
     const vars = context.vars || {};
     context.vars = vars;
@@ -876,36 +904,35 @@ const executeRuleJs = (
     };
 
     const trimmed = script.trim();
-    if (/^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed)) {
+    if (isRuleJsExpression(trimmed)) {
       let exprFn = ruleExpressionJsCache.get(script);
-      if (!exprFn) {
-        // eslint-disable-next-line no-new-func
-        exprFn = new Function(
-          'result',
-          'java',
-          'baseUrl',
-          'src',
-          'chapter',
-          'book',
-          'vars',
-          `return (${script});`,
-        ) as RuleJsFunction;
-        ruleExpressionJsCache.set(script, exprFn);
+      try {
+        if (!exprFn) {
+          // eslint-disable-next-line no-new-func
+          exprFn = new Function(
+            'result',
+            'java',
+            'baseUrl',
+            'src',
+            'chapter',
+            'book',
+            'vars',
+            `return (${script});`,
+          ) as RuleJsFunction;
+          ruleExpressionJsCache.set(script, exprFn);
+        }
+        return exprFn(
+          result,
+          java,
+          context.baseUrl,
+          context.raw,
+          vars.chapter || {},
+          vars.book || {},
+          vars,
+        );
+      } catch (_error) {
+        // 不是所有以 { 开头的脚本都是表达式，失败后按语句规则继续执行。
       }
-      const value = exprFn(
-        result,
-        java,
-        context.baseUrl,
-        context.raw,
-        vars.chapter || {},
-        vars.book || {},
-        vars,
-      );
-      return value == null
-        ? ''
-        : typeof value === 'string'
-        ? value
-        : JSON.stringify(value);
     }
 
     // 书源 JS 只在内置或用户信任的规则中执行，并且只暴露本地白名单对象。
@@ -933,11 +960,44 @@ const executeRuleJs = (
       vars.book || {},
       vars,
     );
-    return value == null ? '' : String(value);
+    return value;
   } catch (error) {
     console.warn('[bookSource] JS 规则执行失败', script, error);
     return '';
   }
+};
+
+const executeRuleJs = (
+  script: string,
+  result: string,
+  context: RuleContext,
+): string => stringifyRuleJsValue(executeRuleJsValue(script, result, context));
+
+const normalizeJsListResult = (value: unknown): RuleItem[] => {
+  if (value == null || value === '') {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value as RuleItem[];
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed as RuleItem[];
+      }
+      if (parsed && typeof parsed === 'object') {
+        return [parsed as RuleItem];
+      }
+    } catch (_error) {
+      return [value];
+    }
+  }
+  return [value as RuleItem];
 };
 
 const isUrlLiteralRule = (rule: string) =>
@@ -1037,6 +1097,14 @@ export const evaluateString = (
         (isNode(context.item) ||
           isXPathContext(context.item) ||
           targetRule === 'all')
+      ) {
+        value = evaluateRawString(targetRule, context);
+      } else if (
+        context.item &&
+        !isNode(context.item) &&
+        !isRegexContext(context.item) &&
+        !isXPathContext(context.item) &&
+        isSimpleExtractor(targetRule)
       ) {
         value = evaluateRawString(targetRule, context);
       } else if (isDefaultRule(targetRule)) {
