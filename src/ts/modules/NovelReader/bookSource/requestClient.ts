@@ -1,7 +1,11 @@
 import iconv from 'iconv-lite';
 import {Buffer} from 'buffer';
 import {fetchWithTimeout} from '../hooks/useListenBook';
-import {LegadoBookSource, ResolvedRequest} from './types';
+import {
+  BookSourceCancelToken,
+  LegadoBookSource,
+  ResolvedRequest,
+} from './types';
 import {
   renderTemplate,
   resolveUrl,
@@ -100,15 +104,28 @@ const decodeArrayBuffer = (buffer: ArrayBuffer, charset: string) => {
   }
 };
 
+const isCancelled = (cancelToken?: BookSourceCancelToken) => {
+  const signal = cancelToken?.signal as {aborted?: boolean} | undefined;
+  return Boolean(cancelToken?.cancelled || signal?.aborted);
+};
+
+const throwIfCancelled = (cancelToken?: BookSourceCancelToken) => {
+  if (isCancelled(cancelToken)) {
+    throw new Error('书源请求已取消');
+  }
+};
+
 export const requestText = async (
   request: ResolvedRequest,
   timeoutMs = 20000,
+  cancelToken?: BookSourceCancelToken,
 ): Promise<string> => {
   let attempt = 0;
   const maxAttempt = Math.max(1, request.retry + 1);
 
   while (attempt < maxAttempt) {
     try {
+      throwIfCancelled(cancelToken);
       bookSourceLogger.log('request', `开始请求 ${request.method}`, {
         url: request.url,
         charset: request.charset,
@@ -121,10 +138,12 @@ export const requestText = async (
           method: request.method,
           headers: request.headers,
           body: request.method === 'GET' ? undefined : request.body,
+          ...(cancelToken?.signal ? {signal: cancelToken.signal as any} : {}),
         },
         timeoutMs,
       );
       const buffer = await response.arrayBuffer();
+      throwIfCancelled(cancelToken);
       bookSourceLogger.log('request', `收到响应 HTTP ${response.status}`, {
         url: request.url,
         bytes: buffer.byteLength,
@@ -140,6 +159,9 @@ export const requestText = async (
       });
       return text;
     } catch (error) {
+      if (isCancelled(cancelToken)) {
+        throw error;
+      }
       attempt += 1;
       bookSourceLogger.warn('request', '请求失败', {
         url: request.url,

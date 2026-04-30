@@ -15,6 +15,7 @@ import {
   splitRegexTail,
 } from './ruleUtils';
 import {
+  BookSourceCancelToken,
   BookSourceDiagnostic,
   BookSourceSearchResult,
   ChapterListResult,
@@ -26,6 +27,7 @@ import {bookSourceLogger} from './bookSourceLogger';
 
 const MAX_TOC_PAGES = 30;
 const MAX_CONTENT_PAGES = 10;
+const TOC_PARSE_BATCH_SIZE = 100;
 
 const URL_RULE_KEYS = new Set([
   'bookUrl',
@@ -35,6 +37,22 @@ const URL_RULE_KEYS = new Set([
   'nextTocUrl',
   'nextContentUrl',
 ]);
+
+const sleepFrame = () =>
+  new Promise<void>(resolve => {
+    setTimeout(resolve, 0);
+  });
+
+const isCancelled = (cancelToken?: BookSourceCancelToken) => {
+  const signal = cancelToken?.signal as {aborted?: boolean} | undefined;
+  return Boolean(cancelToken?.cancelled || signal?.aborted);
+};
+
+const throwIfCancelled = (cancelToken?: BookSourceCancelToken) => {
+  if (isCancelled(cancelToken)) {
+    throw new Error('书源解析已取消');
+  }
+};
 
 const enabledSources = () =>
   BUILTIN_BOOK_SOURCES.filter(
@@ -79,10 +97,11 @@ const readRuleField = (
   item?: RuleItem,
   key?: string,
   vars?: Record<string, unknown>,
+  json?: unknown,
 ) => {
   return evaluateString(
     rule,
-    createRuleContext(raw, baseUrl, item, vars),
+    createRuleContext(raw, baseUrl, item, vars, json),
     key ? URL_RULE_KEYS.has(key) : false,
   );
 };
@@ -262,9 +281,15 @@ const getBookInfo = async (
   source: LegadoBookSource,
   book: Book,
   vars: Record<string, unknown>,
+  cancelToken?: BookSourceCancelToken,
 ): Promise<Book> => {
   const request = resolveRequest(source, book.bookUrl, {}, book.bookUrl);
-  const raw = await requestText(request, source.respondTime || 20000);
+  const raw = await requestText(
+    request,
+    source.respondTime || 20000,
+    cancelToken,
+  );
+  throwIfCancelled(cancelToken);
   const rules = source.ruleBookInfo || {};
   vars.book = book;
   const initItem = readBookInfoInit(rules.bookInfoInit, raw, request.url, vars);
@@ -328,11 +353,18 @@ const loadTocPage = async (
   tocUrl: string,
   startIndex: number,
   vars: Record<string, unknown>,
+  cancelToken?: BookSourceCancelToken,
 ): Promise<{chapters: Chapter[]; nextUrl: string}> => {
   const request = resolveRequest(source, tocUrl, {}, tocUrl);
-  const raw = await requestText(request, source.respondTime || 20000);
+  const raw = await requestText(
+    request,
+    source.respondTime || 20000,
+    cancelToken,
+  );
+  throwIfCancelled(cancelToken);
   const rules = source.ruleToc || {};
   const context = createRuleContext(raw, request.url, undefined, vars);
+  throwIfCancelled(cancelToken);
   const list = evaluateList(rules.chapterList, context);
   const seen = new Set<string>();
   bookSourceLogger.log('toc', '目录列表规则匹配完成', {
@@ -342,52 +374,60 @@ const loadTocPage = async (
     listCount: list.length,
   });
 
-  const chapters = list
-    .map((item, offset) => {
-      const ruleVars = {
-        ...vars,
-        book,
-        chapter: {index: startIndex + offset},
-        index: startIndex + offset,
-      };
-      const title = readRuleField(
-        rules.chapterName,
-        raw,
-        request.url,
-        item,
-        'chapterName',
-        ruleVars,
-      );
-      const chapterUrl = readRuleField(
-        rules.chapterUrl,
-        raw,
-        request.url,
-        item,
-        'chapterUrl',
-        ruleVars,
-      );
+  const chapters: Chapter[] = [];
+  for (let offset = 0; offset < list.length; offset += 1) {
+    if (offset > 0 && offset % TOC_PARSE_BATCH_SIZE === 0) {
+      await sleepFrame();
+    }
+    throwIfCancelled(cancelToken);
 
-      if (!title || !chapterUrl || seen.has(chapterUrl)) {
-        bookSourceLogger.warn('toc', '目录项被丢弃', {
-          sourceName: source.bookSourceName,
-          title,
-          chapterUrl,
-          duplicated: chapterUrl ? seen.has(chapterUrl) : false,
-        });
-        return null;
-      }
-      seen.add(chapterUrl);
+    const item = list[offset];
+    const ruleVars = {
+      ...vars,
+      book,
+      chapter: {index: startIndex + offset},
+      index: startIndex + offset,
+    };
+    const title = readRuleField(
+      rules.chapterName,
+      raw,
+      request.url,
+      item,
+      'chapterName',
+      ruleVars,
+      context.json,
+    );
+    const chapterUrl = readRuleField(
+      rules.chapterUrl,
+      raw,
+      request.url,
+      item,
+      'chapterUrl',
+      ruleVars,
+      context.json,
+    );
 
-      return {
+    if (!title || !chapterUrl || seen.has(chapterUrl)) {
+      bookSourceLogger.warn('toc', '目录项被丢弃', {
+        sourceName: source.bookSourceName,
         title,
-        bookUrl: chapterUrl,
-        baseUrl: request.url,
-        sourceId: source.bookSourceUrl,
-        index: startIndex + offset,
-      } as Chapter;
-    })
-    .filter(Boolean) as Chapter[];
+        chapterUrl,
+        duplicated: chapterUrl ? seen.has(chapterUrl) : false,
+      });
+      continue;
+    }
+    seen.add(chapterUrl);
 
+    chapters.push({
+      title,
+      bookUrl: chapterUrl,
+      baseUrl: request.url,
+      sourceId: source.bookSourceUrl,
+      index: startIndex + offset,
+    } as Chapter);
+  }
+
+  throwIfCancelled(cancelToken);
   const nextUrl = readRuleField(
     rules.nextTocUrl,
     raw,
@@ -473,7 +513,10 @@ export const LocalBookSourceService = {
     });
   },
 
-  async getChapterList(book: Book): Promise<ChapterListResult> {
+  async getChapterList(
+    book: Book,
+    cancelToken?: BookSourceCancelToken,
+  ): Promise<ChapterListResult> {
     const source = sourceById(book.origin);
     if (!source) {
       throw new Error('未找到可用书源');
@@ -485,7 +528,8 @@ export const LocalBookSourceService = {
       bookUrl: book.bookUrl,
     });
     const vars: Record<string, unknown> = {};
-    const detailedBook = await getBookInfo(source, book, vars);
+    const detailedBook = await getBookInfo(source, book, vars, cancelToken);
+    throwIfCancelled(cancelToken);
     const firstTocUrl = detailedBook.tocUrl || detailedBook.bookUrl;
     const visited = new Set<string>();
     const chapters: Chapter[] = [];
@@ -503,7 +547,9 @@ export const LocalBookSourceService = {
         nextUrl,
         chapters.length,
         vars,
+        cancelToken,
       );
+      throwIfCancelled(cancelToken);
       chapters.push(...result.chapters);
       nextUrl = result.nextUrl;
     }
@@ -523,7 +569,11 @@ export const LocalBookSourceService = {
     };
   },
 
-  async getBookContent(book: Book, chapter: Chapter): Promise<ContentResult> {
+  async getBookContent(
+    book: Book,
+    chapter: Chapter,
+    cancelToken?: BookSourceCancelToken,
+  ): Promise<ContentResult> {
     const source = sourceById(book.origin || chapter.sourceId);
     if (!source) {
       throw new Error('未找到可用书源');
@@ -557,7 +607,12 @@ export const LocalBookSourceService = {
       if (page === 0) {
         firstRequestUrl = request.url;
       }
-      const raw = await requestText(request, source.respondTime || 20000);
+      const raw = await requestText(
+        request,
+        source.respondTime || 20000,
+        cancelToken,
+      );
+      throwIfCancelled(cancelToken);
       const rules = source.ruleContent || {};
       const content = readRuleField(
         rules.content,

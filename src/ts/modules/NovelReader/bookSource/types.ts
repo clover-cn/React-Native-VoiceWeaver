@@ -76,6 +76,12 @@ export interface ResolvedRequest {
   retry: number;
 }
 
+export interface BookSourceCancelToken {
+  cancelled: boolean;
+  signal?: unknown;
+  cancel?: () => void;
+}
+
 export interface BookSourceSearchResult extends Book {
   sourceId: string;
 }

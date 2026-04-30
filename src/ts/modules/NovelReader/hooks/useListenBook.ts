@@ -5,6 +5,16 @@ import {
   normalizeChapterTextForRequest,
 } from '../utils/listenBook';
 
+type AbortSignalLike = {
+  aborted?: boolean;
+  addEventListener?: (type: 'abort', listener: () => void) => void;
+  removeEventListener?: (type: 'abort', listener: () => void) => void;
+};
+
+type TimeoutRequestInit = RequestInit & {
+  signal?: AbortSignalLike;
+};
+
 // ⚠️ 重要：模拟器/真机上 localhost 指向设备自身，必须改为开发电脑的局域网IP
 // 例如：'http://192.168.1.100:3000'
 // 可以在电脑终端执行 ipconfig (Windows) 或 ifconfig (Mac/Linux) 查看
@@ -13,21 +23,54 @@ export const API_BASE = 'http://192.168.1.134:3000';
 // 带超时保护的 fetch，防止网络不可达时阻塞主线程导致 ANR 闪退
 export const fetchWithTimeout = (
   url: string,
-  options?: RequestInit,
+  options?: TimeoutRequestInit,
   timeoutMs: number = 15000,
 ): Promise<Response> => {
   return new Promise((resolve, reject) => {
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      reject(new Error(`请求已取消: ${url}`));
+      return;
+    }
+
+    let settled = false;
     const timer = setTimeout(() => {
+      settled = true;
+      cleanup();
       reject(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
     }, timeoutMs);
 
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', handleAbort);
+    };
+
+    const handleAbort = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(new Error(`请求已取消: ${url}`));
+    };
+
+    signal?.addEventListener?.('abort', handleAbort);
+
     fetch(url, options)
       .then(res => {
-        clearTimeout(timer);
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
         resolve(res);
       })
       .catch(err => {
-        clearTimeout(timer);
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
         reject(err);
       });
   });

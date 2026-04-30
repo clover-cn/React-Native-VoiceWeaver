@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   StyleSheet,
@@ -30,11 +31,20 @@ import ReaderCatalog from '../components/ReaderCatalog';
 import {ActiveSegContext} from '../contexts/ActiveSegContext';
 import {AudioOption} from '../types/audio';
 
+export type ReaderLoadingPhase = 'toc' | 'content';
+
+export interface ReaderLoadingState {
+  phase: ReaderLoadingPhase;
+  title: string;
+  detail?: string;
+}
+
 interface NovelReaderProps {
-  currentChapter: Chapter;
+  currentChapter?: Chapter;
   chapterList: Chapter[];
   currentChapterIndex: number;
   contentParagraphs: string[]; // 如果没有听书数据，降级使用的普通段落
+  readerLoading?: ReaderLoadingState | null;
   listenState: 'idle' | 'loading' | 'ready' | 'error';
   listenPhase: string;
   segments: ListenSegment[];
@@ -333,6 +343,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   chapterList,
   currentChapterIndex,
   contentParagraphs,
+  readerLoading,
   listenState,
   listenPhase,
   segments,
@@ -525,7 +536,9 @@ const NovelReader: React.FC<NovelReaderProps> = ({
         style={styles.contentArea}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}>
-        <Text style={styles.chapterTitle}>{currentChapter?.title}</Text>
+        <Text style={styles.chapterTitle}>
+          {currentChapter?.title || readerLoading?.detail || '正在准备章节'}
+        </Text>
         <ReaderContentList
           shouldRenderListenContent={shouldRenderListenContent}
           segments={segments}
@@ -539,6 +552,21 @@ const NovelReader: React.FC<NovelReaderProps> = ({
           onScrollEnd={handleScrollEnd}
           onViewableItemsChanged={handleViewableItemsChangedRef.current}
         />
+        {readerLoading ? (
+          <View style={styles.readerLoadingOverlay} pointerEvents="none">
+            <View style={styles.readerLoadingPanel}>
+              <ActivityIndicator size="large" color="#007AFF" />
+              <Text style={styles.readerLoadingTitle}>
+                {readerLoading.title}
+              </Text>
+              {readerLoading.detail ? (
+                <Text style={styles.readerLoadingDetail} numberOfLines={2}>
+                  {readerLoading.detail}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
       </View>
 
       {/* 动画弹出的控制器 UI 层 */}
@@ -604,6 +632,7 @@ const styles = StyleSheet.create({
   },
   contentArea: {
     flex: 1,
+    position: 'relative',
   },
   chapterTitle: {
     fontSize: 24,
@@ -617,6 +646,41 @@ const styles = StyleSheet.create({
   listPadding: {
     paddingHorizontal: 24,
     paddingBottom: 160,
+  },
+  readerLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(244, 241, 232, 0.72)',
+  },
+  readerLoadingPanel: {
+    minWidth: 188,
+    maxWidth: 280,
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  readerLoadingTitle: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    textAlign: 'center',
+  },
+  readerLoadingDetail: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#636366',
+    textAlign: 'center',
   },
   segmentWrapper: {
     // marginBottom: 10,

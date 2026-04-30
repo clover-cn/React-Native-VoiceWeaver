@@ -162,6 +162,41 @@ const parseJson = (raw: string) => {
 const normalizeJsonPath = (rule: string) =>
   rule.replace(/^@json:/i, '').replace(/\.\[\*\]/g, '[*]');
 
+const SIMPLE_JSON_PATH = /^\$(?:\.[A-Za-z_$][\w$]*)+$/;
+
+const readSimpleJsonPath = (data: unknown, path: string) => {
+  const cleanPath = normalizeJsonPath(path);
+  if (!SIMPLE_JSON_PATH.test(cleanPath)) {
+    return {matched: false, value: undefined as unknown};
+  }
+
+  const keys = cleanPath.slice(2).split('.');
+  let value = data;
+  for (const key of keys) {
+    if (value == null || typeof value !== 'object') {
+      return {matched: true, value: undefined as unknown};
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+
+  return {matched: true, value};
+};
+
+const readSimpleJsonArrayPath = (rule: string, data: unknown) => {
+  const cleanRule = normalizeJsonPath(rule);
+  if (!cleanRule.endsWith('[*]')) {
+    return undefined;
+  }
+
+  const basePath = cleanRule.slice(0, -3);
+  const result = readSimpleJsonPath(data, basePath);
+  if (!result.matched) {
+    return undefined;
+  }
+
+  return Array.isArray(result.value) ? (result.value as RuleItem[]) : [];
+};
+
 const evalJsonPath = (rule: string, context: RuleContext): RuleItem[] => {
   const data =
     context.item && !isNode(context.item) && !isRegexContext(context.item)
@@ -172,6 +207,11 @@ const evalJsonPath = (rule: string, context: RuleContext): RuleItem[] => {
   }
 
   try {
+    const simpleList = readSimpleJsonArrayPath(rule, data);
+    if (simpleList) {
+      return simpleList;
+    }
+
     const result = JSONPath({
       path: normalizeJsonPath(rule),
       json: data as any,
@@ -592,11 +632,12 @@ export const createRuleContext = (
   baseUrl: string,
   item?: RuleItem,
   vars?: Record<string, unknown>,
+  json?: unknown,
 ): RuleContext => ({
   raw,
   baseUrl,
   item,
-  json: parseJson(raw),
+  json: json === undefined ? parseJson(raw) : json,
   vars,
 });
 
@@ -652,6 +693,15 @@ export const evaluateList = (
 
 const readJsonPath = (data: unknown, path: string): string => {
   try {
+    const simpleResult = readSimpleJsonPath(data, path);
+    if (simpleResult.matched) {
+      const value = simpleResult.value;
+      if (value == null) {
+        return '';
+      }
+      return typeof value === 'object' ? JSON.stringify(value) : String(value);
+    }
+
     const result = JSONPath({
       path: normalizeJsonPath(path),
       json: data as any,
@@ -783,6 +833,19 @@ const defaultRuleResult = (context: RuleContext): string => {
   return context.raw;
 };
 
+type RuleJsFunction = (
+  result: string,
+  java: Record<string, unknown>,
+  baseUrl: string,
+  src: string,
+  chapter: unknown,
+  book: unknown,
+  vars: Record<string, unknown>,
+) => unknown;
+
+const ruleExpressionJsCache = new Map<string, RuleJsFunction>();
+const ruleStatementJsCache = new Map<string, RuleJsFunction>();
+
 const executeRuleJs = (
   script: string,
   result: string,
@@ -814,17 +877,21 @@ const executeRuleJs = (
 
     const trimmed = script.trim();
     if (/^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed)) {
-      // eslint-disable-next-line no-new-func
-      const exprFn = new Function(
-        'result',
-        'java',
-        'baseUrl',
-        'src',
-        'chapter',
-        'book',
-        'vars',
-        `return (${script});`,
-      );
+      let exprFn = ruleExpressionJsCache.get(script);
+      if (!exprFn) {
+        // eslint-disable-next-line no-new-func
+        exprFn = new Function(
+          'result',
+          'java',
+          'baseUrl',
+          'src',
+          'chapter',
+          'book',
+          'vars',
+          `return (${script});`,
+        ) as RuleJsFunction;
+        ruleExpressionJsCache.set(script, exprFn);
+      }
       const value = exprFn(
         result,
         java,
@@ -842,17 +909,21 @@ const executeRuleJs = (
     }
 
     // 书源 JS 只在内置或用户信任的规则中执行，并且只暴露本地白名单对象。
-    // eslint-disable-next-line no-new-func
-    const fn = new Function(
-      'result',
-      'java',
-      'baseUrl',
-      'src',
-      'chapter',
-      'book',
-      'vars',
-      `${script}; return result;`,
-    );
+    let fn = ruleStatementJsCache.get(script);
+    if (!fn) {
+      // eslint-disable-next-line no-new-func
+      fn = new Function(
+        'result',
+        'java',
+        'baseUrl',
+        'src',
+        'chapter',
+        'book',
+        'vars',
+        `${script}; return result;`,
+      ) as RuleJsFunction;
+      ruleStatementJsCache.set(script, fn);
+    }
     const value = fn(
       result,
       java,

@@ -12,7 +12,7 @@ import VideoPlayerController from './controllers/VideoPlayerController';
 import VideoSessionController from './controllers/VideoSessionController';
 import {API_BASE, fetchWithTimeout, useListenBook} from './hooks/useListenBook';
 import NovelHome from './screens/NovelHome';
-import NovelReader from './screens/NovelReader';
+import NovelReader, {ReaderLoadingState} from './screens/NovelReader';
 import {
   ActiveSegContext,
   ActiveSegCtx,
@@ -38,6 +38,7 @@ import {
 import AudioLibraryModal from './components/AudioLibraryModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
 import LocalBookSourceService from './bookSource/LocalBookSourceService';
+import {BookSourceCancelToken} from './bookSource/types';
 import {
   buildListenProjectName,
   normalizeChapterTextForRequest,
@@ -73,6 +74,26 @@ const cloneConfig = <T,>(data: T): T => {
 
 const createSegmentCacheToken = () => {
   return `cache_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const createBookSourceCancelToken = (): BookSourceCancelToken => {
+  const AbortControllerCtor = (globalThis as any).AbortController;
+  const controller =
+    typeof AbortControllerCtor === 'function'
+      ? new AbortControllerCtor()
+      : null;
+
+  return {
+    cancelled: false,
+    signal: controller?.signal,
+    cancel: () => {
+      try {
+        controller?.abort?.();
+      } catch (_error) {
+        // ignore
+      }
+    },
+  };
 };
 
 const markSegmentCacheDirty = (segment: ListenSegment): ListenSegment => {
@@ -374,6 +395,9 @@ const NovelReaderApp: React.FC = () => {
     useState<MissingEmotionPolicy>('fallback_neutral');
   const [sourceModalVisible, setSourceModalVisible] = useState(false);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
+  const [readerLoading, setReaderLoading] = useState<ReaderLoadingState | null>(
+    null,
+  );
   const [loadingMenuItemId, setLoadingMenuItemId] = useState<string | null>(
     null,
   );
@@ -391,6 +415,8 @@ const NovelReaderApp: React.FC = () => {
   const selectedBookRef = useRef<Book | null>(null);
   const autoGeneratingSegmentIndexesRef = useRef<Set<number>>(new Set());
   const prefetchedChapterKeyRef = useRef<string>('');
+  const chapterLoadSeqRef = useRef(0);
+  const chapterLoadCancelRef = useRef<BookSourceCancelToken | null>(null);
 
   useEffect(() => {
     chapterListRef.current = chapterList;
@@ -401,6 +427,32 @@ const NovelReaderApp: React.FC = () => {
   useEffect(() => {
     selectedBookRef.current = selectedBook;
   }, [selectedBook]);
+
+  const cancelActiveChapterLoad = useCallback(() => {
+    chapterLoadSeqRef.current += 1;
+    const cancelToken = chapterLoadCancelRef.current;
+    if (cancelToken) {
+      cancelToken.cancelled = true;
+      cancelToken.cancel?.();
+      chapterLoadCancelRef.current = null;
+    }
+  }, []);
+
+  const beginChapterLoad = useCallback(() => {
+    cancelActiveChapterLoad();
+    const cancelToken = createBookSourceCancelToken();
+    chapterLoadCancelRef.current = cancelToken;
+    return {
+      loadSeq: chapterLoadSeqRef.current,
+      cancelToken,
+    };
+  }, [cancelActiveChapterLoad]);
+
+  const isChapterLoadActive = useCallback(
+    (loadSeq: number, cancelToken?: BookSourceCancelToken) =>
+      chapterLoadSeqRef.current === loadSeq && !cancelToken?.cancelled,
+    [],
+  );
 
   const {
     listenState,
@@ -539,11 +591,31 @@ const NovelReaderApp: React.FC = () => {
   }, []);
 
   const handleBookSelect = async (book: Book) => {
+    const {loadSeq, cancelToken} = beginChapterLoad();
+
     setSelectedBook(book);
+    setChapterList([]);
+    setCurrentChapterIndex(-1);
+    setContentParagraphs([]);
+    setCurrentChapterText('');
+    resetListen(false);
+    setIsListenMode(false);
+    setReaderLoading({
+      phase: 'toc',
+      title: '正在解析目录',
+      detail: book.name,
+    });
     setViewState('reader');
 
     try {
-      const data = await LocalBookSourceService.getChapterList(book);
+      const data = await LocalBookSourceService.getChapterList(
+        book,
+        cancelToken,
+      );
+      if (!isChapterLoadActive(loadSeq, cancelToken)) {
+        return;
+      }
+
       setSelectedBook(data.book);
       setChapterList(data.chapters);
       if (data.chapters.length > 0) {
@@ -555,11 +627,23 @@ const NovelReaderApp: React.FC = () => {
           Math.max(resumeIndex, 0),
           data.chapters.length - 1,
         );
-        loadChapterContent(data.chapters, safeIndex, data.book);
+        await loadChapterContent(
+          data.chapters,
+          safeIndex,
+          data.book,
+          loadSeq,
+          cancelToken,
+        );
       } else {
+        setReaderLoading(null);
         Alert.alert('获取目录失败', '本地书源未解析到章节目录。');
       }
     } catch (e) {
+      if (!isChapterLoadActive(loadSeq, cancelToken)) {
+        return;
+      }
+
+      setReaderLoading(null);
       console.warn('Get chapter failed.', e);
       Alert.alert('获取目录失败', '请检查本地书源规则或目标站点网络。');
     }
@@ -570,10 +654,18 @@ const NovelReaderApp: React.FC = () => {
       list: Chapter[],
       index: number,
       book: Book | null = selectedBook,
+      requestSeq?: number,
+      requestCancelToken?: BookSourceCancelToken,
     ) => {
       if (index < 0 || index >= list.length) {
-        return;
+        return null;
       }
+
+      const loadContext =
+        requestSeq == null || !requestCancelToken
+          ? beginChapterLoad()
+          : {loadSeq: requestSeq, cancelToken: requestCancelToken};
+      const {loadSeq, cancelToken} = loadContext;
 
       resetListen(false);
       setIsListenMode(false);
@@ -583,12 +675,28 @@ const NovelReaderApp: React.FC = () => {
 
       const chap = list[index];
       const curProjectName = buildListenProjectName(book);
+      setReaderLoading({
+        phase: 'content',
+        title: '正在加载章节内容',
+        detail: chap?.title || book?.name,
+      });
 
       try {
         if (!book) {
+          if (isChapterLoadActive(loadSeq, cancelToken)) {
+            setReaderLoading(null);
+          }
           return null;
         }
-        const data = await LocalBookSourceService.getBookContent(book, chap);
+        const data = await LocalBookSourceService.getBookContent(
+          book,
+          chap,
+          cancelToken,
+        );
+        if (!isChapterLoadActive(loadSeq, cancelToken)) {
+          return null;
+        }
+
         setContentParagraphs(data.paragraphs);
         setCurrentChapterText(data.text);
         await persistReadingProgress({
@@ -598,16 +706,33 @@ const NovelReaderApp: React.FC = () => {
           requestUrl: data.requestUrl,
           requestBody: null,
         });
+        if (!isChapterLoadActive(loadSeq, cancelToken)) {
+          return null;
+        }
+
+        setReaderLoading(null);
         checkListenCache(curProjectName, index, data.text);
         return data;
       } catch (e) {
+        if (!isChapterLoadActive(loadSeq, cancelToken)) {
+          return null;
+        }
+
+        setReaderLoading(null);
         console.warn('Get content failed.', e);
         Alert.alert('获取正文失败', '本地书源未能解析该章节正文。');
       }
 
       return null;
     },
-    [checkListenCache, persistReadingProgress, resetListen, selectedBook],
+    [
+      beginChapterLoad,
+      checkListenCache,
+      isChapterLoadActive,
+      persistReadingProgress,
+      resetListen,
+      selectedBook,
+    ],
   );
 
   const fetchListenBookConfig = useCallback(async () => {
@@ -794,11 +919,24 @@ const NovelReaderApp: React.FC = () => {
     }
 
     setLoadingMenuItemId('source');
+    const {loadSeq, cancelToken} = beginChapterLoad();
     const newBook = {...selectedBook, ...source};
     setSelectedBook(newBook);
+    setReaderLoading({
+      phase: 'toc',
+      title: '正在解析目录',
+      detail: newBook.name,
+    });
 
     try {
-      const data = await LocalBookSourceService.getChapterList(newBook);
+      const data = await LocalBookSourceService.getChapterList(
+        newBook,
+        cancelToken,
+      );
+      if (!isChapterLoadActive(loadSeq, cancelToken)) {
+        return;
+      }
+
       setSelectedBook(data.book);
       setChapterList(data.chapters);
       if (data.chapters.length > 0) {
@@ -806,15 +944,27 @@ const NovelReaderApp: React.FC = () => {
           Math.max(currentChapterIndex, 0),
           data.chapters.length - 1,
         );
-        await loadChapterContent(data.chapters, safeIndex, data.book);
+        await loadChapterContent(
+          data.chapters,
+          safeIndex,
+          data.book,
+          loadSeq,
+          cancelToken,
+        );
       } else {
+        setReaderLoading(null);
         Alert.alert('切换书源失败', '无法拉取新书源的章节目录');
       }
     } catch (e) {
+      if (!isChapterLoadActive(loadSeq, cancelToken)) {
+        return;
+      }
+
+      setReaderLoading(null);
       console.warn('Switch source failed.', e);
       Alert.alert('切换书源失败', '请检查本地书源规则或目标站点网络。');
     } finally {
-      setLoadingMenuItemId(null);
+      setLoadingMenuItemId(current => (current === 'source' ? null : current));
     }
   };
 
@@ -958,12 +1108,21 @@ const NovelReaderApp: React.FC = () => {
   ]);
 
   const exitReaderToHome = useCallback(async () => {
-    await persistReadingProgress();
+    cancelActiveChapterLoad();
+    setReaderLoading(null);
+    setLoadingMenuItemId(current => (current === 'source' ? null : current));
     stopPlayback();
     resetListen();
     setIsListenMode(false);
     setViewState('home');
-  }, [persistReadingProgress, resetListen, stopPlayback]);
+
+    await persistReadingProgress();
+  }, [
+    cancelActiveChapterLoad,
+    persistReadingProgress,
+    resetListen,
+    stopPlayback,
+  ]);
 
   const requestExitReaderToHome = useCallback(() => {
     exitReaderToHome().catch(error => {
@@ -1548,6 +1707,7 @@ const NovelReaderApp: React.FC = () => {
               chapterList={chapterList}
               currentChapterIndex={currentChapterIndex}
               contentParagraphs={contentParagraphs}
+              readerLoading={readerLoading}
               listenState={listenState}
               listenPhase={listenPhase}
               segments={segments}
