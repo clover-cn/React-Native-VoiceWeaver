@@ -57,6 +57,7 @@ interface NovelReaderProps {
   onStartListen: () => void;
   onStopListen: () => void;
   onSegmentEditSubmit?: (index: number, payload: SegmentEditPayload) => void;
+  onOpenSegmentEditor?: () => Promise<void> | void;
   audioOptions?: AudioOption[];
   isPlaying: boolean;
   currentSegIdx: number;
@@ -356,6 +357,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   onStartListen,
   onStopListen,
   onSegmentEditSubmit,
+  onOpenSegmentEditor,
   audioOptions = [],
   isPlaying,
   currentSegIdx,
@@ -444,10 +446,14 @@ const NovelReader: React.FC<NovelReaderProps> = ({
     }).start();
   }, [fadeAnim, showOverlay]);
 
-  const handleSegmentLongPress = useCallback((index: number) => {
-    setEditingSegIndex(index);
-    setEditorVisible(true);
-  }, []);
+  const handleSegmentLongPress = useCallback(
+    async (index: number) => {
+      setEditingSegIndex(index);
+      await onOpenSegmentEditor?.();
+      setEditorVisible(true);
+    },
+    [onOpenSegmentEditor],
+  );
 
   const handleEditSubmit = useCallback(
     (data: SegmentEditPayload) => {

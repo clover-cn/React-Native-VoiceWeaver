@@ -416,8 +416,11 @@ const NovelReaderApp: React.FC = () => {
   const chapterListRef = useRef<Chapter[]>([]);
   const currentChapterIndexRef = useRef<number>(-1);
   const selectedBookRef = useRef<Book | null>(null);
+  const projectNameRef = useRef<string>('');
   const autoGeneratingSegmentIndexesRef = useRef<Set<number>>(new Set());
   const prefetchedChapterKeyRef = useRef<string>('');
+  const listenContextLoadedProjectRef = useRef<string>('');
+  const listenContextLoadingRef = useRef<Promise<void> | null>(null);
   const chapterLoadSeqRef = useRef(0);
   const chapterLoadCancelRef = useRef<BookSourceCancelToken | null>(null);
 
@@ -473,6 +476,10 @@ const NovelReaderApp: React.FC = () => {
   const projectName = selectedBook ? buildListenProjectName(selectedBook) : '';
 
   useEffect(() => {
+    projectNameRef.current = projectName;
+  }, [projectName]);
+
+  useEffect(() => {
     loadReadingRecord().then(setContinueReadingRecord);
   }, []);
 
@@ -489,60 +496,117 @@ const NovelReaderApp: React.FC = () => {
     }
   }, []);
 
-  const fetchGlobalBindings = useCallback(async () => {
-    if (!projectName || projectName === 'reader_unknown') {
-      setGlobalAudioBindings({});
-      return;
-    }
-
-    try {
-      const data = await requestJson<{
-        success?: boolean;
-        roles?: GlobalAudioBindings;
-      }>(
-        `${API_BASE}/api/audio/global-roles?projectName=${encodeURIComponent(
-          projectName,
-        )}`,
-      );
-      if (data.success) {
-        setGlobalAudioBindings(data.roles || {});
+  const fetchGlobalBindings = useCallback(
+    async (targetProjectName = projectNameRef.current) => {
+      if (!targetProjectName || targetProjectName === 'reader_unknown') {
+        if (targetProjectName === projectNameRef.current) {
+          setGlobalAudioBindings({});
+        }
+        return;
       }
-    } catch (e) {
-      console.warn('[NovelReaderApp] 获取全局角色绑定失败', e);
-    }
-  }, [projectName]);
 
-  const fetchGenerationSettings = useCallback(async () => {
-    if (!projectName || projectName === 'reader_unknown') {
-      setMissingEmotionPolicy('fallback_neutral');
-      return;
-    }
-
-    try {
-      const data = await requestJson<{
-        success?: boolean;
-        settings?: {missingEmotionPolicy?: MissingEmotionPolicy};
-      }>(
-        `${API_BASE}/api/reader/generation-settings?projectName=${encodeURIComponent(
-          projectName,
-        )}`,
-      );
-      if (data.success && data.settings?.missingEmotionPolicy) {
-        setMissingEmotionPolicy(data.settings.missingEmotionPolicy);
+      try {
+        const data = await requestJson<{
+          success?: boolean;
+          roles?: GlobalAudioBindings;
+        }>(
+          `${API_BASE}/api/audio/global-roles?projectName=${encodeURIComponent(
+            targetProjectName,
+          )}`,
+        );
+        if (targetProjectName !== projectNameRef.current) {
+          return;
+        }
+        if (data.success) {
+          setGlobalAudioBindings(data.roles || {});
+        }
+      } catch (e) {
+        console.warn('[NovelReaderApp] 获取全局角色绑定失败', e);
       }
-    } catch (e) {
-      console.warn('[NovelReaderApp] 获取阅读生成策略失败', e);
-    }
-  }, [projectName]);
+    },
+    [],
+  );
+
+  const fetchGenerationSettings = useCallback(
+    async (targetProjectName = projectNameRef.current) => {
+      if (!targetProjectName || targetProjectName === 'reader_unknown') {
+        if (targetProjectName === projectNameRef.current) {
+          setMissingEmotionPolicy('fallback_neutral');
+        }
+        return;
+      }
+
+      try {
+        const data = await requestJson<{
+          success?: boolean;
+          settings?: {missingEmotionPolicy?: MissingEmotionPolicy};
+        }>(
+          `${API_BASE}/api/reader/generation-settings?projectName=${encodeURIComponent(
+            targetProjectName,
+          )}`,
+        );
+        if (targetProjectName !== projectNameRef.current) {
+          return;
+        }
+        if (data.success && data.settings?.missingEmotionPolicy) {
+          setMissingEmotionPolicy(data.settings.missingEmotionPolicy);
+        }
+      } catch (e) {
+        console.warn('[NovelReaderApp] 获取阅读生成策略失败', e);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     fetchAudioRecords();
   }, [fetchAudioRecords]);
 
   useEffect(() => {
-    fetchGlobalBindings();
-    fetchGenerationSettings();
-  }, [fetchGenerationSettings, fetchGlobalBindings]);
+    listenContextLoadedProjectRef.current = '';
+    listenContextLoadingRef.current = null;
+
+    if (!projectName || projectName === 'reader_unknown') {
+      setGlobalAudioBindings({});
+      setMissingEmotionPolicy('fallback_neutral');
+    }
+  }, [projectName]);
+
+  const ensureListenGenerationContext = useCallback(async () => {
+    if (!projectName || projectName === 'reader_unknown') {
+      setGlobalAudioBindings({});
+      setMissingEmotionPolicy('fallback_neutral');
+      listenContextLoadedProjectRef.current = '';
+      listenContextLoadingRef.current = null;
+      return;
+    }
+
+    const targetProjectName = projectName;
+    if (listenContextLoadedProjectRef.current === projectName) {
+      return;
+    }
+
+    if (listenContextLoadingRef.current) {
+      await listenContextLoadingRef.current;
+      return;
+    }
+
+    const loadingPromise = Promise.all([
+      fetchGlobalBindings(targetProjectName),
+      fetchGenerationSettings(targetProjectName),
+    ])
+      .then(() => {
+        if (projectNameRef.current === targetProjectName) {
+          listenContextLoadedProjectRef.current = targetProjectName;
+        }
+      })
+      .finally(() => {
+        listenContextLoadingRef.current = null;
+      });
+
+    listenContextLoadingRef.current = loadingPromise;
+    await loadingPromise;
+  }, [fetchGenerationSettings, fetchGlobalBindings, projectName]);
 
   const persistReadingProgress = useCallback(
     async (payload?: {
@@ -1226,6 +1290,7 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
+      await ensureListenGenerationContext();
       const config = await fetchListenBookConfig();
       const prescanCount = Number.isFinite(config.prescanCount)
         ? Math.max(0, Number(config.prescanCount))
@@ -1661,6 +1726,10 @@ const NovelReaderApp: React.FC = () => {
     [loadChapterContent],
   );
 
+  const handleOpenSegmentEditor = useCallback(async () => {
+    await ensureListenGenerationContext();
+  }, [ensureListenGenerationContext]);
+
   const handleMenuItemClick = useCallback((id: string) => {
     if (id === 'sourceManage') {
       setBookSourceManagerVisible(true);
@@ -1734,6 +1803,7 @@ const NovelReaderApp: React.FC = () => {
               onStartListen={handleStartListen}
               onStopListen={handleStopListen}
               onSegmentEditSubmit={handleSegmentEditSubmit}
+              onOpenSegmentEditor={handleOpenSegmentEditor}
               loadingMenuItemId={loadingMenuItemId}
               onMenuItemClick={handleMenuItemClick}
             />
