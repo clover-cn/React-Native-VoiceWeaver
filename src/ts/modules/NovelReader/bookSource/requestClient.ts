@@ -34,7 +34,7 @@ const splitUrlOption = (rawUrl: string) => {
 
 const encodeRequestUrl = (url: string): string => {
   try {
-    return encodeURI(url);
+    return encodeURI(url).replace(/%25([0-9a-fA-F]{2})/g, '%$1');
   } catch (_error) {
     return url;
   }

@@ -27,6 +27,7 @@ import {
 } from './types';
 import {bookSourceLogger} from './bookSourceLogger';
 import {loadUserBookSourceRecords} from './userBookSourceStorage';
+import {buildApibiTokenChapterUrl} from './apibiChapterToken';
 
 const MAX_TOC_PAGES = 30;
 const MAX_CONTENT_PAGES = 10;
@@ -716,9 +717,15 @@ export const LocalBookSourceService = {
       }
       visited.add(nextUrl);
 
+      const requestUrl = buildApibiTokenChapterUrl(
+        source,
+        book,
+        chapter,
+        nextUrl,
+      );
       const request = resolveRequest(
         source,
-        nextUrl,
+        requestUrl,
         {},
         chapter.baseUrl || nextUrl,
       );
