@@ -51,7 +51,7 @@ interface PlaybackSourceInfo {
 }
 
 const PROGRESS_SAVE_THROTTLE_MS = 5000;
-const PROGRESS_UI_THROTTLE_MS = 250;
+const PROGRESS_UI_THROTTLE_MS = 1000;
 const MAX_CONCURRENT_CACHE_DOWNLOADS = 2;
 const PREFETCH_WINDOW_SIZE = 4;
 const MAX_CACHED_CHAPTERS = 3;
@@ -566,7 +566,11 @@ export const useAudioPlayer = (
   );
 
   const buildQueuePayload = useCallback(
-    (startIndex?: number, autoPlay?: boolean) => {
+    (
+      startIndex?: number,
+      autoPlay?: boolean,
+      isExplicitStart: boolean = false,
+    ) => {
       if (!chapterMeta) {
         return null;
       }
@@ -593,6 +597,7 @@ export const useAudioPlayer = (
         mediaImage: chapterMeta.mediaImage,
         segments: nativeSegments,
         startIndex,
+        isExplicitStart,
         autoPlay,
         isGenerationComplete,
       };
@@ -669,7 +674,11 @@ export const useAudioPlayer = (
       pendingManualStartIndexRef.current = index;
       prefetchWindow(index);
 
-      const payload = buildQueuePayload(index, canStartPlaybackAtIndex(index));
+      const payload = buildQueuePayload(
+        index,
+        canStartPlaybackAtIndex(index),
+        true,
+      );
       if (!payload) {
         return;
       }
@@ -848,25 +857,19 @@ export const useAudioPlayer = (
       );
     }
 
-    const preferredStartIndex =
-      pendingManualStartIndexRef.current >= 0
-        ? pendingManualStartIndexRef.current
-        : currentSegIdxRef.current >= 0
-        ? currentSegIdxRef.current
-        : segments.length > 0
-        ? 0
-        : undefined;
+    const hasManualStart = pendingManualStartIndexRef.current >= 0;
     const shouldAutoStart =
-      currentSegIdxRef.current === -1 ||
-      pendingManualStartIndexRef.current >= 0;
-    const canAutoStart =
-      preferredStartIndex !== undefined
-        ? canStartPlaybackAtIndex(preferredStartIndex)
-        : false;
-    const payload = buildQueuePayload(
-      preferredStartIndex,
-      shouldAutoStart ? canAutoStart : undefined,
-    );
+      currentSegIdxRef.current === -1 && !isPlayingRef.current;
+    const startIndex = hasManualStart
+      ? pendingManualStartIndexRef.current
+      : shouldAutoStart
+      ? 0
+      : undefined;
+    const autoPlay =
+      startIndex !== undefined && (hasManualStart || shouldAutoStart)
+        ? canStartPlaybackAtIndex(startIndex)
+        : undefined;
+    const payload = buildQueuePayload(startIndex, autoPlay, hasManualStart);
 
     if (!payload) {
       return;

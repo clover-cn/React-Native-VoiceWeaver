@@ -27,6 +27,7 @@ export interface NativeAudioQueuePayload {
   mediaImage?: string;
   segments: NativeAudioSegment[];
   startIndex?: number;
+  isExplicitStart?: boolean;
   autoPlay?: boolean;
   isGenerationComplete?: boolean;
 }

@@ -1,7 +1,6 @@
 import React, {
   memo,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -28,7 +27,6 @@ import SegmentEditorModal, {
   SegmentEditPayload,
 } from '../components/SegmentEditorModal';
 import ReaderCatalog from '../components/ReaderCatalog';
-import {ActiveSegContext} from '../contexts/ActiveSegContext';
 import {AudioOption} from '../types/audio';
 
 export type ReaderLoadingPhase = 'toc' | 'content';
@@ -75,9 +73,11 @@ interface SegmentRowProps {
   onPressIn: () => void;
   onSingleTap: () => void;
   onDoubleTap: (index: number) => void;
+  isActive: boolean;
 }
 
 const DOUBLE_TAP_DELAY_MS = 280;
+const AUTO_FOLLOW_SCROLL_DELAY_MS = 120;
 
 const SegmentRow = memo(
   ({
@@ -87,16 +87,12 @@ const SegmentRow = memo(
     onPressIn,
     onSingleTap,
     onDoubleTap,
+    isActive,
   }: SegmentRowProps) => {
-    const {currentSegIdx, listenState} = useContext(ActiveSegContext);
     const lastTapTimeRef = useRef(0);
     const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
       null,
     );
-    const isActive =
-      index === currentSegIdx &&
-      listenState !== 'idle' &&
-      listenState !== 'error';
     const isNarration = item.type === 'narration' || item.role === '旁白';
 
     useEffect(() => {
@@ -173,7 +169,8 @@ const SegmentRow = memo(
     prevProps.onLongPress === nextProps.onLongPress &&
     prevProps.onPressIn === nextProps.onPressIn &&
     prevProps.onSingleTap === nextProps.onSingleTap &&
-    prevProps.onDoubleTap === nextProps.onDoubleTap,
+    prevProps.onDoubleTap === nextProps.onDoubleTap &&
+    prevProps.isActive === nextProps.isActive,
 );
 
 const PlainParagraphRow = memo(({item}: {item: string}) => (
@@ -198,6 +195,8 @@ interface ReaderContentListProps {
   }: {
     viewableItems: Array<ViewToken>;
   }) => void;
+  activeSegIdx: number;
+  listenState: 'idle' | 'loading' | 'ready' | 'error';
 }
 
 const ReaderContentList = memo(
@@ -213,7 +212,10 @@ const ReaderContentList = memo(
     onScrollBeginDrag,
     onScrollEnd,
     onViewableItemsChanged,
+    activeSegIdx,
+    listenState,
   }: ReaderContentListProps) => {
+    const canHighlight = listenState !== 'idle' && listenState !== 'error';
     const renderSegmentItem = useCallback(
       ({item, index}: {item: ListenSegment; index: number}) => {
         return (
@@ -224,10 +226,18 @@ const ReaderContentList = memo(
             onPressIn={onSegmentPressIn}
             onSingleTap={onSegmentSingleTap}
             onDoubleTap={onPlaySegment}
+            isActive={canHighlight && index === activeSegIdx}
           />
         );
       },
-      [onPlaySegment, onSegmentPressIn, onSegmentLongPress, onSegmentSingleTap],
+      [
+        activeSegIdx,
+        canHighlight,
+        onPlaySegment,
+        onSegmentPressIn,
+        onSegmentLongPress,
+        onSegmentSingleTap,
+      ],
     );
 
     const renderPlainParagraph = useCallback(
@@ -332,7 +342,9 @@ const ReaderContentList = memo(
     prevProps.onPlaySegment === nextProps.onPlaySegment &&
     prevProps.onScrollBeginDrag === nextProps.onScrollBeginDrag &&
     prevProps.onScrollEnd === nextProps.onScrollEnd &&
-    prevProps.onViewableItemsChanged === nextProps.onViewableItemsChanged,
+    prevProps.onViewableItemsChanged === nextProps.onViewableItemsChanged &&
+    prevProps.activeSegIdx === nextProps.activeSegIdx &&
+    prevProps.listenState === nextProps.listenState,
 );
 
 const viewabilityConfig = {
@@ -379,6 +391,9 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   const scrollUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const autoFollowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingSegIndex, setEditingSegIndex] = useState(-1);
@@ -410,27 +425,39 @@ const NovelReader: React.FC<NovelReaderProps> = ({
 
   // 如果是在听书状态，随着段落滚动
   useEffect(() => {
+    if (autoFollowTimerRef.current) {
+      clearTimeout(autoFollowTimerRef.current);
+      autoFollowTimerRef.current = null;
+    }
+
     if (
-      autoFollowPlaybackRef.current &&
-      currentSegIdx >= 0 &&
-      segments.length > 0
+      !autoFollowPlaybackRef.current ||
+      currentSegIdx < 0 ||
+      segments.length === 0
     ) {
+      return;
+    }
+
+    autoFollowTimerRef.current = setTimeout(() => {
       try {
         flatListRef.current?.scrollToIndex({
           index: currentSegIdx,
-          animated: true,
+          animated: false,
           viewPosition: 0.5,
         });
       } catch (e) {
         // FlatList 未准备好时可能报错，onScrollToIndexFailed 会兜底
       }
-    }
+    }, AUTO_FOLLOW_SCROLL_DELAY_MS);
   }, [currentSegIdx, segments.length]);
 
   useEffect(() => {
     return () => {
       if (scrollUnlockTimerRef.current) {
         clearTimeout(scrollUnlockTimerRef.current);
+      }
+      if (autoFollowTimerRef.current) {
+        clearTimeout(autoFollowTimerRef.current);
       }
     };
   }, []);
@@ -557,6 +584,8 @@ const NovelReader: React.FC<NovelReaderProps> = ({
           onScrollBeginDrag={handleScrollBeginDrag}
           onScrollEnd={handleScrollEnd}
           onViewableItemsChanged={handleViewableItemsChangedRef.current}
+          activeSegIdx={currentSegIdx}
+          listenState={effectiveListenState}
         />
         {readerLoading ? (
           <View style={styles.readerLoadingOverlay} pointerEvents="none">

@@ -9,6 +9,8 @@ import { AVSessionManager } from './AVSessionManager';
 
 const TAG = 'NativeAudioPlayer';
 const PLAYBACK_EVENT_NAME = 'NovelAudioPlaybackState';
+const PLAYBACK_PROGRESS_EVENT_THROTTLE_MS = 1000;
+const SESSION_PROGRESS_SYNC_THROTTLE_MS = 1000;
 
 interface NativeAudioSegmentPayload {
   id: string;
@@ -27,6 +29,7 @@ interface NativeAudioQueuePayload {
   mediaImage?: string;
   segments: NativeAudioSegmentPayload[];
   startIndex?: number;
+  isExplicitStart?: boolean;
   autoPlay?: boolean;
   isGenerationComplete?: boolean;
 }
@@ -76,6 +79,12 @@ export class NativeAudioPlayerManager {
   private stoppedExplicitly: boolean = false;
   private currentSourceUrl: string = '';
   private currentLocalFile: fs.File | null = null;
+  private lastPlaybackEventAt: number = 0;
+  private lastPlaybackEventState: string = '';
+  private lastPlaybackEventIndex: number = -1;
+  private lastSessionProgressSyncAt: number = 0;
+  private lastSessionState: string = '';
+  private lastSessionIndex: number = -1;
 
   public static getInstance(): NativeAudioPlayerManager {
     return NativeAudioPlayerManager.instance;
@@ -259,10 +268,13 @@ export class NativeAudioPlayerManager {
     const isNewChapter = payload.chapterAssetId !== this.chapterAssetId;
     const hasQueueGrowth = nextQueue.length > this.queue.length;
     const targetStartIndex = this.normalizePayloadStartIndex(payload.startIndex);
+    const isExplicitStart = payload.isExplicitStart === true;
+    const resumeIndex =
+      this.currentIndex >= 0 ? this.normalizeIndex(this.currentIndex) : targetStartIndex;
 
     Logger.info(
       TAG,
-      `applyQueuePayload chapter=${payload.chapterAssetId}, startIndex=${payload.startIndex}, targetStartIndex=${targetStartIndex}, currentIndex=${this.currentIndex}, autoPlay=${payload.autoPlay}, queueLength=${nextQueue.length}`,
+      `applyQueuePayload chapter=${payload.chapterAssetId}, startIndex=${payload.startIndex}, isExplicitStart=${isExplicitStart}, targetStartIndex=${targetStartIndex}, currentIndex=${this.currentIndex}, autoPlay=${payload.autoPlay}, queueLength=${nextQueue.length}`,
     );
 
     this.chapterAssetId = payload.chapterAssetId;
@@ -305,16 +317,17 @@ export class NativeAudioPlayerManager {
 
     if (shouldReloadStoppedQueue) {
       this.stoppedExplicitly = false;
-      await this.loadIndex(targetStartIndex, true);
+      await this.loadIndex(resumeIndex, true);
       return;
     }
 
     if (this.currentIndex < 0 && this.queue.length > 0 && this.desiredPlaying) {
-      await this.loadIndex(targetStartIndex, true);
+      await this.loadIndex(resumeIndex, true);
       return;
     }
 
     if (
+      isExplicitStart &&
       payload.startIndex !== undefined &&
       targetStartIndex >= 0 &&
       targetStartIndex !== this.currentIndex
@@ -588,7 +601,9 @@ export class NativeAudioPlayerManager {
 
     player.on('timeUpdate', (time: number) => {
       this.currentPositionMs = time;
-      this.emitPlaybackEvent(this.desiredPlaying ? 'playing' : 'paused');
+      const state = this.desiredPlaying ? 'playing' : 'paused';
+      this.syncSessionState(state, undefined, undefined, true);
+      this.emitPlaybackEvent(state, false, true);
     });
 
     player.on('durationUpdate', (duration: number) => {
@@ -729,13 +744,42 @@ export class NativeAudioPlayerManager {
     state: 'playing' | 'paused' | 'stopped',
     elapsedTime?: number,
     duration?: number,
+    allowThrottle: boolean = false,
   ): void {
+    if (allowThrottle && !this.shouldSyncSessionProgress(state)) {
+      return;
+    }
+
+    this.markSessionProgressSynced(state);
+
     AVSessionManager.getInstance().setPlaybackState({
       state: state,
       elapsedTime: elapsedTime ?? this.currentPositionMs,
       duration: duration ?? this.currentDurationMs,
       speed: state === 'playing' ? 1 : 0,
     });
+  }
+
+  private shouldSyncSessionProgress(state: string): boolean {
+    const now = Date.now();
+    const stateChanged = this.lastSessionState !== state;
+    const indexChanged = this.lastSessionIndex !== this.currentIndex;
+    const shouldSync =
+      stateChanged ||
+      indexChanged ||
+      now - this.lastSessionProgressSyncAt >= SESSION_PROGRESS_SYNC_THROTTLE_MS;
+
+    if (shouldSync) {
+      this.markSessionProgressSynced(state);
+    }
+
+    return shouldSync;
+  }
+
+  private markSessionProgressSynced(state: string): void {
+    this.lastSessionProgressSyncAt = Date.now();
+    this.lastSessionState = state;
+    this.lastSessionIndex = this.currentIndex;
   }
 
   private updateSessionMetadata(): void {
@@ -757,7 +801,17 @@ export class NativeAudioPlayerManager {
     AVSessionManager.getInstance().updateMetadata(JSON.stringify(metadata));
   }
 
-  private emitPlaybackEvent(state: string, chapterFinished: boolean = false): void {
+  private emitPlaybackEvent(
+    state: string,
+    chapterFinished: boolean = false,
+    allowThrottle: boolean = false,
+  ): void {
+    if (allowThrottle && !this.shouldEmitPlaybackProgress(state, chapterFinished)) {
+      return;
+    }
+
+    this.markPlaybackEventEmitted(state);
+
     const payload: NativePlaybackEventPayload = {
       state: state,
       chapterAssetId: this.chapterAssetId,
@@ -769,6 +823,32 @@ export class NativeAudioPlayerManager {
       chapterFinished: chapterFinished,
     };
     LoadManager.getRNInstance(LoadManager.isMetroAvailable)?.emitDeviceEvent(PLAYBACK_EVENT_NAME, payload);
+  }
+
+  private shouldEmitPlaybackProgress(
+    state: string,
+    chapterFinished: boolean,
+  ): boolean {
+    const now = Date.now();
+    const stateChanged = this.lastPlaybackEventState !== state;
+    const indexChanged = this.lastPlaybackEventIndex !== this.currentIndex;
+    const shouldEmit =
+      chapterFinished ||
+      stateChanged ||
+      indexChanged ||
+      now - this.lastPlaybackEventAt >= PLAYBACK_PROGRESS_EVENT_THROTTLE_MS;
+
+    if (shouldEmit) {
+      this.markPlaybackEventEmitted(state);
+    }
+
+    return shouldEmit;
+  }
+
+  private markPlaybackEventEmitted(state: string): void {
+    this.lastPlaybackEventAt = Date.now();
+    this.lastPlaybackEventState = state;
+    this.lastPlaybackEventIndex = this.currentIndex;
   }
 
   private normalizeIndex(index: number): number {
