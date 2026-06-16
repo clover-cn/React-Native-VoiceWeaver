@@ -281,7 +281,7 @@ export class NativeAudioPlayerManager {
     this.chapterTitle = payload.title;
     this.chapterAuthor = payload.author ?? '';
     this.chapterAlbum = payload.album ?? '';
-    this.chapterCover = payload.mediaImage ?? '';
+    this.chapterCover = this.normalizeOptionalText(payload.mediaImage);
     this.queue = nextQueue;
     this.isGenerationComplete = payload.isGenerationComplete ?? false;
 
@@ -607,8 +607,11 @@ export class NativeAudioPlayerManager {
     });
 
     player.on('durationUpdate', (duration: number) => {
+      const previousDuration = this.currentDurationMs;
       this.currentDurationMs = duration;
-      this.updateSessionMetadata();
+      if (Math.abs(duration - previousDuration) >= 500) {
+        this.updateSessionMetadata();
+      }
       this.emitPlaybackEvent(this.desiredPlaying ? 'playing' : 'paused');
     });
 
@@ -788,16 +791,21 @@ export class NativeAudioPlayerManager {
     }
 
     const current = this.queue[this.currentIndex];
+    const durationMs = this.currentDurationMs || current.duration;
     const metadata: NativeMetadataPayload = {
       assetId: current.id,
       title: this.chapterTitle,
       author: this.chapterAuthor,
       album: this.chapterAlbum,
-      mediaImage: this.chapterCover,
-      duration: this.currentDurationMs || current.duration,
+      duration: durationMs,
       previousAssetId: this.currentIndex > 0 ? this.queue[this.currentIndex - 1].id : undefined,
       nextAssetId: this.currentIndex + 1 < this.queue.length ? this.queue[this.currentIndex + 1].id : undefined,
     };
+
+    if (this.chapterCover.length > 0) {
+      metadata.mediaImage = this.chapterCover;
+    }
+
     AVSessionManager.getInstance().updateMetadata(JSON.stringify(metadata));
   }
 
@@ -873,6 +881,14 @@ export class NativeAudioPlayerManager {
 
   private hasUsableUrl(url?: string | null): boolean {
     return typeof url === 'string' && url.trim().length > 0;
+  }
+
+  private normalizeOptionalText(value?: string | null): string {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    return value.trim();
   }
 
   private enterWaitingState(

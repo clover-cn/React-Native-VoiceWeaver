@@ -82,6 +82,8 @@ export class AVSessionManager {
   private commandHandler: AVSessionCommandHandler | null = null;
   private cachedMetadataPayload: SessionMetadataPayload | null = null;
   private metadataPromise: Promise<void> | null = null;
+  private lastMetadataSignature: string = '';
+  private pendingMetadataSignature: string = '';
   private cachedPlaybackPayload: SessionPlaybackPayload = {
     state: 'paused',
     elapsedTime: 0,
@@ -132,7 +134,7 @@ export class AVSessionManager {
 
   updateMetadata(payload: string): void {
     try {
-      this.cachedMetadataPayload = JSON.parse(payload) as SessionMetadataPayload;
+      this.cachedMetadataPayload = this.normalizeMetadataPayload(JSON.parse(payload) as SessionMetadataPayload);
       if (this.avSessionInstance && this.isActivated) {
         this.doWriteMetadata(this.cachedMetadataPayload);
       }
@@ -341,14 +343,25 @@ export class AVSessionManager {
       return;
     }
 
+    const signature = this.getMetadataSignature(payload);
+    if (signature === this.lastMetadataSignature || signature === this.pendingMetadataSignature) {
+      return;
+    }
+
+    this.pendingMetadataSignature = signature;
     this.metadataPromise = this.buildMetadata(payload).then((metadata: avSession.AVMetadata) => {
       return this.avSessionInstance?.setAVMetadata(metadata).then(() => {
+        this.lastMetadataSignature = signature;
         Logger.info(TAG, `setAVMetadata assetId=${payload.assetId} title=${payload.title ?? ''}`);
       }).catch((error: BusinessError) => {
         Logger.error(TAG, `setAVMetadata failed: ${error.code}, ${error.message}`);
       });
     }).catch((error: BusinessError) => {
       Logger.error(TAG, `buildMetadata failed: ${error.code}, ${error.message}`);
+    }).finally(() => {
+      if (this.pendingMetadataSignature === signature) {
+        this.pendingMetadataSignature = '';
+      }
     });
   }
 
@@ -483,10 +496,11 @@ export class AVSessionManager {
     if (data.nextAssetId) metadata.nextAssetId = data.nextAssetId;
 
     let pixelMap: image.PixelMap | null = null;
-    if (data.mediaImage && data.mediaImage.startsWith('http')) {
-      pixelMap = await this.getNetworkPixelMap(data.mediaImage);
-    } else if (data.mediaImage) {
-      metadata.mediaImage = data.mediaImage;
+    const mediaImage = this.normalizeOptionalText(data.mediaImage);
+    if (mediaImage.length > 0 && mediaImage.startsWith('http')) {
+      pixelMap = await this.getNetworkPixelMap(mediaImage);
+    } else if (mediaImage.length > 0) {
+      metadata.mediaImage = mediaImage;
     }
 
     if (!pixelMap && !metadata.mediaImage) {
@@ -498,6 +512,40 @@ export class AVSessionManager {
     }
 
     return metadata;
+  }
+
+  private normalizeMetadataPayload(payload: SessionMetadataPayload): SessionMetadataPayload {
+    return {
+      assetId: this.normalizeOptionalText(payload.assetId),
+      title: this.normalizeOptionalText(payload.title),
+      mediaImage: this.normalizeOptionalText(payload.mediaImage),
+      duration: payload.duration,
+      author: this.normalizeOptionalText(payload.author),
+      album: this.normalizeOptionalText(payload.album),
+      previousAssetId: this.normalizeOptionalText(payload.previousAssetId),
+      nextAssetId: this.normalizeOptionalText(payload.nextAssetId),
+    };
+  }
+
+  private getMetadataSignature(payload: SessionMetadataPayload): string {
+    return [
+      payload.assetId,
+      payload.title ?? '',
+      payload.author ?? '',
+      payload.album ?? '',
+      payload.mediaImage ?? '',
+      payload.duration !== undefined && payload.duration !== null ? Math.round(payload.duration).toString() : '',
+      payload.previousAssetId ?? '',
+      payload.nextAssetId ?? '',
+    ].join('\u001f');
+  }
+
+  private normalizeOptionalText(value?: string | null): string {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    return value.trim();
   }
 
   private async getNetworkPixelMap(url: string): Promise<image.PixelMap | null> {
