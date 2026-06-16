@@ -10,7 +10,12 @@ import {
 import {SegmentEditPayload} from './components/SegmentEditorModal';
 import VideoPlayerController from './controllers/VideoPlayerController';
 import VideoSessionController from './controllers/VideoSessionController';
-import {API_BASE, fetchWithTimeout, useListenBook} from './hooks/useListenBook';
+import {
+  API_BASE,
+  fetchWithTimeout,
+  TimeoutRequestInit,
+  useListenBook,
+} from './hooks/useListenBook';
 import NovelHome from './screens/NovelHome';
 import NovelReader, {ReaderLoadingState} from './screens/NovelReader';
 import {
@@ -46,6 +51,7 @@ import {
 } from './utils/listenBook';
 
 export type ViewState = 'home' | 'search' | 'reader';
+type ReaderReturnViewState = Exclude<ViewState, 'reader'>;
 
 type MissingEmotionPolicy = 'strict' | 'fallback_neutral';
 
@@ -134,7 +140,7 @@ interface ListenBookConfigResponse {
 
 const requestJson = async <T,>(
   url: string,
-  options?: RequestInit,
+  options?: TimeoutRequestInit,
   timeoutMs: number = 15000,
 ): Promise<T> => {
   let retried = false;
@@ -381,6 +387,8 @@ const normalizeSegment = (
 
 const NovelReaderApp: React.FC = () => {
   const [viewState, setViewState] = useState<ViewState>('home');
+  const [readerReturnViewState, setReaderReturnViewState] =
+    useState<ReaderReturnViewState>('home');
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [chapterList, setChapterList] = useState<Chapter[]>([]);
   const [currentChapterIndex, setCurrentChapterIndex] = useState<number>(-1);
@@ -657,6 +665,16 @@ const NovelReaderApp: React.FC = () => {
     Alert.alert('提示', '再次按下返回可退出');
   }, []);
 
+  const openReaderFromView = useCallback(
+    (nextReturnViewState?: ReaderReturnViewState) => {
+      const returnViewState =
+        nextReturnViewState ?? (viewState === 'reader' ? 'home' : viewState);
+      setReaderReturnViewState(returnViewState);
+      setViewState('reader');
+    },
+    [viewState],
+  );
+
   const handleBookSelect = async (book: Book) => {
     const {loadSeq, cancelToken} = beginChapterLoad();
 
@@ -672,7 +690,7 @@ const NovelReaderApp: React.FC = () => {
       title: '正在解析目录',
       detail: book.name,
     });
-    setViewState('reader');
+    openReaderFromView();
 
     try {
       const data = await LocalBookSourceService.getChapterList(
@@ -1174,28 +1192,30 @@ const NovelReaderApp: React.FC = () => {
     triggerPrefetch,
   ]);
 
-  const exitReaderToHome = useCallback(async () => {
+  const exitReader = useCallback(async () => {
+    const nextViewState = readerReturnViewState;
     cancelActiveChapterLoad();
     setReaderLoading(null);
     setLoadingMenuItemId(current => (current === 'source' ? null : current));
     stopPlayback();
     resetListen();
     setIsListenMode(false);
-    setViewState('home');
+    setViewState(nextViewState);
 
     await persistReadingProgress();
   }, [
     cancelActiveChapterLoad,
     persistReadingProgress,
+    readerReturnViewState,
     resetListen,
     stopPlayback,
   ]);
 
-  const requestExitReaderToHome = useCallback(() => {
-    exitReaderToHome().catch(error => {
+  const requestExitReader = useCallback(() => {
+    exitReader().catch(error => {
       console.warn('Exit reader failed.', error);
     });
-  }, [exitReaderToHome]);
+  }, [exitReader]);
 
   useEffect(() => {
     try {
@@ -1220,13 +1240,14 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
+    setReaderReturnViewState('home');
     await handleBookSelect(continueReadingRecord.book);
   };
 
   useEffect(() => {
     const handleSystemBack = () => {
       if (viewState === 'reader') {
-        requestExitReaderToHome();
+        requestExitReader();
         return true;
       }
 
@@ -1263,7 +1284,7 @@ const NovelReaderApp: React.FC = () => {
       hardwareSubscription.remove();
       legacySubscription.remove();
     };
-  }, [requestExitReaderToHome, showExitPrompt, viewState]);
+  }, [requestExitReader, showExitPrompt, viewState]);
 
   const handleStartListen = async () => {
     if (!selectedBook) {
@@ -1758,6 +1779,9 @@ const NovelReaderApp: React.FC = () => {
     () => ({currentProgress, totalDuration}),
     [currentProgress, totalDuration],
   );
+  const shouldKeepSearchMounted =
+    viewState === 'search' ||
+    (viewState === 'reader' && readerReturnViewState === 'search');
 
   return (
     <View style={styles.container}>
@@ -1769,11 +1793,18 @@ const NovelReaderApp: React.FC = () => {
         />
       )}
 
-      {viewState === 'search' && (
-        <NovelSearch
-          onBack={() => setViewState('home')}
-          onBookSelect={handleBookSelect}
-        />
+      {shouldKeepSearchMounted && (
+        <View
+          style={[
+            styles.searchHost,
+            viewState === 'reader' && styles.hiddenSearchView,
+          ]}
+          pointerEvents={viewState === 'search' ? 'auto' : 'none'}>
+          <NovelSearch
+            onBack={() => setViewState('home')}
+            onBookSelect={handleBookSelect}
+          />
+        </View>
       )}
 
       {viewState === 'reader' && (
@@ -1796,7 +1827,7 @@ const NovelReaderApp: React.FC = () => {
               currentSegIdx={currentSegIdx}
               onTogglePlayPause={togglePlayPause}
               onPlaySegment={playFromIndex}
-              onBack={requestExitReaderToHome}
+              onBack={requestExitReader}
               onPrevChapter={handlePrevChapter}
               onNextChapter={handleNextChapter}
               onSelectChapter={handleSelectChapter}
@@ -1835,6 +1866,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  searchHost: {
+    flex: 1,
+  },
+  hiddenSearchView: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
   },
 });
 

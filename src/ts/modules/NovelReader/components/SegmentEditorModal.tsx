@@ -344,7 +344,6 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
                       key={`${selectedAudioId || 'none'}_${previewInstanceKey}`}
                       source={{uri: selectedAudioPreviewUrl}}
                       paused={false}
-                      audioOnly
                       playInBackground={false}
                       playWhenInactive={false}
                       ignoreSilentSwitch="ignore"

@@ -5,13 +5,13 @@ import {
   normalizeChapterTextForRequest,
 } from '../utils/listenBook';
 
-type AbortSignalLike = {
+export type AbortSignalLike = {
   aborted?: boolean;
   addEventListener?: (type: 'abort', listener: () => void) => void;
   removeEventListener?: (type: 'abort', listener: () => void) => void;
 };
 
-type TimeoutRequestInit = RequestInit & {
+export type TimeoutRequestInit = RequestInit & {
   signal?: AbortSignalLike;
 };
 

@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import Video from 'react-native-video';
 import bridge from '../../base/utils/bridge';
-import {fetchWithTimeout} from '../hooks/useListenBook';
+import {fetchWithTimeout, TimeoutRequestInit} from '../hooks/useListenBook';
 import {AudioOption} from '../types/audio';
 
 interface AudioLibraryModalProps {
@@ -83,7 +83,7 @@ const sleep = (ms: number) =>
 
 const requestJson = async <T,>(
   url: string,
-  options?: RequestInit,
+  options?: TimeoutRequestInit,
 ): Promise<T> => {
   let retried = false;
 
@@ -278,7 +278,6 @@ const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
           key={`${uri}_${instanceKey}`}
           source={{uri}}
           paused={false}
-          audioOnly
           playInBackground={false}
           playWhenInactive={false}
           ignoreSilentSwitch="ignore"
@@ -552,7 +551,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   );
 
   const handleUploadPress = useCallback(async () => {
-    if (Platform.OS !== 'harmony') {
+    if ((Platform.OS as string) !== 'harmony') {
       Alert.alert('暂未实现', '当前仅支持鸿蒙端上传音频。');
       return;
     }
