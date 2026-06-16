@@ -240,12 +240,14 @@ interface PreviewPlayerProps {
 
 const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlayerMounted, setIsPlayerMounted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [instanceKey, setInstanceKey] = useState(0);
 
   useEffect(() => {
     setIsPlaying(false);
+    setIsPlayerMounted(false);
     setDuration(0);
     setCurrentTime(0);
     setInstanceKey(prev => prev + 1);
@@ -254,42 +256,53 @@ const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
   const progressRatio = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
 
   const togglePlayback = () => {
-    if (!isPlaying && duration > 0 && currentTime >= duration) {
+    if (isPlaying) {
+      setIsPlaying(false);
+      setIsPlayerMounted(false);
+      return;
+    }
+
+    if (duration > 0 && currentTime >= duration) {
       setInstanceKey(prev => prev + 1);
       setCurrentTime(0);
     }
 
-    setIsPlaying(prev => !prev);
+    setIsPlayerMounted(true);
+    setIsPlaying(true);
   };
 
   return (
     <View style={styles.previewWrap}>
-      <Video
-        key={`${uri}_${instanceKey}`}
-        source={{uri}}
-        paused={!isPlaying}
-        audioOnly
-        playInBackground={false}
-        playWhenInactive={false}
-        ignoreSilentSwitch="ignore"
-        onLoad={event => {
-          setDuration(event.duration || 0);
-          setCurrentTime(0);
-        }}
-        onProgress={event => {
-          setCurrentTime(event.currentTime || 0);
-        }}
-        onEnd={() => {
-          setIsPlaying(false);
-          setCurrentTime(0);
-          setInstanceKey(prev => prev + 1);
-        }}
-        onError={error => {
-          console.warn('[AudioLibraryModal] 音频预览失败', error);
-          setIsPlaying(false);
-        }}
-        style={styles.previewPlayer}
-      />
+      {isPlayerMounted ? (
+        <Video
+          key={`${uri}_${instanceKey}`}
+          source={{uri}}
+          paused={false}
+          audioOnly
+          playInBackground={false}
+          playWhenInactive={false}
+          ignoreSilentSwitch="ignore"
+          onLoad={event => {
+            setDuration(event.duration || 0);
+            setCurrentTime(0);
+          }}
+          onProgress={event => {
+            setCurrentTime(event.currentTime || 0);
+          }}
+          onEnd={() => {
+            setIsPlaying(false);
+            setIsPlayerMounted(false);
+            setCurrentTime(0);
+            setInstanceKey(prev => prev + 1);
+          }}
+          onError={error => {
+            console.warn('[AudioLibraryModal] 音频预览失败', error);
+            setIsPlaying(false);
+            setIsPlayerMounted(false);
+          }}
+          style={styles.previewPlayer}
+        />
+      ) : null}
       <View style={styles.previewControls}>
         <TouchableOpacity style={styles.previewButton} onPress={togglePlayback}>
           <Text style={styles.previewButtonText}>
