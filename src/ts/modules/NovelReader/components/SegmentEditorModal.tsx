@@ -68,12 +68,15 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
   const [isRoleDropdownFocus, setIsRoleDropdownFocus] = useState(false);
   const [isAudioDropdownFocus, setIsAudioDropdownFocus] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [isPreviewPlayerMounted, setIsPreviewPlayerMounted] = useState(false);
   const [previewDuration, setPreviewDuration] = useState(0);
   const [previewCurrentTime, setPreviewCurrentTime] = useState(0);
   const [previewInstanceKey, setPreviewInstanceKey] = useState(0);
 
   useEffect(() => {
     if (!visible) {
+      setIsPreviewPlaying(false);
+      setIsPreviewPlayerMounted(false);
       return;
     }
 
@@ -84,6 +87,7 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
     setIsRoleDropdownFocus(false);
     setIsAudioDropdownFocus(false);
     setIsPreviewPlaying(false);
+    setIsPreviewPlayerMounted(false);
     setPreviewDuration(0);
     setPreviewCurrentTime(0);
   }, [segment, visible]);
@@ -114,6 +118,7 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
 
   useEffect(() => {
     setIsPreviewPlaying(false);
+    setIsPreviewPlayerMounted(false);
     setPreviewDuration(0);
     setPreviewCurrentTime(0);
     setPreviewInstanceKey(prev => prev + 1);
@@ -162,16 +167,19 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
       return;
     }
 
-    if (
-      !isPreviewPlaying &&
-      previewDuration > 0 &&
-      previewCurrentTime >= previewDuration
-    ) {
+    if (isPreviewPlaying) {
+      setIsPreviewPlaying(false);
+      setIsPreviewPlayerMounted(false);
+      return;
+    }
+
+    if (previewDuration > 0 && previewCurrentTime >= previewDuration) {
       setPreviewInstanceKey(prev => prev + 1);
       setPreviewCurrentTime(0);
     }
 
-    setIsPreviewPlaying(prev => !prev);
+    setIsPreviewPlayerMounted(true);
+    setIsPreviewPlaying(true);
   };
 
   const previewProgressRatio =
@@ -331,35 +339,39 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
               </Text>
               {selectedAudioPreviewUrl ? (
                 <View style={styles.audioPreviewWrap}>
-                  <Video
-                    key={`${selectedAudioId || 'none'}_${previewInstanceKey}`}
-                    source={{uri: selectedAudioPreviewUrl}}
-                    paused={!isPreviewPlaying}
-                    audioOnly
-                    playInBackground={false}
-                    playWhenInactive={false}
-                    ignoreSilentSwitch="ignore"
-                    onLoad={event => {
-                      setPreviewDuration(event.duration || 0);
-                      setPreviewCurrentTime(0);
-                    }}
-                    onProgress={event => {
-                      setPreviewCurrentTime(event.currentTime || 0);
-                    }}
-                    onEnd={() => {
-                      setIsPreviewPlaying(false);
-                      setPreviewCurrentTime(0);
-                      setPreviewInstanceKey(prev => prev + 1);
-                    }}
-                    onError={error => {
-                      console.warn(
-                        '[SegmentEditorModal] 参考音频预览播放失败',
-                        error,
-                      );
-                      setIsPreviewPlaying(false);
-                    }}
-                    style={styles.audioPreviewPlayer}
-                  />
+                  {isPreviewPlayerMounted ? (
+                    <Video
+                      key={`${selectedAudioId || 'none'}_${previewInstanceKey}`}
+                      source={{uri: selectedAudioPreviewUrl}}
+                      paused={false}
+                      audioOnly
+                      playInBackground={false}
+                      playWhenInactive={false}
+                      ignoreSilentSwitch="ignore"
+                      onLoad={event => {
+                        setPreviewDuration(event.duration || 0);
+                        setPreviewCurrentTime(0);
+                      }}
+                      onProgress={event => {
+                        setPreviewCurrentTime(event.currentTime || 0);
+                      }}
+                      onEnd={() => {
+                        setIsPreviewPlaying(false);
+                        setIsPreviewPlayerMounted(false);
+                        setPreviewCurrentTime(0);
+                        setPreviewInstanceKey(prev => prev + 1);
+                      }}
+                      onError={error => {
+                        console.warn(
+                          '[SegmentEditorModal] 参考音频预览播放失败',
+                          error,
+                        );
+                        setIsPreviewPlaying(false);
+                        setIsPreviewPlayerMounted(false);
+                      }}
+                      style={styles.audioPreviewPlayer}
+                    />
+                  ) : null}
                   <View style={styles.audioPreviewControls}>
                     <TouchableOpacity
                       style={styles.audioPreviewButton}
