@@ -1,4 +1,4 @@
-import React, {memo, useContext} from 'react';
+import React, {memo, useCallback, useContext} from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,106 @@ interface ReaderFooterProps {
   loadingMenuItemId?: string | null;
 }
 
+// 模块级常量与工具函数 —— 避免每次 render 重建引用
+const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
+  // {label: '书签', id: 'bookmark'},
+  // {label: '缓存', id: 'download'},
+  // {label: '搜索', id: 'search'},
+  // { label: '护眼', id: 'eyecare' },
+  // { label: '夜间', id: 'night' },
+  {label: '翻页模式', id: 'flip'},
+  {label: '书籍详情', id: 'info'},
+  {label: '书源管理', id: 'sourceManage'},
+  {label: '书源切换', id: 'source'},
+  {label: '音频管理', id: 'audio'},
+  {label: '定时关闭', id: 'sleep'},
+];
+
+const formatTime = (seconds: number): string => {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+/**
+ * 迷你进度条 —— 独立订阅高频 PlaybackProgressContext，
+ * 把每秒 ~1 次的进度更新隔离在该子组件内，避免重渲整个 Footer 与 grid。
+ * 注：进度填充仍用 width 百分比（JS 驱动），但仅触发本组件 layout，
+ * 不再扫到 Footer 主体；scaleX + native driver 的方案在 RNOH 上需要
+ * 额外的 transform-origin / translateX 补偿，复杂度不值，故不采用。
+ */
+interface MiniProgressBarProps {
+  currentSegIdx: number;
+  totalSegments: number;
+}
+
+const MiniProgressBar: React.FC<MiniProgressBarProps> = memo(
+  ({currentSegIdx, totalSegments}) => {
+    const {currentProgress, totalDuration} = useContext(PlaybackProgressContext);
+    const progressPercent =
+      totalDuration > 0 ? Math.min(currentProgress / totalDuration, 1) : 0;
+
+    return (
+      <View style={styles.miniProgressContainer}>
+        <Text style={styles.miniProgressText}>
+          {currentSegIdx + 1}/{totalSegments}
+        </Text>
+        <View style={styles.miniProgressBar}>
+          <View
+            style={[
+              styles.miniProgressFill,
+              {width: `${progressPercent * 100}%`},
+            ]}
+          />
+        </View>
+        <Text style={styles.miniProgressTime}>
+          {formatTime(currentProgress)}
+          {totalDuration > 0 ? ` / ${formatTime(totalDuration)}` : ''}
+        </Text>
+      </View>
+    );
+  },
+);
+MiniProgressBar.displayName = 'MiniProgressBar';
+
+/**
+ * grid 子项 —— memo 化避免父级 render 时整组重建。
+ * onPress 由父级用 useCallback 稳定。
+ */
+interface FooterMenuItemProps {
+  id: string;
+  label: string;
+  isLoading: boolean;
+  onPress: (id: string) => void;
+}
+
+const FooterMenuItem: React.FC<FooterMenuItemProps> = memo(
+  ({id, label, isLoading, onPress}) => {
+    const handlePress = useCallback(() => {
+      if (!isLoading) {
+        onPress(id);
+      }
+    }, [id, isLoading, onPress]);
+
+    return (
+      <TouchableOpacity
+        style={styles.gridItem}
+        disabled={isLoading}
+        onPress={handlePress}>
+        <View style={styles.gridIconCircle}>
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#8E8E93" />
+          ) : (
+            <Text style={styles.gridLabel}>{label[0]}</Text>
+          )}
+        </View>
+        <Text style={styles.gridLabelText}>{label}</Text>
+      </TouchableOpacity>
+    );
+  },
+);
+FooterMenuItem.displayName = 'FooterMenuItem';
+
 const ReaderFooter: React.FC<ReaderFooterProps> = ({
   currentChapter,
   totalChapters,
@@ -42,17 +142,14 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
   onMenuItemClick,
   loadingMenuItemId,
 }) => {
-  const {currentProgress, totalDuration} = useContext(PlaybackProgressContext);
-  // 格式化时间为 mm:ss
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
+  // 把 onMenuItemClick 透传给 grid 子项 —— 直接传引用，由父级保证稳定即可
+  const handleMenuPress = useCallback(
+    (id: string) => {
+      onMenuItemClick?.(id);
+    },
+    [onMenuItemClick],
+  );
 
-  // 当前段落播放进度百分比
-  const progressPercent =
-    totalDuration > 0 ? Math.min(currentProgress / totalDuration, 1) : 0;
   const renderListenControl = () => {
     switch (listenState) {
       case 'idle':
@@ -88,25 +185,12 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
                 </Text>
               </TouchableOpacity>
             </View>
-            {/* 迷你进度条：仅在播放/暂停时显示 */}
+            {/* 迷你进度条：仅在播放/暂停时显示。订阅高频进度被隔离到子组件 */}
             {currentSegIdx >= 0 && (
-              <View style={styles.miniProgressContainer}>
-                <Text style={styles.miniProgressText}>
-                  {currentSegIdx + 1}/{totalSegments}
-                </Text>
-                <View style={styles.miniProgressBar}>
-                  <View
-                    style={[
-                      styles.miniProgressFill,
-                      { width: `${progressPercent * 100}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.miniProgressTime}>
-                  {formatTime(currentProgress)}
-                  {totalDuration > 0 ? ` / ${formatTime(totalDuration)}` : ''}
-                </Text>
-              </View>
+              <MiniProgressBar
+                currentSegIdx={currentSegIdx}
+                totalSegments={totalSegments}
+              />
             )}
           </View>
         );
@@ -123,19 +207,6 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
     }
   };
 
-  const menuItems = [
-    // {label: '书签', id: 'bookmark'},
-    // {label: '缓存', id: 'download'},
-    // {label: '搜索', id: 'search'},
-    // { label: '护眼', id: 'eyecare' },
-    // { label: '夜间', id: 'night' },
-    { label: '翻页模式', id: 'flip' },
-    { label: '书籍详情', id: 'info' },
-    { label: '书源管理', id: 'sourceManage' },
-    { label: '书源切换', id: 'source' },
-    { label: '音频管理', id: 'audio' },
-  ];
-
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.innerBox}>
@@ -150,25 +221,15 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
 
         {/* 快捷功能网格 */}
         <View style={styles.gridContainer}>
-          {menuItems.map(item => {
-            const isLoading = loadingMenuItemId === item.id;
-            return (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.gridItem}
-                disabled={isLoading}
-                onPress={() => !isLoading && onMenuItemClick?.(item.id)}>
-                <View style={styles.gridIconCircle}>
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color="#8E8E93" />
-                  ) : (
-                    <Text style={styles.gridLabel}>{item.label[0]}</Text>
-                  )}
-                </View>
-                <Text style={styles.gridLabelText}>{item.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
+          {MENU_ITEMS.map(item => (
+            <FooterMenuItem
+              key={item.id}
+              id={item.id}
+              label={item.label}
+              isLoading={loadingMenuItemId === item.id}
+              onPress={handleMenuPress}
+            />
+          ))}
         </View>
 
         {/* 底部换章操作 */}
@@ -207,7 +268,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
+    shadowOffset: {width: 0, height: -2},
     shadowOpacity: 0.05,
     shadowRadius: 10,
     elevation: 10,
@@ -386,7 +447,7 @@ const styles = StyleSheet.create({
   chapterBtnPrimary: {
     backgroundColor: '#007AFF',
     shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
@@ -398,4 +459,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default ReaderFooter;
+export default memo(ReaderFooter);

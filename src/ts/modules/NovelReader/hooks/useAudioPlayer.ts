@@ -39,6 +39,10 @@ interface SegmentCacheEntry {
 interface CacheQueueTask {
   cacheKey: string;
   priority: number;
+  /** 该任务所属的章节 assetId，用于在章节切换/段落变化时识别陈旧请求并丢弃。 */
+  chapterAssetId: string;
+  /** 段落索引，用于判断是否仍落在 PREFETCH_WINDOW 内。 */
+  segmentIndex: number;
   execute: () => Promise<void>;
 }
 
@@ -50,11 +54,23 @@ interface PlaybackSourceInfo {
   cacheState?: SegmentCacheState;
 }
 
-const PROGRESS_SAVE_THROTTLE_MS = 5000;
-const PROGRESS_UI_THROTTLE_MS = 1000;
-const MAX_CONCURRENT_CACHE_DOWNLOADS = 2;
-const PREFETCH_WINDOW_SIZE = 4;
-const MAX_CACHED_CHAPTERS = 3;
+/**
+ * 听书运行时调优参数。集中放置便于统一审视权衡。
+ *
+ * - PROGRESS_SAVE_THROTTLE_MS：进度落库节流，5s 写一次鸿蒙 Preferences。
+ * - PROGRESS_UI_THROTTLE_MS：JS 端进度 setState 节流，叠加 0.25s 偏差守门
+ *   在原生 ~250ms 事件下发频率上把 UI 更新降到约 1Hz。
+ * - MAX_CONCURRENT_CACHE_DOWNLOADS：缓存任务并发上限，避免同时占满网络。
+ * - PREFETCH_WINDOW_SIZE：以当前段为起点向后预取的段数。
+ * - MAX_CACHED_CHAPTERS：本地保留的章节数上限，超过后按 LRU 清理。
+ */
+const LISTEN_TUNING = {
+  PROGRESS_SAVE_THROTTLE_MS: 5000,
+  PROGRESS_UI_THROTTLE_MS: 1000,
+  MAX_CONCURRENT_CACHE_DOWNLOADS: 2,
+  PREFETCH_WINDOW_SIZE: 4,
+  MAX_CACHED_CHAPTERS: 3,
+} as const;
 
 const buildAbsoluteAudioUrl = (audioUrl?: string | null): string | null => {
   if (!audioUrl) {
@@ -218,12 +234,17 @@ export const useAudioPlayer = (
     nextOrder.push(chapterMeta.assetId);
     chapterOrderRef.current = nextOrder;
 
-    if (nextOrder.length <= MAX_CACHED_CHAPTERS) {
+    if (nextOrder.length <= LISTEN_TUNING.MAX_CACHED_CHAPTERS) {
       return;
     }
 
-    const evicted = nextOrder.slice(0, nextOrder.length - MAX_CACHED_CHAPTERS);
-    chapterOrderRef.current = nextOrder.slice(-MAX_CACHED_CHAPTERS);
+    const evicted = nextOrder.slice(
+      0,
+      nextOrder.length - LISTEN_TUNING.MAX_CACHED_CHAPTERS,
+    );
+    chapterOrderRef.current = nextOrder.slice(
+      -LISTEN_TUNING.MAX_CACHED_CHAPTERS,
+    );
     cleanupEvictedChapters(evicted);
   }, [chapterMeta?.assetId, cleanupEvictedChapters]);
 
@@ -231,7 +252,7 @@ export const useAudioPlayer = (
     (segIdx: number, time: number) => {
       const now = Date.now();
       if (
-        now - lastSaveTimeRef.current < PROGRESS_SAVE_THROTTLE_MS ||
+        now - lastSaveTimeRef.current < LISTEN_TUNING.PROGRESS_SAVE_THROTTLE_MS ||
         !projectName ||
         chapterIndex === undefined ||
         segIdx < 0
@@ -253,7 +274,8 @@ export const useAudioPlayer = (
 
   const pumpCacheQueue = useCallback(() => {
     while (
-      activeCacheDownloadsRef.current < MAX_CONCURRENT_CACHE_DOWNLOADS &&
+      activeCacheDownloadsRef.current <
+        LISTEN_TUNING.MAX_CONCURRENT_CACHE_DOWNLOADS &&
       cacheQueueRef.current.length > 0
     ) {
       const nextTask = cacheQueueRef.current.shift();
@@ -298,6 +320,47 @@ export const useAudioPlayer = (
       pumpCacheQueue();
     },
     [pumpCacheQueue],
+  );
+
+  /**
+   * 段落切换时，把还排在缓存队列里、但已经落在预取窗口外或属于其他章节的
+   * 待下载任务直接丢弃。这样用户快速翻段时不会让陈旧请求继续抢占网络与
+   * 并发槽位。已在执行中的下载无法中断（鸿蒙原生侧),但下一批不会再被
+   * 拉起；待下载任务的 promise 不会被触发 resolve（仅做静默丢弃),其
+   * 占位会在新一轮 prefetchWindow 中被覆盖。
+   */
+  const cancelStaleCacheRequests = useCallback(
+    (currentIdx: number) => {
+      if (cacheQueueRef.current.length === 0) {
+        return;
+      }
+      const activeChapterAssetId = currentChapterAssetIdRef.current;
+      const before = cacheQueueRef.current.length;
+      cacheQueueRef.current = cacheQueueRef.current.filter(task => {
+        if (
+          activeChapterAssetId &&
+          task.chapterAssetId !== activeChapterAssetId
+        ) {
+          return false;
+        }
+        if (currentIdx < 0) {
+          return true;
+        }
+        return (
+          Math.abs(task.segmentIndex - currentIdx) <=
+          LISTEN_TUNING.PREFETCH_WINDOW_SIZE
+        );
+      });
+      const removed = before - cacheQueueRef.current.length;
+      if (removed > 0) {
+        console.log('[useAudioPlayer] 取消陈旧缓存请求', {
+          removed,
+          currentIdx,
+          activeChapterAssetId,
+        });
+      }
+    },
+    [],
   );
 
   const requestSegmentCache = useCallback(
@@ -363,6 +426,8 @@ export const useAudioPlayer = (
         enqueueCacheTask({
           cacheKey,
           priority,
+          chapterAssetId,
+          segmentIndex,
           execute: async () => {
             console.log('[useAudioPlayer] 开始缓存音频片段', {
               chapterAssetId,
@@ -545,7 +610,7 @@ export const useAudioPlayer = (
 
       const endIndex = Math.min(
         segments.length - 1,
-        startIndex + PREFETCH_WINDOW_SIZE - 1,
+        startIndex + LISTEN_TUNING.PREFETCH_WINDOW_SIZE - 1,
       );
 
       for (let index = startIndex; index <= endIndex; index += 1) {
@@ -728,11 +793,14 @@ export const useAudioPlayer = (
         segChanged ||
         playingChanged ||
         Math.abs(currentProgressRef.current - nextProgress) >= 0.25 ||
-        now - lastProgressUiUpdateRef.current >= PROGRESS_UI_THROTTLE_MS;
+        now - lastProgressUiUpdateRef.current >=
+          LISTEN_TUNING.PROGRESS_UI_THROTTLE_MS;
 
       if (segChanged) {
         currentSegIdxRef.current = nextSegIdx;
         setCurrentSegIdx(nextSegIdx);
+        // 段落切换：丢弃落在窗口外或属于其他章节的待下载缓存任务
+        cancelStaleCacheRequests(nextSegIdx);
         if (nextSegIdx !== lastRequestedMissingSegmentRef.current) {
           lastRequestedMissingSegmentRef.current = -1;
         }
@@ -804,6 +872,7 @@ export const useAudioPlayer = (
     return unsubscribe;
   }, [
     onChapterFinished,
+    cancelStaleCacheRequests,
     chapterMeta,
     getSegmentPlaybackSource,
     onMissingSegmentAudio,

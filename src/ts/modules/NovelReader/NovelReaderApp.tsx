@@ -34,6 +34,7 @@ import {
 } from './types/reader';
 import {AudioOption} from './types/audio';
 import {useAudioPlayer} from './hooks/useAudioPlayer';
+import {useSleepTimer} from './hooks/useSleepTimer';
 import {
   loadReadingRecords,
   ReadingRecord,
@@ -43,6 +44,7 @@ import {
 import AudioLibraryModal from './components/AudioLibraryModal';
 import BookSourceManagerModal from './components/BookSourceManagerModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
+import SleepTimerModal from './components/SleepTimerModal';
 import LocalBookSourceService from './bookSource/LocalBookSourceService';
 import {BookSourceCancelToken} from './bookSource/types';
 import {
@@ -71,8 +73,12 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+// 配置型小对象（AudioReferenceConfig / 单个 ListenSegment 等）的深拷贝。
+// primitive 与 null 走快路径，避免无意义的 JSON 序列化；其余对象走 JSON 兜底。
+// 注意：调用点目前均为深度 ≤ 3 的小对象，未用于整章 segments 数组，故 JSON 法
+// 在性能上是可接受的；若未来扩展到大数组拷贝，应改为窄拷贝函数。
 const cloneConfig = <T,>(data: T): T => {
-  if (data == null) {
+  if (data == null || typeof data !== 'object') {
     return data;
   }
 
@@ -405,6 +411,7 @@ const NovelReaderApp: React.FC = () => {
   const [bookSourceManagerVisible, setBookSourceManagerVisible] =
     useState(false);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
+  const [sleepTimerVisible, setSleepTimerVisible] = useState(false);
   const [readerLoading, setReaderLoading] = useState<ReaderLoadingState | null>(
     null,
   );
@@ -1169,6 +1176,23 @@ const NovelReaderApp: React.FC = () => {
     handleAutoGenerateMissingSegment,
   );
 
+  // 定时关闭：到点 / 段落结束 / 章节结束时暂停。仅在 isPlaying=true 时触发，避免误暂停。
+  // 用 ref 持有 isPlaying，使 onTrigger 引用不随播放状态变化（hook 内部已用
+  // onTriggerRef 桥接最新值,无须依赖项变更触发重新订阅)。
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+  const handleSleepTrigger = useCallback(() => {
+    if (isPlayingRef.current) {
+      togglePlayPause();
+    }
+  }, [togglePlayPause]);
+  const sleepTimer = useSleepTimer({
+    onTrigger: handleSleepTrigger,
+    isPlaying,
+  });
+
   useEffect(() => {
     if (!isListenMode || !isGenerationComplete || currentChapterIndex < 0) {
       return;
@@ -1775,8 +1799,32 @@ const NovelReaderApp: React.FC = () => {
 
     if (id === 'audio') {
       setAudioLibraryVisible(true);
+      return;
+    }
+
+    if (id === 'sleep') {
+      setSleepTimerVisible(true);
     }
   }, []);
+
+  // —— Modal onClose 回调收敛 (A3): 改为稳定的 useCallback,避免每次 render 给 Modal 传新引用,
+  // 这些 Modal 已 memo / 内部 visible 检查开销可控,但稳定引用能减少不必要的 reconcile。
+  const handleCloseSourceModal = useCallback(
+    () => setSourceModalVisible(false),
+    [],
+  );
+  const handleCloseBookSourceManager = useCallback(
+    () => setBookSourceManagerVisible(false),
+    [],
+  );
+  const handleCloseAudioLibrary = useCallback(
+    () => setAudioLibraryVisible(false),
+    [],
+  );
+  const handleCloseSleepTimer = useCallback(
+    () => setSleepTimerVisible(false),
+    [],
+  );
 
   const activeSegCtxValue = useMemo<ActiveSegCtx>(
     () => ({
@@ -1857,18 +1905,25 @@ const NovelReaderApp: React.FC = () => {
       <SourceSwitchModal
         visible={sourceModalVisible}
         currentBook={selectedBook}
-        onClose={() => setSourceModalVisible(false)}
+        onClose={handleCloseSourceModal}
         onSourceSelect={handleSourceSelect}
       />
       <BookSourceManagerModal
         visible={bookSourceManagerVisible}
-        onClose={() => setBookSourceManagerVisible(false)}
+        onClose={handleCloseBookSourceManager}
       />
       <AudioLibraryModal
         visible={audioLibraryVisible}
         apiBase={API_BASE}
-        onClose={() => setAudioLibraryVisible(false)}
+        onClose={handleCloseAudioLibrary}
         onRecordsChanged={setAudioOptions}
+      />
+      <SleepTimerModal
+        visible={sleepTimerVisible}
+        info={sleepTimer.info}
+        onClose={handleCloseSleepTimer}
+        onSelectDuration={sleepTimer.setDuration}
+        onClear={sleepTimer.clear}
       />
       {/* 全局 Toast 挂载点:不依赖 setWrapperComponentProvider,确保鸿蒙等多 bundle 子应用也能弹出半透明提示 */}
       <GlobalToast />
