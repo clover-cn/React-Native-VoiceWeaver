@@ -7,22 +7,37 @@ import {
   SafeAreaView,
   Platform,
   Image,
+  Alert,
 } from 'react-native';
 import {ReadingRecord} from '../utils/readerStorage';
 
 interface NovelHomeProps {
   onNavigateSearch: () => void;
-  continueReadingRecord: ReadingRecord | null;
-  onResumeReading: () => void;
+  readingRecords: ReadingRecord[];
+  onResumeReading: (record: ReadingRecord) => void;
+  onRemoveRecord: (bookUrl: string) => void;
 }
 
 const NovelHome: React.FC<NovelHomeProps> = ({
   onNavigateSearch,
-  continueReadingRecord,
+  readingRecords,
   onResumeReading,
+  onRemoveRecord,
 }) => {
-  const currentBook = continueReadingRecord?.book;
-  const currentChapter = continueReadingRecord?.currentChapter;
+  const handleLongPress = (record: ReadingRecord) => {
+    Alert.alert(
+      '删除阅读记录',
+      `确定要从"继续阅读"中删除《${record.book.name}》吗？`,
+      [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => onRemoveRecord(record.book.bookUrl),
+        },
+      ],
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -41,37 +56,44 @@ const NovelHome: React.FC<NovelHomeProps> = ({
       </TouchableOpacity>
 
       <Text style={styles.sectionTitle}>继续阅读</Text>
-      {currentBook ? (
-        <TouchableOpacity
-          style={styles.bookCard}
-          onPress={onResumeReading}
-          activeOpacity={0.8}>
-          {currentBook.coverUrl ? (
-            <Image
-              source={{uri: currentBook.coverUrl}}
-              style={styles.coverImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.coverPlaceholder}>
-              <Text style={styles.coverText}>{currentBook.name[0]}</Text>
-            </View>
-          )}
-          <View style={styles.bookInfo}>
-            <Text style={styles.bookTitle} numberOfLines={1}>
-              {currentBook.name}
-            </Text>
-            <Text style={styles.bookAuthor}>{currentBook.author}</Text>
-            <Text style={styles.bookIntro} numberOfLines={2}>
-              {currentChapter?.title ||
-                currentBook.intro ||
-                '已记录上次阅读进度'}
-            </Text>
-            <Text style={styles.recordMeta} numberOfLines={1}>
-              上次阅读地址: {continueReadingRecord.contentRequest.url}
-            </Text>
-          </View>
-        </TouchableOpacity>
+      {readingRecords.length > 0 ? (
+        readingRecords.map(record => {
+          const book = record.book;
+          const chapter = record.currentChapter;
+          return (
+            <TouchableOpacity
+              key={book.bookUrl}
+              style={styles.bookCard}
+              onPress={() => onResumeReading(record)}
+              onLongPress={() => handleLongPress(record)}
+              delayLongPress={400}
+              activeOpacity={0.8}>
+              {book.coverUrl ? (
+                <Image
+                  source={{uri: book.coverUrl}}
+                  style={styles.coverImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.coverPlaceholder}>
+                  <Text style={styles.coverText}>{book.name[0]}</Text>
+                </View>
+              )}
+              <View style={styles.bookInfo}>
+                <Text style={styles.bookTitle} numberOfLines={1}>
+                  {book.name}
+                </Text>
+                <Text style={styles.bookAuthor}>{book.author}</Text>
+                <Text style={styles.bookIntro} numberOfLines={2}>
+                  {chapter?.title || book.intro || '已记录上次阅读进度'}
+                </Text>
+                <Text style={styles.recordMeta} numberOfLines={1}>
+                  上次阅读地址: {record.contentRequest.url}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })
       ) : (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>还没有阅读记录</Text>

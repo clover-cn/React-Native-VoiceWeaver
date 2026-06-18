@@ -2,11 +2,10 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Alert,
   BackHandler,
-  Platform,
   StyleSheet,
-  ToastAndroid,
   View,
 } from 'react-native';
+import {Toast, GlobalToast} from '../base/utils/ToastManager';
 import {SegmentEditPayload} from './components/SegmentEditorModal';
 import VideoPlayerController from './controllers/VideoPlayerController';
 import VideoSessionController from './controllers/VideoSessionController';
@@ -36,9 +35,10 @@ import {
 import {AudioOption} from './types/audio';
 import {useAudioPlayer} from './hooks/useAudioPlayer';
 import {
-  loadReadingRecord,
+  loadReadingRecords,
   ReadingRecord,
-  saveReadingRecord,
+  removeReadingRecord,
+  upsertReadingRecord,
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
 import BookSourceManagerModal from './components/BookSourceManagerModal';
@@ -395,8 +395,7 @@ const NovelReaderApp: React.FC = () => {
   const [contentParagraphs, setContentParagraphs] = useState<string[]>([]);
   const [currentChapterText, setCurrentChapterText] = useState<string>('');
   const [isListenMode, setIsListenMode] = useState<boolean>(false);
-  const [continueReadingRecord, setContinueReadingRecord] =
-    useState<ReadingRecord | null>(null);
+  const [readingRecords, setReadingRecords] = useState<ReadingRecord[]>([]);
   const [audioOptions, setAudioOptions] = useState<AudioOption[]>([]);
   const [globalAudioBindings, setGlobalAudioBindings] =
     useState<GlobalAudioBindings>({});
@@ -413,6 +412,8 @@ const NovelReaderApp: React.FC = () => {
     null,
   );
   const backPressAtRef = useRef(0);
+  // 去抖:同一次返回键在某些平台(如鸿蒙)会同时触发 hardwareBackPress 与 backPress 别名,导致 handler 跑两次
+  const lastBackFireAtRef = useRef(0);
 
   const audioRecordMap = useMemo(() => {
     return audioOptions.reduce<Record<string, AudioOption>>((acc, item) => {
@@ -488,7 +489,7 @@ const NovelReaderApp: React.FC = () => {
   }, [projectName]);
 
   useEffect(() => {
-    loadReadingRecord().then(setContinueReadingRecord);
+    loadReadingRecords().then(setReadingRecords);
   }, []);
 
   const fetchAudioRecords = useCallback(async () => {
@@ -650,19 +651,15 @@ const NovelReaderApp: React.FC = () => {
         updatedAt: Date.now(),
       };
 
-      await saveReadingRecord(record);
-      setContinueReadingRecord(record);
+      const nextRecords = await upsertReadingRecord(record);
+      setReadingRecords(nextRecords);
     },
     [chapterList, currentChapterIndex, selectedBook],
   );
 
   const showExitPrompt = useCallback(() => {
-    if (Platform.OS === 'android' && ToastAndroid?.show) {
-      ToastAndroid.show('再次按下返回可退出', ToastAndroid.SHORT);
-      return;
-    }
-
-    Alert.alert('提示', '再次按下返回可退出');
+    // 使用全局半透明 Toast(类似 wx.showToast),替代 Alert/ToastAndroid 的弹窗式提示
+    Toast.show('再次按下返回可退出', 1500, 'center');
   }, []);
 
   const openReaderFromView = useCallback(
@@ -704,10 +701,12 @@ const NovelReaderApp: React.FC = () => {
       setSelectedBook(data.book);
       setChapterList(data.chapters);
       if (data.chapters.length > 0) {
-        const resumeIndex =
-          continueReadingRecord?.book.bookUrl === book.bookUrl
-            ? continueReadingRecord.currentChapterIndex
-            : 0;
+        const matchedRecord = readingRecords.find(
+          item => item.book.bookUrl === book.bookUrl,
+        );
+        const resumeIndex = matchedRecord
+          ? matchedRecord.currentChapterIndex
+          : 0;
         const safeIndex = Math.min(
           Math.max(resumeIndex, 0),
           data.chapters.length - 1,
@@ -1235,17 +1234,29 @@ const NovelReaderApp: React.FC = () => {
     };
   }, []);
 
-  const handleResumeReading = async () => {
-    if (!continueReadingRecord) {
+  const handleResumeReading = async (record: ReadingRecord) => {
+    if (!record?.book) {
       return;
     }
 
     setReaderReturnViewState('home');
-    await handleBookSelect(continueReadingRecord.book);
+    await handleBookSelect(record.book);
   };
+
+  const handleRemoveReadingRecord = useCallback(async (bookUrl: string) => {
+    const nextRecords = await removeReadingRecord(bookUrl);
+    setReadingRecords(nextRecords);
+  }, []);
 
   useEffect(() => {
     const handleSystemBack = () => {
+      // 100ms 内的重复回调直接吞掉(防止 hardwareBackPress + backPress 别名双触发)
+      const fireAt = Date.now();
+      if (fireAt - lastBackFireAtRef.current < 100) {
+        return true;
+      }
+      lastBackFireAtRef.current = fireAt;
+
       if (viewState === 'reader') {
         requestExitReader();
         return true;
@@ -1788,8 +1799,9 @@ const NovelReaderApp: React.FC = () => {
       {viewState === 'home' && (
         <NovelHome
           onNavigateSearch={() => setViewState('search')}
-          continueReadingRecord={continueReadingRecord}
+          readingRecords={readingRecords}
           onResumeReading={handleResumeReading}
+          onRemoveRecord={handleRemoveReadingRecord}
         />
       )}
 
@@ -1858,6 +1870,8 @@ const NovelReaderApp: React.FC = () => {
         onClose={() => setAudioLibraryVisible(false)}
         onRecordsChanged={setAudioOptions}
       />
+      {/* 全局 Toast 挂载点:不依赖 setWrapperComponentProvider,确保鸿蒙等多 bundle 子应用也能弹出半透明提示 */}
+      <GlobalToast />
     </View>
   );
 };

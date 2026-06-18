@@ -4,6 +4,8 @@ import bridge from '../../base/utils/bridge';
 const SEARCH_HISTORY_KEY = 'novel_reader_search_history';
 const READING_RECORD_KEY = 'novel_reader_reading_record';
 const MAX_SEARCH_HISTORY = 10;
+// 首页"继续阅读"区最多保留的记录数
+export const MAX_READING_RECORDS = 3;
 const PREF_NAME = 'novel_reader_pref';
 
 type StorageLike = {
@@ -172,17 +174,20 @@ export const clearSearchHistory = async (): Promise<void> => {
   }
 };
 
-export const loadReadingRecord = async (): Promise<ReadingRecord | null> => {
-  if (isHarmonyBridgeAvailable()) {
-    return readPrefJson<ReadingRecord | null>(READING_RECORD_KEY, null);
-  }
-  return readJson<ReadingRecord | null>(READING_RECORD_KEY, null);
+export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
+  const raw = isHarmonyBridgeAvailable()
+    ? await readPrefJson<unknown>(READING_RECORD_KEY, null)
+    : readJson<unknown>(READING_RECORD_KEY, null);
+
+  return normalizeReadingRecords(raw);
 };
 
-export const saveReadingRecord = async (
-  record: ReadingRecord | null,
+export const saveReadingRecords = async (
+  records: ReadingRecord[],
 ): Promise<void> => {
-  if (!record) {
+  const trimmed = records.slice(0, MAX_READING_RECORDS);
+
+  if (trimmed.length === 0) {
     try {
       if (isHarmonyBridgeAvailable()) {
         await removePrefData(READING_RECORD_KEY);
@@ -196,10 +201,66 @@ export const saveReadingRecord = async (
   }
 
   if (isHarmonyBridgeAvailable()) {
-    await writePrefJson(READING_RECORD_KEY, record);
+    await writePrefJson(READING_RECORD_KEY, trimmed);
   } else {
-    writeJson(READING_RECORD_KEY, record);
+    writeJson(READING_RECORD_KEY, trimmed);
   }
+};
+
+// 写入/更新一条阅读记录：按 bookUrl 去重，最新置顶，超过上限则截断
+export const upsertReadingRecord = async (
+  record: ReadingRecord,
+): Promise<ReadingRecord[]> => {
+  const current = await loadReadingRecords();
+  const next = [
+    record,
+    ...current.filter(item => item.book.bookUrl !== record.book.bookUrl),
+  ].slice(0, MAX_READING_RECORDS);
+  await saveReadingRecords(next);
+  return next;
+};
+
+// 按 bookUrl 删除一条阅读记录，返回更新后的列表
+export const removeReadingRecord = async (
+  bookUrl: string,
+): Promise<ReadingRecord[]> => {
+  const current = await loadReadingRecords();
+  const next = current.filter(item => item.book.bookUrl !== bookUrl);
+  if (next.length === current.length) {
+    return current;
+  }
+  await saveReadingRecords(next);
+  return next;
+};
+
+// 兼容旧版（单对象）持久化数据：读取时归一为数组形式
+const normalizeReadingRecords = (raw: unknown): ReadingRecord[] => {
+  if (!raw) {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw.filter(isValidReadingRecord);
+  }
+  if (isValidReadingRecord(raw)) {
+    return [raw];
+  }
+  return [];
+};
+
+const isValidReadingRecord = (value: unknown): value is ReadingRecord => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<ReadingRecord>;
+  return (
+    !!candidate.book &&
+    typeof candidate.book === 'object' &&
+    typeof (candidate.book as Book).bookUrl === 'string' &&
+    Array.isArray(candidate.chapterList) &&
+    typeof candidate.currentChapterIndex === 'number' &&
+    !!candidate.contentRequest &&
+    typeof candidate.contentRequest.url === 'string'
+  );
 };
 
 // ──── 听书进度持久化 ────

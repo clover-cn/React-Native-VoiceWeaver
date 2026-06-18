@@ -7,7 +7,6 @@ import {
   TouchableWithoutFeedback,
   Easing,
   View,
-  Modal,
 } from 'react-native';
 
 const {width, height} = Dimensions.get('window');
@@ -88,10 +87,14 @@ export const GlobalToast = () => {
     singleLine: ToastGlobal.singleLine,
   });
 
-  // 动画变量
+  // 动画变量(初始处于"已隐藏"状态)
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const translateYAnim = useRef(new Animated.Value(20)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  // 是否真正挂载内容(动画播完才卸载,避免淡出动画被打断)
+  const [mounted, setMounted] = useState(state.visible);
+  // 防止快速重复调用 show 导致动画被多次重置闪烁:仅在状态发生有效切换时跑动画
+  const lastVisibleRef = useRef(state.visible);
 
   // 定义当前组件的update方法
   const update = () => {
@@ -120,71 +123,87 @@ export const GlobalToast = () => {
     };
   }, []);
 
-  // 状态变化触发动画
+  // 动画驱动:visible/position/message 变化时,重置起点再播动画
   useEffect(() => {
     opacityAnim.stopAnimation();
     translateYAnim.stopAnimation();
     scaleAnim.stopAnimation();
 
     if (state.visible) {
+      // 立刻挂载内容,然后从"已隐藏"起点淡入
+      setMounted(true);
+      // 关键:每次淡入前先 setValue 到起点,避免上一次动画残留导致"突然显示再渐变"
+      opacityAnim.setValue(0);
       if (state.position === 'center') {
+        scaleAnim.setValue(0.85);
         Animated.parallel([
           Animated.timing(opacityAnim, {
             toValue: 1,
-            duration: 150,
+            duration: 200,
             useNativeDriver: true,
           }),
           Animated.timing(scaleAnim, {
             toValue: 1,
-            duration: 150,
-            easing: Easing.out(Easing.back(1.5)),
+            duration: 220,
+            easing: Easing.out(Easing.back(1.4)),
             useNativeDriver: true,
           }),
         ]).start();
       } else {
+        translateYAnim.setValue(20);
         Animated.parallel([
           Animated.timing(opacityAnim, {
             toValue: 1,
-            duration: 150,
+            duration: 200,
             useNativeDriver: true,
           }),
           Animated.timing(translateYAnim, {
-            toValue: 50,
-            duration: 150,
+            toValue: 0,
+            duration: 200,
+            easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
         ]).start();
       }
-    } else {
+    } else if (lastVisibleRef.current) {
+      // 仅当之前确实可见过才跑淡出,避免初次挂载时白白播一次离场
+      const onDone = ({finished}: {finished: boolean}) => {
+        if (finished) {
+          setMounted(false);
+        }
+      };
       if (state.position === 'center') {
         Animated.parallel([
           Animated.timing(opacityAnim, {
             toValue: 0,
-            duration: 150,
+            duration: 180,
             useNativeDriver: true,
           }),
           Animated.timing(scaleAnim, {
-            toValue: 0.8,
-            duration: 150,
+            toValue: 0.85,
+            duration: 180,
             useNativeDriver: true,
           }),
-        ]).start();
+        ]).start(onDone);
       } else {
         Animated.parallel([
           Animated.timing(opacityAnim, {
             toValue: 0,
-            duration: 150,
+            duration: 180,
             useNativeDriver: true,
           }),
           Animated.timing(translateYAnim, {
             toValue: 20,
-            duration: 150,
+            duration: 180,
             useNativeDriver: true,
           }),
-        ]).start();
+        ]).start(onDone);
       }
     }
-  }, [state.visible, state.position]);
+
+    lastVisibleRef.current = state.visible;
+    // message 一并加入依赖:同位置同状态下连续 show 不同文案时也能重新播淡入
+  }, [state.visible, state.position, state.message]);
 
   const getPosition = () => {
     switch (state.position) {
@@ -203,21 +222,21 @@ export const GlobalToast = () => {
     }
     const translateValue =
       state.position === 'top'
-        ? translateYAnim
-        : Animated.multiply(translateYAnim, -1);
+        ? Animated.multiply(translateYAnim, -1)
+        : translateYAnim;
     return [{translateY: translateValue}];
   };
 
   return (
-    <Modal
-      animationType="none"
-      transparent={true}
-      visible={state.visible}
-      onRequestClose={Toast.hide}
-      style={{zIndex: 99999}}>
-      <TouchableWithoutFeedback onPress={Toast.hide}>
-        <View style={styles.modalContainer}>
+    // 不再使用 Modal,改为绝对定位的覆盖层,兼容鸿蒙等对 Modal 支持有差异的平台。
+    // pointerEvents='box-none' 让未渲染区域穿透,不影响下层交互。
+    <View pointerEvents="box-none" style={styles.overlay}>
+      {mounted && (
+        <View
+          style={styles.modalContainer}
+          pointerEvents={state.visible ? 'box-none' : 'none'}>
           <Animated.View
+            // 气泡本身不抢焦点,但点击事件由内部的 TouchableWithoutFeedback 接收
             style={[
               styles.toast,
               getPosition(),
@@ -225,38 +244,35 @@ export const GlobalToast = () => {
                 opacity: opacityAnim,
                 transform: getTransform(),
               },
-            ]}>
-            <View
-              style={[
-                {
-                  maxWidth: width * 0.75,
-                  paddingHorizontal: 16,
-                  minWidth: 162,
-                  backgroundColor: 'rgba(0,0,0,0.7)',
-                  borderRadius: 8,
-                  paddingVertical: state.visible ? 8 : 0,
-                  height: state.visible ? undefined : 0,
-                },
-                state.singleLine
-                  ? {
-                      paddingVertical: 6,
-                      borderRadius: 18,
-                    }
-                  : {},
-              ]}>
-              <Text
-                style={[styles.text, {height: state.visible ? undefined : 0}]}>
-                {state.message}
-              </Text>
-            </View>
+            ]}
+            pointerEvents={state.visible ? 'auto' : 'none'}>
+            <TouchableWithoutFeedback onPress={Toast.hide}>
+              <View
+                style={[
+                  styles.bubble,
+                  state.singleLine && styles.bubbleSingleLine,
+                  {maxWidth: width * 0.75},
+                ]}>
+                <Text style={styles.text}>{state.message}</Text>
+              </View>
+            </TouchableWithoutFeedback>
           </Animated.View>
         </View>
-      </TouchableWithoutFeedback>
-    </Modal>
+      )}
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 99999,
+    elevation: 99999,
+  },
   modalContainer: {
     flex: 1,
     width: '100%',
@@ -270,6 +286,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'absolute',
     justifyContent: 'center',
+  },
+  bubble: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minWidth: 162,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 8,
+  },
+  bubbleSingleLine: {
+    paddingVertical: 6,
+    borderRadius: 18,
   },
   text: {
     color: '#fff',
