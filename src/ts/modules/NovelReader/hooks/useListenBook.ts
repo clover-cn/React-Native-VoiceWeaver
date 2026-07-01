@@ -18,7 +18,7 @@ export type TimeoutRequestInit = RequestInit & {
 // ⚠️ 重要：模拟器/真机上 localhost 指向设备自身，必须改为开发电脑的局域网IP
 // 例如：'http://192.168.1.100:3000'
 // 可以在电脑终端执行 ipconfig (Windows) 或 ifconfig (Mac/Linux) 查看
-export const API_BASE = 'http://192.168.1.134:3000';
+export const API_BASE = 'https://tts.webpv.cn';
 
 // 带超时保护的 fetch，防止网络不可达时阻塞主线程导致 ANR 闪退
 export const fetchWithTimeout = (

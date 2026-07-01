@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import {ReadingRecord} from '../utils/readerStorage';
+import {useDebug} from '../debug';
 
 interface NovelHomeProps {
   onNavigateSearch: () => void;
@@ -24,6 +25,8 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   onResumeReading,
   onRemoveRecord,
 }) => {
+  const debugCtx = useDebug();
+
   const handleLongPress = (record: ReadingRecord) => {
     Alert.alert(
       '删除阅读记录',
@@ -42,7 +45,11 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.greeting}>下午好，阅读爱好者</Text>
+        <TouchableOpacity
+          onPress={() => debugCtx.registerTap()}
+          activeOpacity={1.0}>
+          <Text style={styles.greeting}>下午好，阅读爱好者</Text>
+        </TouchableOpacity>
         <Text style={styles.subGreeting}>今天想听点什么？</Text>
       </View>
 
