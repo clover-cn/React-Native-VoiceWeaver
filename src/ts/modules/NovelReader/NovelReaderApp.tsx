@@ -42,6 +42,7 @@ import {
   upsertReadingRecord,
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
+import BookDetailModal from './components/BookDetailModal';
 import BookSourceManagerModal from './components/BookSourceManagerModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
 import SleepTimerModal from './components/SleepTimerModal';
@@ -411,6 +412,7 @@ const NovelReaderApp: React.FC = () => {
   const [bookSourceManagerVisible, setBookSourceManagerVisible] =
     useState(false);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
+  const [bookDetailVisible, setBookDetailVisible] = useState(false);
   const [sleepTimerVisible, setSleepTimerVisible] = useState(false);
   const [readerLoading, setReaderLoading] = useState<ReaderLoadingState | null>(
     null,
@@ -880,17 +882,20 @@ const NovelReaderApp: React.FC = () => {
       startIndex: number,
       prescanCount: number,
       currentText: string,
+      onProgress?: (done: number, total: number) => void,
     ): Promise<ListenBookPrescanText[]> => {
       if (prescanCount <= 0) {
         return [];
       }
 
       const output: ListenBookPrescanText[] = [];
+      const total = Math.min(prescanCount, Math.max(0, list.length - startIndex));
       for (
         let index = startIndex;
         index < list.length && output.length < prescanCount;
         index += 1
       ) {
+        onProgress?.(output.length, total);
         try {
           const item = await loadChapterTextForTts(
             book,
@@ -900,6 +905,7 @@ const NovelReaderApp: React.FC = () => {
           );
           if (item) {
             output.push(item);
+            onProgress?.(output.length, total);
           }
         } catch (error) {
           console.warn('[NovelReaderApp] 预扫描章节正文拉取失败', {
@@ -1332,6 +1338,9 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
+    setIsListenMode(true);
+    updateListenRuntime('loading', false, '正在读取当前章节…');
+
     try {
       const currentChapter = await loadChapterTextForTts(
         selectedBook,
@@ -1342,42 +1351,65 @@ const NovelReaderApp: React.FC = () => {
       const chapterText = normalizeChapterTextForRequest(currentChapter?.text);
 
       if (!chapterText) {
+        updateListenRuntime('idle');
+        setIsListenMode(false);
         Alert.alert('听书失败', '当前章节正文为空，无法生成语音。');
         return;
       }
 
+      updateListenRuntime('loading', false, '正在准备听书环境…');
       await ensureListenGenerationContext();
 
       // 先检查后端是否已有该章缓存音频/在途任务,命中即跳过预扫描,
       // 避免每次点击听书都重复串行拉取多章正文。
+      updateListenRuntime('loading', false, '正在检查听书缓存…');
       const cacheStatus = await checkListenCache(
         curProjectName,
         currentChapterIndex,
         chapterText,
       );
+      if (cacheStatus.cached) {
+        updateListenRuntime('ready', true, '');
+        return;
+      }
 
       let prescanTexts: ListenBookPrescanText[] = [];
-      if (!cacheStatus.cached && !cacheStatus.inProgress) {
+      if (!cacheStatus.inProgress) {
         const config = await fetchListenBookConfig();
         const prescanCount = Number.isFinite(config.prescanCount)
           ? Math.max(0, Number(config.prescanCount))
           : 10;
+        if (prescanCount > 0) {
+          updateListenRuntime(
+            'loading',
+            false,
+            `正在预扫描章节 0/${prescanCount}…`,
+          );
+        }
         prescanTexts = await buildPrescanTexts(
           selectedBook,
           chapterList,
           currentChapterIndex,
           prescanCount,
           chapterText,
+          (done, total) => {
+            updateListenRuntime(
+              'loading',
+              false,
+              `正在预扫描章节 ${done}/${total || prescanCount}…`,
+            );
+          },
         );
       }
 
-      setIsListenMode(true);
+      updateListenRuntime('loading', false, '正在提交 TTS 合成任务…');
       startListening(curProjectName, currentChapterIndex, {
         chapterTitle: chapter.title || '',
         chapterText,
         prescanTexts,
       });
     } catch (error) {
+      updateListenRuntime('error');
       console.warn('[NovelReaderApp] 启动听书失败', error);
       Alert.alert(
         '听书失败',
@@ -1814,6 +1846,11 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
+    if (id === 'info') {
+      setBookDetailVisible(true);
+      return;
+    }
+
     if (id === 'sleep') {
       setSleepTimerVisible(true);
     }
@@ -1831,6 +1868,10 @@ const NovelReaderApp: React.FC = () => {
   );
   const handleCloseAudioLibrary = useCallback(
     () => setAudioLibraryVisible(false),
+    [],
+  );
+  const handleCloseBookDetail = useCallback(
+    () => setBookDetailVisible(false),
     [],
   );
   const handleCloseSleepTimer = useCallback(
@@ -1929,6 +1970,11 @@ const NovelReaderApp: React.FC = () => {
         apiBase={API_BASE}
         onClose={handleCloseAudioLibrary}
         onRecordsChanged={setAudioOptions}
+      />
+      <BookDetailModal
+        visible={bookDetailVisible}
+        book={selectedBook}
+        onClose={handleCloseBookDetail}
       />
       <SleepTimerModal
         visible={sleepTimerVisible}

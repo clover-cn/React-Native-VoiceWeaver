@@ -325,13 +325,13 @@ export const useListenBook = (): UseListenBookReturn => {
         listenTaskIdRef.current
       ) {
         setListenState('loading');
-        setListenPhase('waiting');
+        setListenPhase('正在等待 TTS 合成任务…');
         startPolling(listenTaskIdRef.current);
         return;
       }
 
       setListenState('loading');
-      setListenPhase('waiting');
+      setListenPhase('正在等待 TTS 合成任务…');
       cachedListenStateRef.current = 'loading';
 
       try {
