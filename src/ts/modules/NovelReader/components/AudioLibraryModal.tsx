@@ -341,6 +341,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     null,
   );
   const [uploading, setUploading] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState('');
 
   const fetchProvider = useCallback(async () => {
     try {
@@ -390,12 +391,27 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     if (!visible) {
       setUploadDraft(null);
       setUploading(false);
+      setSearchKeyword('');
       return;
     }
 
     fetchProvider();
     fetchAudioList();
   }, [fetchAudioList, fetchProvider, visible]);
+
+  const trimmedSearchKeyword = searchKeyword.trim();
+  const filteredAudioList = useMemo(() => {
+    if (!trimmedSearchKeyword) {
+      return audioList;
+    }
+
+    const lowerKeyword = trimmedSearchKeyword.toLowerCase();
+    return audioList.filter(item =>
+      [item.name, item.sampleText, item.remark, item.createTime]
+        .filter(Boolean)
+        .some(value => String(value).toLowerCase().includes(lowerKeyword)),
+    );
+  }, [audioList, trimmedSearchKeyword]);
 
   const pickHarmonyAudio = useCallback(async () => {
     const payload = await new Promise<string>((resolve, reject) => {
@@ -690,9 +706,36 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             )}
           </TouchableOpacity>
         </View>
+        {audioList.length > 0 ? (
+          <View style={styles.searchCard}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="搜索音频名称、参考文本或备注"
+              placeholderTextColor="#8E8E93"
+              value={searchKeyword}
+              onChangeText={setSearchKeyword}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {searchKeyword ? (
+              <TouchableOpacity
+                style={styles.searchClearBtn}
+                onPress={() => setSearchKeyword('')}>
+                <Text style={styles.searchClearText}>清空</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     ),
-    [fetchAudioList, handleUploadPress, isSiliconflow, uploading],
+    [
+      audioList.length,
+      fetchAudioList,
+      handleUploadPress,
+      isSiliconflow,
+      searchKeyword,
+      uploading,
+    ],
   );
 
   const renderItem = ({item}: {item: AudioOption}) => {
@@ -812,10 +855,18 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
                 </View>
               ) : (
                 <FlatList
-                  data={audioList}
+                  data={filteredAudioList}
                   keyExtractor={item => item.id}
                   renderItem={renderItem}
                   ListHeaderComponent={listHeader}
+                  ListEmptyComponent={
+                    <View style={styles.searchEmptyWrap}>
+                      <Text style={styles.emptyTitle}>没有找到匹配音频</Text>
+                      <Text style={styles.emptyDesc}>
+                        换个名称、参考文本或备注关键词试试。
+                      </Text>
+                    </View>
+                  }
                   contentContainerStyle={styles.listContent}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
@@ -1016,6 +1067,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  searchCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#1C1C1E',
+    fontSize: 14,
+    paddingHorizontal: 0,
+    paddingVertical: 8,
+  },
+  searchClearBtn: {
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,122,255,0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 8,
+  },
+  searchClearText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   card: {
     backgroundColor: '#FFF',
     borderRadius: 12,
@@ -1196,6 +1275,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 24,
     width: '100%',
+    alignItems: 'center',
+  },
+  searchEmptyWrap: {
+    borderRadius: 12,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 20,
+    paddingVertical: 24,
     alignItems: 'center',
   },
   emptyTitle: {

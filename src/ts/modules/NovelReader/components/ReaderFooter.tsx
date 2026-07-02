@@ -398,11 +398,11 @@ const styles = StyleSheet.create({
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     marginBottom: 24,
   },
   gridItem: {
-    width: '22%',
+    width: '25%',
     alignItems: 'center',
     marginBottom: 16,
   },
