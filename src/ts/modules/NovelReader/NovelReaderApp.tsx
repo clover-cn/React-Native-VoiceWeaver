@@ -1347,17 +1347,29 @@ const NovelReaderApp: React.FC = () => {
       }
 
       await ensureListenGenerationContext();
-      const config = await fetchListenBookConfig();
-      const prescanCount = Number.isFinite(config.prescanCount)
-        ? Math.max(0, Number(config.prescanCount))
-        : 10;
-      const prescanTexts = await buildPrescanTexts(
-        selectedBook,
-        chapterList,
+
+      // 先检查后端是否已有该章缓存音频/在途任务,命中即跳过预扫描,
+      // 避免每次点击听书都重复串行拉取多章正文。
+      const cacheStatus = await checkListenCache(
+        curProjectName,
         currentChapterIndex,
-        prescanCount,
         chapterText,
       );
+
+      let prescanTexts: ListenBookPrescanText[] = [];
+      if (!cacheStatus.cached && !cacheStatus.inProgress) {
+        const config = await fetchListenBookConfig();
+        const prescanCount = Number.isFinite(config.prescanCount)
+          ? Math.max(0, Number(config.prescanCount))
+          : 10;
+        prescanTexts = await buildPrescanTexts(
+          selectedBook,
+          chapterList,
+          currentChapterIndex,
+          prescanCount,
+          chapterText,
+        );
+      }
 
       setIsListenMode(true);
       startListening(curProjectName, currentChapterIndex, {

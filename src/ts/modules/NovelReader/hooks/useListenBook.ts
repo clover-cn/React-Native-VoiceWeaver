@@ -106,7 +106,7 @@ export interface UseListenBookReturn {
     project: string,
     index: number,
     chapterText?: string,
-  ) => void;
+  ) => Promise<{cached: boolean; inProgress: boolean}>;
   replaceSegments: (nextSegments: ListenSegment[]) => void;
   updateListenRuntime: (
     nextState: 'idle' | 'loading' | 'ready' | 'error',
@@ -283,12 +283,17 @@ export const useListenBook = (): UseListenBookReturn => {
           setSegments(data.segments);
           setIsGenerationComplete(true);
           cachedListenStateRef.current = 'ready';
-        } else if (data.inProgress && data.taskId) {
+          return {cached: true, inProgress: false};
+        }
+        if (data.inProgress && data.taskId) {
           listenTaskIdRef.current = data.taskId;
           cachedListenStateRef.current = 'loading';
+          return {cached: false, inProgress: true};
         }
+        return {cached: false, inProgress: false};
       } catch (e) {
         console.warn('Check cache failed', e);
+        return {cached: false, inProgress: false};
       }
     },
     [],
