@@ -51,6 +51,7 @@ import {BookSourceCancelToken} from './bookSource/types';
 import {
   buildListenProjectName,
   normalizeChapterTextForRequest,
+  translateListenPhase,
 } from './utils/listenBook';
 
 export type ViewState = 'home' | 'search' | 'reader';
@@ -1595,9 +1596,8 @@ const NovelReaderApp: React.FC = () => {
             updateListenRuntime(
               'loading',
               false,
-              status.phase === 'running'
-                ? '正在重生成当前章节音频…'
-                : status.phase || '正在重生成当前章节音频…',
+              translateListenPhase(status.phase) ||
+                '正在重生成当前章节音频…',
             );
             continue;
           }

@@ -3,6 +3,7 @@ import {ListenBookGeneratePayload, ListenSegment} from '../types/reader';
 import {
   createTextHash,
   normalizeChapterTextForRequest,
+  translateListenPhase,
 } from '../utils/listenBook';
 
 export type AbortSignalLike = {
@@ -217,7 +218,7 @@ export const useListenBook = (): UseListenBookReturn => {
           const data = await res.json();
 
           const {phase, segments: segs, error} = data;
-          setListenPhase(phase);
+          setListenPhase(translateListenPhase(phase));
 
           if (Array.isArray(segs) && segs.length > 0) {
             setSegments(prev => mergePolledSegments(prev, segs));
