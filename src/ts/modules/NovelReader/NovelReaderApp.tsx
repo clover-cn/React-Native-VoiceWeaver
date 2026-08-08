@@ -1453,7 +1453,6 @@ const NovelReaderApp: React.FC = () => {
   const syncRoleOverrideForSegment = useCallback(
     async (segment: ListenSegment, audioId: string | null) => {
       if (
-        !audioId ||
         segment.type !== 'dialogue' ||
         !segment.role ||
         segment.role === '旁白'
@@ -1467,8 +1466,8 @@ const NovelReaderApp: React.FC = () => {
         body: JSON.stringify({
           projectName,
           role: segment.role,
-          audioId,
-          chapterIndex: currentChapterIndex + 1,
+          audioId: audioId || null,
+          chapterIndex: currentChapterIndex,
           skipCacheInvalidation: true,
         }),
       });
@@ -1487,9 +1486,6 @@ const NovelReaderApp: React.FC = () => {
 
       const bindingPayload =
         buildGlobalBindingPayloadFromEmotionMap(emotionMap);
-      if (!bindingPayload) {
-        return;
-      }
 
       await requestJson(`${API_BASE}/api/audio/global-roles`, {
         method: 'POST',

@@ -1,3 +1,5 @@
+import type {VoicePool} from './audio';
+
 export interface Book {
   name: string;
   author: string;
@@ -38,6 +40,9 @@ export interface ListenSegment {
   referenceAudio?: AudioReferenceConfig | null;
   autoEmotionAudioMap?: Record<string, AudioReferenceConfig>;
   autoAssignedVoiceActor?: string | null;
+  voiceAllocationType?: 'core' | 'supporting' | 'temporary' | 'unknown' | string;
+  voicePool?: VoicePool;
+  sharedVoice?: boolean;
   manualAssigned?: boolean;
   referenceAudioFallback?: string;
 }
