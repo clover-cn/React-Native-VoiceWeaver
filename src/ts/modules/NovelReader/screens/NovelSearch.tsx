@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import {
   BookSourceSearchGroup,
   LegadoBookSource,
 } from '../bookSource/types';
+import BookSourceManagerModal from '../components/BookSourceManagerModal';
 
 interface NovelSearchProps {
   onBack: () => void;
@@ -44,10 +45,34 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
   const [searchDiagnostics, setSearchDiagnostics] = useState<
     BookSourceDiagnostic[]
   >([]);
+  const [bookSourceManagerVisible, setBookSourceManagerVisible] =
+    useState(false);
+
+  const refreshAvailableSources = useCallback(async () => {
+    try {
+      const sources = await LocalBookSourceService.getSources();
+      setAvailableSources(sources);
+      setSelectedSourceIds(current =>
+        current.filter(sourceId =>
+          sources.some(source => source.bookSourceUrl === sourceId),
+        ),
+      );
+    } catch (error) {
+      console.warn('[NovelSearch] 获取书源列表失败', error);
+    }
+  }, []);
 
   useEffect(() => {
     loadSearchHistory().then(setSearchHistory);
-    LocalBookSourceService.getSources().then(setAvailableSources);
+    void refreshAvailableSources();
+  }, [refreshAvailableSources]);
+
+  const handleOpenBookSourceManager = useCallback(() => {
+    setBookSourceManagerVisible(true);
+  }, []);
+
+  const handleCloseBookSourceManager = useCallback(() => {
+    setBookSourceManagerVisible(false);
   }, []);
 
   const toggleSource = (sourceId: string) => {
@@ -245,6 +270,12 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
             </TouchableOpacity>
           )}
         </View>
+        <TouchableOpacity
+          style={styles.sourceManageButton}
+          onPress={handleOpenBookSourceManager}
+          activeOpacity={0.8}>
+          <Text style={styles.sourceManageButtonText}>书源管理</Text>
+        </TouchableOpacity>
       </View>
 
       {renderSourceFilters()}
@@ -299,6 +330,12 @@ const NovelSearch: React.FC<NovelSearchProps> = ({onBack, onBookSelect}) => {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
+
+      <BookSourceManagerModal
+        visible={bookSourceManagerVisible}
+        onClose={handleCloseBookSourceManager}
+        onSourcesChanged={refreshAvailableSources}
+      />
     </SafeAreaView>
   );
 };
@@ -335,6 +372,20 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
+  },
+  sourceManageButton: {
+    marginLeft: 8,
+    height: 44,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sourceManageButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   input: {
     flex: 1,

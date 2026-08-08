@@ -35,7 +35,6 @@ const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
   // { label: '夜间', id: 'night' },
   {label: '翻页模式', id: 'flip'},
   {label: '书籍详情', id: 'info'},
-  {label: '书源管理', id: 'sourceManage'},
   {label: '书源切换', id: 'source'},
   {label: '音频管理', id: 'audio'},
   {label: '定时关闭', id: 'sleep'},

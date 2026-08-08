@@ -43,7 +43,6 @@ import {
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
 import BookDetailModal from './components/BookDetailModal';
-import BookSourceManagerModal from './components/BookSourceManagerModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
 import SleepTimerModal from './components/SleepTimerModal';
 import LocalBookSourceService from './bookSource/LocalBookSourceService';
@@ -410,8 +409,6 @@ const NovelReaderApp: React.FC = () => {
   const [missingEmotionPolicy, setMissingEmotionPolicy] =
     useState<MissingEmotionPolicy>('fallback_neutral');
   const [sourceModalVisible, setSourceModalVisible] = useState(false);
-  const [bookSourceManagerVisible, setBookSourceManagerVisible] =
-    useState(false);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
   const [bookDetailVisible, setBookDetailVisible] = useState(false);
   const [sleepTimerVisible, setSleepTimerVisible] = useState(false);
@@ -1831,11 +1828,6 @@ const NovelReaderApp: React.FC = () => {
   }, [ensureListenGenerationContext]);
 
   const handleMenuItemClick = useCallback((id: string) => {
-    if (id === 'sourceManage') {
-      setBookSourceManagerVisible(true);
-      return;
-    }
-
     if (id === 'source') {
       setSourceModalVisible(true);
       return;
@@ -1860,10 +1852,6 @@ const NovelReaderApp: React.FC = () => {
   // 这些 Modal 已 memo / 内部 visible 检查开销可控,但稳定引用能减少不必要的 reconcile。
   const handleCloseSourceModal = useCallback(
     () => setSourceModalVisible(false),
-    [],
-  );
-  const handleCloseBookSourceManager = useCallback(
-    () => setBookSourceManagerVisible(false),
     [],
   );
   const handleCloseAudioLibrary = useCallback(
@@ -1960,10 +1948,6 @@ const NovelReaderApp: React.FC = () => {
         currentBook={selectedBook}
         onClose={handleCloseSourceModal}
         onSourceSelect={handleSourceSelect}
-      />
-      <BookSourceManagerModal
-        visible={bookSourceManagerVisible}
-        onClose={handleCloseBookSourceManager}
       />
       <AudioLibraryModal
         visible={audioLibraryVisible}
