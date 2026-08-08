@@ -77,3 +77,14 @@ yarn-error.log
 /harmony/.clang-format
 /harmony/.clang-tidy
 /harmony/**/.test
+
+# Harmony 本机签名配置与签名材料（不要提交）
+/harmony/build-profile.json5
+/material/
+**/*.p12
+**/*.csr
+**/*.cer
+**/*.p7b
+
+# React Native Harmony 运行时 bundle，由 npm run dev:all 生成
+/harmony/entry/src/main/resources/rawfile/bundle/

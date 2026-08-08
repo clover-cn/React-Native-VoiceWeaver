@@ -1,0 +1,73 @@
+/*
+ * HarmonyOS 本地构建配置模板。
+ *
+ * 使用方式：
+ * 1. 复制为 build-profile.json5；
+ * 2. 在 DevEco Studio 的 Signing Configs 中配置本机签名；
+ * 3. 不要把真实证书路径、密码或签名材料提交到 Git。
+ */
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\YOUR_USER\\.ohos\\config\\YOUR_CERTIFICATE.cer",
+          "keyAlias": "YOUR_KEY_ALIAS",
+          "keyPassword": "YOUR_KEY_PASSWORD",
+          "profile": "C:\\Users\\YOUR_USER\\.ohos\\config\\YOUR_PROFILE.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\YOUR_USER\\.ohos\\config\\YOUR_KEYSTORE.p12",
+          "storePassword": "YOUR_STORE_PASSWORD"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "targetSdkVersion": "6.0.2(22)"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+        "buildOption": {
+          "externalNativeOptions": {
+            "path": "./entry/src/main/cpp/CMakeLists.txt",
+            "arguments": [],
+            "abiFilters": [
+              "arm64-v8a",
+              "x86_64"
+            ],
+            "cppFlags": ""
+          }
+        }
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aggregated_login",
+      "srcPath": "./aggregated_login"
+    }
+  ]
+}
