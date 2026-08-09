@@ -12,7 +12,7 @@ import { Logger } from '../utils/Logger';
 import { ShareUtils } from '../utils/ShareUtils';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { PhotoHelper } from '../utils/PhotoHelper';
-import { JSON } from '@kit.ArkTS';
+import { JSON, util } from '@kit.ArkTS';
 import { call } from '@kit.TelephonyKit';
 import { StatusBarManager } from '../utils/StatusBarManager';
 import { BridgeOpenLinkModel } from '../model/BridgeOpenLinkModel';
@@ -57,6 +57,31 @@ interface NativeSelectedJsonResult {
   name: string;
   size: number;
   content: string;
+  error?: string;
+}
+
+interface NativeSelectedTxtResult {
+  cancelled: boolean;
+  success: boolean;
+  localBookId: string;
+  name: string;
+  size: number;
+  content: string;
+  contentBase64?: string;
+  error?: string;
+}
+
+interface NativeLocalTxtResult {
+  success: boolean;
+  localBookId: string;
+  content?: string;
+  contentBase64?: string;
+  error?: string;
+}
+
+interface NativeDeleteLocalTxtResult {
+  success: boolean;
+  localBookId: string;
   error?: string;
 }
 
@@ -165,6 +190,112 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     return ''
   }
 
+  private sanitizeUtf16(value: string): string {
+    let result = ''
+    let index = 0
+    while (index < value.length) {
+      const code = value.charCodeAt(index)
+      const isHighSurrogate = code >= 0xD800 && code <= 0xDBFF
+      const isLowSurrogate = code >= 0xDC00 && code <= 0xDFFF
+      if (isHighSurrogate) {
+        const nextCode = value.charCodeAt(index + 1)
+        if (nextCode >= 0xDC00 && nextCode <= 0xDFFF) {
+          result += value.substring(index, index + 2)
+          index += 2
+          continue
+        }
+        index += 1
+        continue
+      }
+      if (isLowSurrogate) {
+        index += 1
+        continue
+      }
+      result += value.charAt(index)
+      index += 1
+    }
+    return result
+  }
+
+  private scoreTxtContent(content: string): number {
+    let score = 0
+    let cjkCount = 0
+    for (let index = 0; index < content.length; index += 1) {
+      const code = content.charCodeAt(index)
+      if ((code >= 0x3400 && code <= 0x4DBF) || (code >= 0x4E00 && code <= 0x9FFF)) {
+        cjkCount += 1
+      }
+      if (code === 0xFFFD) {
+        score -= 100
+      }
+      if (code === 0 || (code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D)) {
+        score -= 20
+      }
+    }
+
+    score += cjkCount * 2
+    if (content.indexOf('《') >= 0) {
+      score += 120
+    }
+    if (content.indexOf('》') >= 0) {
+      score += 120
+    }
+    if (content.indexOf('第') >= 0) {
+      score += 60
+    }
+    if (content.indexOf('章') >= 0 || content.indexOf('回') >= 0) {
+      score += 40
+    }
+    return score
+  }
+
+  private readTxtText(path: string): string {
+    const encodings: Array<string> = ['utf-8', 'gb18030', 'gbk', 'utf-16le', 'utf-16be']
+    let bestContent = ''
+    let bestScore = -1000000000
+    let bestEncoding = ''
+    for (let index = 0; index < encodings.length; index += 1) {
+      const encoding = encodings[index]
+      try {
+        const candidate = this.sanitizeUtf16(fs.readTextSync(path, { encoding: encoding }))
+        const score = this.scoreTxtContent(candidate)
+        if (score > bestScore) {
+          bestContent = candidate
+          bestScore = score
+          bestEncoding = encoding
+        }
+      } catch (error) {
+        Logger.warn(TAG, `read TXT with encoding failed: encoding=${encoding}, error=${JSON.stringify(error)}`)
+      }
+    }
+
+    if (bestContent.length > 0) {
+      Logger.info(TAG, `read TXT encoding selected: encoding=${bestEncoding}, score=${bestScore}, length=${bestContent.length}`)
+      return bestContent
+    }
+    return this.sanitizeUtf16(fs.readTextSync(path))
+  }
+
+  private readFileBase64(path: string, fileSize: number): string {
+    const file = fs.openSync(path, fs.OpenMode.READ_ONLY)
+    try {
+      const size = Math.max(0, fileSize)
+      if (size === 0) {
+        return ''
+      }
+      const buffer = new ArrayBuffer(size)
+      const readLength = fs.readSync(file.fd, buffer, {
+        offset: 0,
+        length: size,
+      })
+      const bytes = new Uint8Array(buffer, 0, readLength)
+      const helper = new util.Base64Helper()
+      return helper.encodeToStringSync(bytes)
+    } finally {
+      fs.closeSync(file)
+    }
+  }
+
   private getFileNameFromUri(uri: string): string {
     if (!uri) {
       return ''
@@ -172,7 +303,13 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
 
     const safeUri = uri.split('?')[0]
     const fileName = safeUri.substring(safeUri.lastIndexOf('/') + 1)
-    return decodeURIComponent(fileName)
+    try {
+      return this.sanitizeUtf16(decodeURIComponent(fileName))
+    } catch (error) {
+      // 文档选择器可能返回包含不完整百分号转义的 URI；文件名本身仍可使用。
+      Logger.warn(TAG, `decode file name failed, fallback to raw name: ${JSON.stringify(error)}`)
+      return this.sanitizeUtf16(fileName)
+    }
   }
 
   private parseBusinessError(error: Object): BusinessError {
@@ -314,6 +451,15 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     const extension = this.getFileExtension(fileName)
     const suffix = extension ? `.${extension}` : '.json'
     return `${cacheDir}/book_source_import_${Date.now()}${suffix}`
+  }
+
+  private buildLocalTxtBookId(): string {
+    return `txt_${Date.now()}_${Math.floor(Math.random() * 1000000)}`
+  }
+
+  private buildLocalTxtBookPath(localBookId: string): string {
+    const normalizedId = this.normalizeCacheKey(localBookId)
+    return `${getContext().filesDir}/rn_voice_weaver_book_${normalizedId}.txt`
   }
 
   private buildUploadInternalCacheUri(tempPath: string): string {
@@ -1164,6 +1310,184 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
         content: '',
         error: businessError.message ?? '当前设备不支持 JSON 文件选择',
       })
+    }
+  }
+
+  selectTxtDocument(callback: ((result: string) => void) | undefined): void {
+    Logger.info(TAG, 'selectTxtDocument')
+    const finish = (result: NativeSelectedTxtResult) => {
+      const safeResult: NativeSelectedTxtResult = {
+        cancelled: result.cancelled,
+        success: result.success,
+        localBookId: result.localBookId,
+        name: this.sanitizeUtf16(result.name ?? ''),
+        size: result.size,
+        content: this.sanitizeUtf16(result.content ?? ''),
+        contentBase64: result.contentBase64 ?? '',
+        error: result.error ? this.sanitizeUtf16(result.error) : result.error,
+      }
+      callback?.(JSON.stringify(safeResult))
+    }
+
+    try {
+      const documentSelectOptions = new picker.DocumentSelectOptions()
+      documentSelectOptions.maxSelectNumber = 1
+      const documentPicker = new picker.DocumentViewPicker(getContext(this) as common.UIAbilityContext)
+      documentPicker.select(documentSelectOptions)
+        .then(async (result: Array<string>) => {
+          const selectedUri = result.length > 0 ? this.sanitizeUtf16(result[0]) : ''
+          if (!selectedUri) {
+            finish({
+              cancelled: true,
+              success: false,
+              localBookId: '',
+              name: '',
+              size: 0,
+              content: '',
+            })
+            return
+          }
+
+          const sourceFileName = this.sanitizeUtf16(this.getFileNameFromUri(selectedUri))
+          if (!sourceFileName.toLowerCase().endsWith('.txt')) {
+            finish({
+              cancelled: true,
+              success: false,
+              localBookId: '',
+              name: sourceFileName,
+              size: 0,
+              content: '',
+              error: '请选择 TXT 格式的小说文件',
+            })
+            return
+          }
+
+          const localBookId = this.buildLocalTxtBookId()
+          const targetPath = this.buildLocalTxtBookPath(localBookId)
+          let sourceFile: fs.File | undefined = undefined
+          try {
+            sourceFile = fs.openSync(selectedUri, fs.OpenMode.READ_ONLY)
+            fs.copyFileSync(sourceFile.fd, targetPath)
+            const stat = await fs.stat(targetPath)
+            const content = this.readTxtText(targetPath)
+            const contentBase64 = this.readFileBase64(targetPath, Number(stat.size ?? 0))
+            Logger.info(
+              TAG,
+              `selectTxtDocument success: localBookId=${localBookId}, fileNameLength=${sourceFileName.length}, contentLength=${content.length}, base64Length=${contentBase64.length}, fileSize=${Number(stat.size ?? 0)}`,
+            )
+            finish({
+              cancelled: false,
+              success: true,
+              localBookId,
+              name: sourceFileName,
+              size: Number(stat.size ?? 0),
+              content,
+              contentBase64,
+            })
+          } catch (error) {
+            const businessError = this.parseBusinessError(error)
+            this.safeDeleteFile(targetPath)
+            Logger.error(TAG, `selectTxtDocument read failed: ${JSON.stringify(businessError)}`)
+            finish({
+              cancelled: true,
+              success: false,
+              localBookId: '',
+              name: sourceFileName,
+              size: 0,
+              content: '',
+              error: businessError.message ?? '读取 TXT 文件失败',
+            })
+          } finally {
+            if (sourceFile) {
+              fs.closeSync(sourceFile)
+            }
+          }
+        })
+        .catch((error: BusinessError) => {
+          Logger.warn(TAG, `selectTxtDocument failed: ${JSON.stringify(error)}`)
+          finish({
+            cancelled: true,
+            success: false,
+            localBookId: '',
+            name: '',
+            size: 0,
+            content: '',
+            error: error.message ?? '选择 TXT 文件失败',
+          })
+        })
+    } catch (error) {
+      const businessError = this.parseBusinessError(error)
+      Logger.error(TAG, `selectTxtDocument exception: ${JSON.stringify(businessError)}`)
+      finish({
+        cancelled: true,
+        success: false,
+        localBookId: '',
+        name: '',
+        size: 0,
+        content: '',
+        error: businessError.message ?? '当前设备不支持 TXT 文件选择',
+      })
+    }
+  }
+
+  readLocalTxtBook(
+    localBookId: string,
+    callback: ((result: string) => void) | undefined,
+  ): void {
+    const id = this.getNonEmptyText(localBookId)
+    try {
+      const path = this.buildLocalTxtBookPath(id)
+      const stat = fs.statSync(path)
+      const fileSize = Number(stat.size ?? 0)
+      const content = this.readTxtText(path)
+      const contentBase64 = this.readFileBase64(path, fileSize)
+      const result: NativeLocalTxtResult = {
+        success: true,
+        localBookId: id,
+        content,
+        contentBase64,
+      }
+      const safeResult: NativeLocalTxtResult = {
+        success: result.success,
+        localBookId: this.sanitizeUtf16(result.localBookId),
+        content: result.content ? this.sanitizeUtf16(result.content) : result.content,
+        contentBase64: result.contentBase64 ?? '',
+        error: result.error ? this.sanitizeUtf16(result.error) : result.error,
+      }
+      callback?.(JSON.stringify(safeResult))
+    } catch (error) {
+      const businessError = this.parseBusinessError(error)
+      Logger.error(TAG, `readLocalTxtBook failed: ${JSON.stringify(businessError)}`)
+      const result: NativeLocalTxtResult = {
+        success: false,
+        localBookId: id,
+        error: businessError.message ?? '读取本地 TXT 失败',
+      }
+      callback?.(JSON.stringify(result))
+    }
+  }
+
+  deleteLocalTxtBook(
+    localBookId: string,
+    callback: ((result: string) => void) | undefined,
+  ): void {
+    const id = this.getNonEmptyText(localBookId)
+    try {
+      fs.unlinkSync(this.buildLocalTxtBookPath(id))
+      const result: NativeDeleteLocalTxtResult = {
+        success: true,
+        localBookId: id,
+      }
+      callback?.(JSON.stringify(result))
+    } catch (error) {
+      const businessError = this.parseBusinessError(error)
+      Logger.error(TAG, `deleteLocalTxtBook failed: ${JSON.stringify(businessError)}`)
+      const result: NativeDeleteLocalTxtResult = {
+        success: false,
+        localBookId: id,
+        error: businessError.message ?? '删除本地 TXT 失败',
+      }
+      callback?.(JSON.stringify(result))
     }
   }
 

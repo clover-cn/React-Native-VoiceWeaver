@@ -1,7 +1,9 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
 import {ListenBookGeneratePayload, ListenSegment} from '../types/reader';
 import {
+  areListenSegmentsFullyPlayable,
   createTextHash,
+  hasPlayableListenAudio,
   normalizeChapterTextForRequest,
   translateListenPhase,
 } from '../utils/listenBook';
@@ -95,6 +97,7 @@ const mergePolledSegments = (
 export interface UseListenBookReturn {
   listenState: 'idle' | 'loading' | 'ready' | 'error';
   listenPhase: string;
+  listenError: string;
   segments: ListenSegment[];
   isGenerationComplete: boolean;
   startListening: (
@@ -109,6 +112,7 @@ export interface UseListenBookReturn {
     chapterText?: string,
   ) => Promise<{cached: boolean; inProgress: boolean}>;
   replaceSegments: (nextSegments: ListenSegment[]) => void;
+  restoreListenCache: (nextSegments: ListenSegment[]) => void;
   updateListenRuntime: (
     nextState: 'idle' | 'loading' | 'ready' | 'error',
     generationComplete?: boolean,
@@ -122,6 +126,7 @@ export const useListenBook = (): UseListenBookReturn => {
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
   const [listenPhase, setListenPhase] = useState<string>('');
+  const [listenError, setListenError] = useState<string>('');
   const [segments, setSegments] = useState<ListenSegment[]>([]);
   const [isGenerationComplete, setIsGenerationComplete] =
     useState<boolean>(false);
@@ -174,6 +179,7 @@ export const useListenBook = (): UseListenBookReturn => {
 
       setListenState('idle');
       setListenPhase('');
+      setListenError('');
       setSegments([]);
       setIsGenerationComplete(false);
       listenTaskIdRef.current = null;
@@ -187,6 +193,15 @@ export const useListenBook = (): UseListenBookReturn => {
     setSegments(nextSegments);
   }, []);
 
+  const restoreListenCache = useCallback((nextSegments: ListenSegment[]) => {
+    setSegments(nextSegments);
+    setIsGenerationComplete(true);
+    setListenError('');
+    setListenState('ready');
+    setListenPhase('');
+    cachedListenStateRef.current = 'ready';
+  }, []);
+
   const updateListenRuntime = useCallback(
     (
       nextState: 'idle' | 'loading' | 'ready' | 'error',
@@ -194,6 +209,9 @@ export const useListenBook = (): UseListenBookReturn => {
       phase = '',
     ) => {
       setListenState(nextState);
+      if (nextState !== 'error') {
+        setListenError('');
+      }
       setIsGenerationComplete(generationComplete);
       setListenPhase(phase);
       cachedListenStateRef.current =
@@ -225,8 +243,7 @@ export const useListenBook = (): UseListenBookReturn => {
           }
 
           const hasPlayableSegment =
-            Array.isArray(segs) &&
-            segs.some((segment: ListenSegment) => !!segment?.audioUrl);
+            Array.isArray(segs) && segs.some(hasPlayableListenAudio);
 
           if (hasPlayableSegment) {
             cachedListenStateRef.current = 'ready';
@@ -238,13 +255,16 @@ export const useListenBook = (): UseListenBookReturn => {
             if (Array.isArray(segs)) {
               setSegments(segs);
             }
-            setIsGenerationComplete(true);
+            const fullyPlayable = areListenSegmentsFullyPlayable(segs);
+            setListenError('');
+            setIsGenerationComplete(fullyPlayable);
             cachedListenStateRef.current = 'ready';
             setListenState('ready'); // 确保能触发播放
           } else if (phase === 'error') {
             stopPolling();
             cachedListenStateRef.current = 'idle';
             setListenState('error');
+            setListenError(error || '听书音频生成失败');
             console.error('生成报错:', error);
           }
         } catch (err) {
@@ -280,11 +300,18 @@ export const useListenBook = (): UseListenBookReturn => {
           throw new Error(data?.error || `缓存检查失败(${res.status})`);
         }
 
-        if (data.exists) {
+        if (data.exists && areListenSegmentsFullyPlayable(data.segments)) {
           setSegments(data.segments);
           setIsGenerationComplete(true);
+          setListenError('');
           cachedListenStateRef.current = 'ready';
           return {cached: true, inProgress: false};
+        }
+        if (Array.isArray(data.segments) && data.segments.length > 0) {
+          setSegments(data.segments);
+          setIsGenerationComplete(false);
+          setListenError('');
+          cachedListenStateRef.current = 'idle';
         }
         if (data.inProgress && data.taskId) {
           listenTaskIdRef.current = data.taskId;
@@ -310,13 +337,17 @@ export const useListenBook = (): UseListenBookReturn => {
       const chapterText = normalizeChapterTextForRequest(payload.chapterText);
 
       if (!chapterText) {
-        setListenState('error');
-        cachedListenStateRef.current = 'idle';
+          setListenState('error');
+          setListenError('当前章节正文为空，无法生成语音。');
+          cachedListenStateRef.current = 'idle';
         console.warn('Trigger listening skipped: empty chapter text');
         return;
       }
 
-      if (cachedListenStateRef.current === 'ready' && segments.length > 0) {
+      if (
+        cachedListenStateRef.current === 'ready' &&
+        areListenSegmentsFullyPlayable(segments)
+      ) {
         setListenState('ready');
         return;
       }
@@ -356,13 +387,22 @@ export const useListenBook = (): UseListenBookReturn => {
           throw new Error(data?.error || `启动听书失败(${res.status})`);
         }
 
-        if (data.alreadyDone) {
+        if (
+          data.alreadyDone &&
+          areListenSegmentsFullyPlayable(data.segments)
+        ) {
           listenTaskIdRef.current = data.taskId || null;
           setSegments(data.segments || []);
           setIsGenerationComplete(true);
+          setListenError('');
           setListenState('ready');
           cachedListenStateRef.current = 'ready';
           return;
+        }
+
+        if (Array.isArray(data.segments) && data.segments.length > 0) {
+          setSegments(data.segments);
+          setIsGenerationComplete(false);
         }
 
         listenTaskIdRef.current = data.taskId;
@@ -370,9 +410,10 @@ export const useListenBook = (): UseListenBookReturn => {
       } catch (e) {
         console.error('Trigger listening failed', e);
         setListenState('error');
+        setListenError(e instanceof Error ? e.message : '启动听书失败');
       }
     },
-    [segments.length, startPolling],
+    [segments, startPolling],
   );
 
   useEffect(() => {
@@ -384,12 +425,14 @@ export const useListenBook = (): UseListenBookReturn => {
   return {
     listenState,
     listenPhase,
+    listenError,
     segments,
     isGenerationComplete,
     startListening,
     resetListen,
     checkListenCache,
     replaceSegments,
+    restoreListenCache,
     updateListenRuntime,
     cancelListenTask,
   };

@@ -28,6 +28,7 @@ import SegmentEditorModal, {
 } from '../components/SegmentEditorModal';
 import ReaderCatalog from '../components/ReaderCatalog';
 import {AudioOption} from '../types/audio';
+import {buildListenSegmentFailureHint} from '../utils/listenBook';
 
 export type ReaderLoadingPhase = 'toc' | 'content';
 
@@ -94,6 +95,10 @@ const SegmentRow = memo(
       null,
     );
     const isNarration = item.type === 'narration' || item.role === '旁白';
+    const generationFailureHint =
+      !item.audioUrl && item.generationError
+        ? buildListenSegmentFailureHint(item.generationError)
+        : '';
 
     useEffect(() => {
       return () => {
@@ -160,6 +165,11 @@ const SegmentRow = memo(
           )}
           {item.text}
         </Text>
+        {generationFailureHint ? (
+          <Text style={styles.segmentFailureHint}>
+            {generationFailureHint}
+          </Text>
+        ) : null}
       </Pressable>
     );
   },
@@ -758,6 +768,12 @@ const styles = StyleSheet.create({
   paragraphActiveText: {
     color: '#000',
     fontWeight: '500',
+  },
+  segmentFailureHint: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#C2410C',
   },
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,

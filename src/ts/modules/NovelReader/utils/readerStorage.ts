@@ -1,11 +1,9 @@
-import {Book, Chapter} from '../types/reader';
+import {Book, Chapter, ListenSegment} from '../types/reader';
 import bridge from '../../base/utils/bridge';
 
 const SEARCH_HISTORY_KEY = 'novel_reader_search_history';
 const READING_RECORD_KEY = 'novel_reader_reading_record';
 const MAX_SEARCH_HISTORY = 10;
-// 首页"继续阅读"区最多保留的记录数
-export const MAX_READING_RECORDS = 3;
 const PREF_NAME = 'novel_reader_pref';
 
 type StorageLike = {
@@ -185,7 +183,7 @@ export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
 export const saveReadingRecords = async (
   records: ReadingRecord[],
 ): Promise<void> => {
-  const trimmed = records.slice(0, MAX_READING_RECORDS);
+  const trimmed = records;
 
   if (trimmed.length === 0) {
     try {
@@ -207,7 +205,7 @@ export const saveReadingRecords = async (
   }
 };
 
-// 写入/更新一条阅读记录：按 bookUrl 去重，最新置顶，超过上限则截断
+// 写入/更新一条书架记录：按 bookUrl 去重，最新访问的书籍置顶。
 export const upsertReadingRecord = async (
   record: ReadingRecord,
 ): Promise<ReadingRecord[]> => {
@@ -215,7 +213,7 @@ export const upsertReadingRecord = async (
   const next = [
     record,
     ...current.filter(item => item.book.bookUrl !== record.book.bookUrl),
-  ].slice(0, MAX_READING_RECORDS);
+  ];
   await saveReadingRecords(next);
   return next;
 };
@@ -268,11 +266,19 @@ const isValidReadingRecord = (value: unknown): value is ReadingRecord => {
 const LISTEN_PROGRESS_KEY = 'novel_reader_listen_progress';
 
 export interface ListenProgress {
-  segmentIndex: number;   // 当前播放段落序号
-  currentTime: number;    // 当前段落播放到的秒数
-  chapterIndex: number;   // 当前章节序号
-  projectName: string;    // 项目名
-  updatedAt: number;      // 时间戳
+  segmentIndex: number; // 当前播放段落序号
+  currentTime: number; // 当前段落播放到的秒数
+  chapterIndex: number; // 当前章节序号
+  projectName: string; // 项目名
+  updatedAt: number; // 时间戳
+}
+
+export interface ListenChapterCache {
+  projectName: string;
+  chapterIndex: number;
+  contentHash: string;
+  segments: ListenSegment[];
+  updatedAt: number;
 }
 
 export const saveListenProgress = async (
@@ -311,5 +317,52 @@ export const clearListenProgress = async (
     }
   } catch (error) {
     console.warn('[readerStorage] 清除听书进度失败', error);
+  }
+};
+
+const getListenChapterCacheKey = (projectName: string, chapterIndex: number) =>
+  `listen_book_cache_${projectName}_${chapterIndex}`;
+
+export const saveListenChapterCache = async (
+  cache: ListenChapterCache,
+): Promise<void> => {
+  const key = getListenChapterCacheKey(cache.projectName, cache.chapterIndex);
+  if (isHarmonyBridgeAvailable()) {
+    await writePrefJson(key, cache);
+  } else {
+    writeJson(key, cache);
+  }
+};
+
+export const loadListenChapterCache = async (
+  projectName: string,
+  chapterIndex: number,
+  contentHash: string,
+): Promise<ListenChapterCache | null> => {
+  const key = getListenChapterCacheKey(projectName, chapterIndex);
+  const cache = isHarmonyBridgeAvailable()
+    ? await readPrefJson<ListenChapterCache | null>(key, null)
+    : readJson<ListenChapterCache | null>(key, null);
+
+  if (
+    !cache ||
+    cache.contentHash !== contentHash ||
+    !Array.isArray(cache.segments)
+  ) {
+    return null;
+  }
+
+  return cache;
+};
+
+export const clearListenChapterCache = async (
+  projectName: string,
+  chapterIndex: number,
+): Promise<void> => {
+  const key = getListenChapterCacheKey(projectName, chapterIndex);
+  if (isHarmonyBridgeAvailable()) {
+    await removePrefData(key);
+  } else {
+    getStorage().removeItem(key);
   }
 };

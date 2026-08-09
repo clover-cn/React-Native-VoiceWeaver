@@ -10,6 +10,9 @@ export interface Book {
   latestChapterTitle?: string;
   bookUrl: string;
   tocUrl?: string;
+  sourceType?: 'remote' | 'local_txt';
+  localBookId?: string;
+  contentHash?: string;
 }
 
 export interface Chapter {
@@ -28,11 +31,13 @@ export interface AudioReferenceConfig {
 }
 
 export interface ListenSegment {
+  index?: number;
   type: 'narration' | 'dialogue';
   role?: string;
   emotion?: string;
   text: string;
   audioUrl?: string | null;
+  generationError?: string | null;
   localAudioUrl?: string | null;
   cacheState?: 'idle' | 'preloading' | 'ready' | 'failed';
   cacheKey?: string;
@@ -40,7 +45,12 @@ export interface ListenSegment {
   referenceAudio?: AudioReferenceConfig | null;
   autoEmotionAudioMap?: Record<string, AudioReferenceConfig>;
   autoAssignedVoiceActor?: string | null;
-  voiceAllocationType?: 'core' | 'supporting' | 'temporary' | 'unknown' | string;
+  voiceAllocationType?:
+    | 'core'
+    | 'supporting'
+    | 'temporary'
+    | 'unknown'
+    | string;
   voicePool?: VoicePool;
   sharedVoice?: boolean;
   manualAssigned?: boolean;

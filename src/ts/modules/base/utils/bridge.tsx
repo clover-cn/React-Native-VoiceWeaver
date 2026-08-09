@@ -121,6 +121,33 @@ class Bridge2Native {
     return BridgeTurboModule.selectJsonDocument(callback || (() => {}));
   }
 
+  /** 选择并持久化 TXT 书籍，仅鸿蒙已实现。 */
+  selectTxtDocument(callback?: (result: string) => void): void {
+    return BridgeTurboModule.selectTxtDocument(callback || (() => {}));
+  }
+
+  /** 读取应用私有目录中的 TXT 书籍。 */
+  readLocalTxtBook(
+    localBookId: string,
+    callback?: (result: string) => void,
+  ): void {
+    return BridgeTurboModule.readLocalTxtBook(
+      localBookId,
+      callback || (() => {}),
+    );
+  }
+
+  /** 删除应用私有目录中的 TXT 书籍。 */
+  deleteLocalTxtBook(
+    localBookId: string,
+    callback?: (result: string) => void,
+  ): void {
+    return BridgeTurboModule.deleteLocalTxtBook(
+      localBookId,
+      callback || (() => {}),
+    );
+  }
+
   /**
    * 导出 JSON 文档，仅鸿蒙已实现。
    */
@@ -128,7 +155,10 @@ class Bridge2Native {
     payload: string,
     callback?: (result: string) => void,
   ): void {
-    return BridgeTurboModule.exportJsonDocument(payload, callback || (() => {}));
+    return BridgeTurboModule.exportJsonDocument(
+      payload,
+      callback || (() => {}),
+    );
   }
 
   /**

@@ -69,6 +69,18 @@ export interface Spec extends TurboModule {
 
   selectJsonDocument(callback: (result: string) => void): void;
 
+  selectTxtDocument(callback: (result: string) => void): void;
+
+  readLocalTxtBook(
+    localBookId: string,
+    callback: (result: string) => void,
+  ): void;
+
+  deleteLocalTxtBook(
+    localBookId: string,
+    callback: (result: string) => void,
+  ): void;
+
   exportJsonDocument(payload: string, callback: (result: string) => void): void;
 
   cacheListenBookAudio(
