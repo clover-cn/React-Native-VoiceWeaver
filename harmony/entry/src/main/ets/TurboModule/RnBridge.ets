@@ -655,6 +655,55 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     return `${getContext().cacheDir}/${LISTEN_AUDIO_CACHE_PREFIX}${normalizedKey}${suffix}`
   }
 
+  private buildListenAudioCacheTempPath(cachePath: string): string {
+    return `${cachePath}.part`
+  }
+
+  private buildListenAudioCacheMarkerPath(cachePath: string): string {
+    return `${cachePath}.ok`
+  }
+
+  private async statCompletedListenAudioCache(
+    cachePath: string,
+    markerPath: string,
+  ): Promise<number> {
+    const cacheSize = await this.statCachedFile(cachePath)
+    const markerSize = await this.statCachedFile(markerPath)
+    return cacheSize > 0 && markerSize > 0 ? cacheSize : 0
+  }
+
+  private copyListenAudioCacheFile(sourcePath: string, targetPath: string): void {
+    let sourceFile: fs.File | undefined = undefined
+    try {
+      sourceFile = fs.openSync(sourcePath, fs.OpenMode.READ_ONLY)
+      this.safeDeleteFile(targetPath)
+      fs.copyFileSync(sourceFile.fd, targetPath)
+    } finally {
+      if (sourceFile) {
+        fs.closeSync(sourceFile)
+      }
+    }
+  }
+
+  private writeListenAudioCacheMarker(markerPath: string, fileSize: number): void {
+    let markerFile: fs.File | undefined = undefined
+    try {
+      this.safeDeleteFile(markerPath)
+      markerFile = fs.openSync(markerPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
+      fs.writeSync(markerFile.fd, `${fileSize}`)
+    } finally {
+      if (markerFile) {
+        fs.closeSync(markerFile)
+      }
+    }
+  }
+
+  private cleanupListenAudioCacheFiles(cachePath: string): void {
+    this.safeDeleteFile(cachePath)
+    this.safeDeleteFile(this.buildListenAudioCacheTempPath(cachePath))
+    this.safeDeleteFile(this.buildListenAudioCacheMarkerPath(cachePath))
+  }
+
   private createListenAudioCacheResult(
     success: boolean,
     cacheKey: string,
@@ -703,9 +752,11 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
       payload.extension,
     )
     const cachePath = this.buildListenAudioCachePath(cacheKey, extension)
+    const tempCachePath = this.buildListenAudioCacheTempPath(cachePath)
+    const cacheMarkerPath = this.buildListenAudioCacheMarkerPath(cachePath)
 
     try {
-      const cacheSize = await this.statCachedFile(cachePath)
+      const cacheSize = await this.statCompletedListenAudioCache(cachePath, cacheMarkerPath)
       if (cacheSize > 0) {
         Logger.info(TAG, `cacheListenAudioFileInternal hit: key=${cacheKey}, path=${cachePath}, size=${cacheSize}`)
         return this.createListenAudioCacheResult(true, cacheKey, cachePath, true)
@@ -714,15 +765,15 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
       // ignore cache miss
     }
 
-    this.safeDeleteFile(cachePath)
+    this.cleanupListenAudioCacheFiles(cachePath)
 
     const downloadContext = getContext(this) as common.UIAbilityContext
     const config: request.DownloadConfig = {
       url: downloadUrl,
-      filePath: cachePath,
+      filePath: tempCachePath,
     }
 
-    Logger.info(TAG, `cacheListenAudioFileInternal start: key=${cacheKey}, url=${downloadUrl}, path=${cachePath}`)
+    Logger.info(TAG, `cacheListenAudioFileInternal start: key=${cacheKey}, url=${downloadUrl}, path=${cachePath}, tempPath=${tempCachePath}`)
 
     return new Promise<NativeListenAudioCacheResult>((resolve) => {
       request.downloadFile(downloadContext, config)
@@ -739,7 +790,7 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
             settled = true
 
             if (!success) {
-              this.safeDeleteFile(cachePath)
+              this.cleanupListenAudioCacheFiles(cachePath)
               resolve(
                 this.createListenAudioCacheResult(
                   false,
@@ -754,9 +805,9 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
             }
 
             try {
-              const fileSize = await this.statCachedFile(cachePath)
+              const fileSize = await this.statCachedFile(tempCachePath)
               if (fileSize <= 0) {
-                this.safeDeleteFile(cachePath)
+                this.cleanupListenAudioCacheFiles(cachePath)
                 resolve(
                   this.createListenAudioCacheResult(
                     false,
@@ -770,13 +821,31 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
                 return
               }
 
+              this.copyListenAudioCacheFile(tempCachePath, cachePath)
+              const finalSize = await this.statCachedFile(cachePath)
+              if (finalSize <= 0 || finalSize !== fileSize) {
+                this.cleanupListenAudioCacheFiles(cachePath)
+                resolve(
+                  this.createListenAudioCacheResult(
+                    false,
+                    cacheKey,
+                    undefined,
+                    false,
+                    'COPY_VERIFY_FAILED',
+                    '缓存音频文件落盘校验失败',
+                  ),
+                )
+                return
+              }
+              this.writeListenAudioCacheMarker(cacheMarkerPath, finalSize)
+
               Logger.info(
                 TAG,
-                `cacheListenAudioFileInternal success: key=${cacheKey}, path=${cachePath}, size=${fileSize}`,
+                `cacheListenAudioFileInternal success: key=${cacheKey}, path=${cachePath}, size=${finalSize}`,
               )
               resolve(this.createListenAudioCacheResult(true, cacheKey, cachePath, false))
             } catch (error) {
-              this.safeDeleteFile(cachePath)
+              this.cleanupListenAudioCacheFiles(cachePath)
               resolve(
                 this.createListenAudioCacheResult(
                   false,
@@ -787,6 +856,8 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
                   '缓存文件校验失败',
                 ),
               )
+            } finally {
+              this.safeDeleteFile(tempCachePath)
             }
           }
 
@@ -804,7 +875,7 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
         })
         .catch((error: BusinessError) => {
           Logger.error(TAG, `cacheListenAudioFileInternal create task failed: ${error.code}, ${error.message}`)
-          this.safeDeleteFile(cachePath)
+          this.cleanupListenAudioCacheFiles(cachePath)
           resolve(
             this.createListenAudioCacheResult(
               false,
@@ -838,7 +909,7 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
 
       targets.forEach(path => {
         try {
-          this.safeDeleteFile(path)
+          this.cleanupListenAudioCacheFiles(path)
           deletedCount += 1
         } catch (error) {
           failedCount += 1

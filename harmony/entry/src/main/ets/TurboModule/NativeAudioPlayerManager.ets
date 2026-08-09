@@ -76,6 +76,7 @@ export class NativeAudioPlayerManager {
   private loadingIndex: number = -1;
   private resumeAfterInterrupt: boolean = false;
   private loadRequestId: number = 0;
+  private isLoadingSource: boolean = false;
   private stoppedExplicitly: boolean = false;
   private currentSourceUrl: string = '';
   private currentLocalFile: fs.File | null = null;
@@ -195,6 +196,8 @@ export class NativeAudioPlayerManager {
     this.resumeAfterInterrupt = false;
     this.waitingForMoreSegments = false;
     this.waitingReason = null;
+    this.isLoadingSource = false;
+    this.loadingIndex = -1;
     this.currentPositionMs = 0;
     this.currentDurationMs = 0;
     this.player.stop().then(() => {
@@ -251,6 +254,8 @@ export class NativeAudioPlayerManager {
     this.currentDurationMs = 0;
     this.currentSourceUrl = '';
     this.closeLocalFileSource();
+    this.isLoadingSource = false;
+    this.loadingIndex = -1;
     this.stoppedExplicitly = false;
     this.waitingReason = null;
   }
@@ -338,15 +343,6 @@ export class NativeAudioPlayerManager {
       return;
     }
 
-    const currentSourceChanged =
-      this.currentIndex >= 0 &&
-      this.currentIndex < this.queue.length &&
-      this.queue[this.currentIndex]?.url !== this.currentSourceUrl;
-    if (currentSourceChanged) {
-      await this.loadIndex(this.currentIndex, this.desiredPlaying);
-      return;
-    }
-
     this.updateSessionMetadata();
     if (this.waitingForMoreSegments) {
       if (
@@ -373,6 +369,35 @@ export class NativeAudioPlayerManager {
       }
 
       this.emitPlaybackEvent('waiting');
+      return;
+    }
+
+    const nextCurrentSourceUrl =
+      this.currentIndex >= 0 && this.currentIndex < this.queue.length
+        ? this.queue[this.currentIndex]?.url
+        : '';
+    const currentSourceChanged =
+      this.currentIndex >= 0 &&
+      this.currentIndex < this.queue.length &&
+      (nextCurrentSourceUrl ?? '') !== this.currentSourceUrl;
+    if (currentSourceChanged) {
+      if (this.shouldKeepCurrentSourceDuringQueueRefresh(playerState, nextCurrentSourceUrl)) {
+        const currentSegment = this.queue[this.currentIndex];
+        this.queue[this.currentIndex] = {
+          id: currentSegment.id,
+          url: this.currentSourceUrl,
+          title: currentSegment.title,
+          duration: currentSegment.duration,
+        };
+        Logger.info(
+          TAG,
+          `保持当前播放源不重载: index=${this.currentIndex}, current=${this.currentSourceUrl}, queued=${nextCurrentSourceUrl ?? ''}, state=${playerState}`,
+        );
+        this.updateSessionMetadata();
+        this.emitPlaybackEvent(this.desiredPlaying ? 'playing' : 'paused');
+        return;
+      }
+      await this.loadIndex(this.currentIndex, this.desiredPlaying);
       return;
     }
 
@@ -414,9 +439,11 @@ export class NativeAudioPlayerManager {
     this.stoppedExplicitly = false;
     this.desiredPlaying = autoPlay;
     this.loadingIndex = normalizedIndex;
+    this.isLoadingSource = true;
     this.updateSessionMetadata();
 
     if (!this.hasUsableUrl(target.url)) {
+      this.markSourceLoadSettled();
       this.enterWaitingState('missing_current');
       return;
     }
@@ -436,6 +463,7 @@ export class NativeAudioPlayerManager {
       await this.applyPlayerSource(player, target.url as string);
       this.currentSourceUrl = target.url as string;
     } catch (error) {
+      this.markSourceLoadSettled();
       Logger.error(TAG, `loadIndex failed: ${JSON.stringify(error)}`);
       this.emitPlaybackEvent('error');
     }
@@ -443,6 +471,32 @@ export class NativeAudioPlayerManager {
 
   private isLocalCacheUri(url: string): boolean {
     return url.startsWith('internal://cache/') || url.startsWith(getContext().cacheDir);
+  }
+
+  private isRemoteStreamUri(url: string): boolean {
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
+  private shouldKeepCurrentSourceDuringQueueRefresh(
+    playerState: string,
+    nextSourceUrl?: string | null,
+  ): boolean {
+    const isMidPlayback =
+      this.currentPositionMs > 0 ||
+      playerState === 'playing' ||
+      playerState === 'paused' ||
+      playerState === 'prepared';
+
+    if (
+      !isMidPlayback ||
+      !this.hasUsableUrl(this.currentSourceUrl) ||
+      !this.hasUsableUrl(nextSourceUrl)
+    ) {
+      return false;
+    }
+
+    // 预取缓存完成只影响后续播放；当前段继续使用已打开的远程流，避免 reset 触发误 completed。
+    return this.isRemoteStreamUri(this.currentSourceUrl) && this.isLocalCacheUri(nextSourceUrl as string);
   }
 
   private resolveLocalCachePath(url: string): string {
@@ -554,12 +608,14 @@ export class NativeAudioPlayerManager {
           try {
             await player.prepare();
           } catch (error) {
+            this.markSourceLoadSettled();
             Logger.error(TAG, `prepare failed: ${JSON.stringify(error)}`);
             this.emitPlaybackEvent('error');
           }
           break;
         case 'prepared':
           this.currentDurationMs = player.duration;
+          this.markSourceLoadSettled();
           this.updateSessionMetadata();
           await AVSessionManager.getInstance().waitForMetadata();
           if (this.desiredPlaying) {
@@ -577,20 +633,28 @@ export class NativeAudioPlayerManager {
           this.emitPlaybackEvent('paused');
           break;
         case 'playing':
+          this.markSourceLoadSettled();
           this.syncSessionState('playing');
           this.emitPlaybackEvent('playing');
           break;
         case 'paused':
+          this.markSourceLoadSettled();
           this.syncSessionState('paused');
           this.emitPlaybackEvent('paused');
           break;
         case 'completed':
+          if (this.isLoadingSource) {
+            Logger.warn(TAG, `忽略加载过程中的 completed: currentIndex=${this.currentIndex}, loadingIndex=${this.loadingIndex}`);
+            break;
+          }
           this.handleSegmentCompleted();
           break;
         case 'stopped':
+          this.markSourceLoadSettled();
           this.emitPlaybackEvent('stopped');
           break;
         case 'released':
+          this.markSourceLoadSettled();
           this.emitPlaybackEvent('released');
           break;
         default:
@@ -621,6 +685,7 @@ export class NativeAudioPlayerManager {
     });
 
     player.on('error', (error: BusinessError) => {
+      this.markSourceLoadSettled();
       Logger.error(TAG, `player error: ${error.code}, ${error.message}`);
       this.syncSessionState('paused');
       this.emitPlaybackEvent('error');
@@ -857,6 +922,11 @@ export class NativeAudioPlayerManager {
     this.lastPlaybackEventAt = Date.now();
     this.lastPlaybackEventState = state;
     this.lastPlaybackEventIndex = this.currentIndex;
+  }
+
+  private markSourceLoadSettled(): void {
+    this.isLoadingSource = false;
+    this.loadingIndex = -1;
   }
 
   private normalizeIndex(index: number): number {
