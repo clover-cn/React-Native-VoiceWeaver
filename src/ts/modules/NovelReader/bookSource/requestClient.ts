@@ -18,18 +18,30 @@ const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36';
 
 const splitUrlOption = (rawUrl: string) => {
-  const marker = ',{';
-  const index = rawUrl.lastIndexOf(marker);
-  if (index < 0 || !rawUrl.endsWith('}')) {
-    return {url: rawUrl, option: {} as Record<string, unknown>};
+  const text = rawUrl.trim();
+  const match = text.match(/,\s*(\{[\s\S]*\})\s*$/);
+  if (!match || match.index == null) {
+    return {url: text, option: {} as Record<string, unknown>};
   }
 
-  const url = rawUrl.slice(0, index);
+  const url = text.slice(0, match.index).trim();
   const option = safeJsonParse<Record<string, unknown>>(
-    rawUrl.slice(index + 1),
+    match[1],
     {},
   );
   return {url, option};
+};
+
+const createRequestTemplateVars = (vars: Record<string, unknown>) => {
+  const java = {
+    base64Encode: (value: unknown) =>
+      Buffer.from(String(value ?? ''), 'utf8').toString('base64'),
+    encodeURI: (value: unknown) => encodeURIComponent(String(value ?? '')),
+  };
+  return {
+    ...vars,
+    java,
+  };
 };
 
 const encodeRequestUrl = (url: string): string => {
@@ -43,18 +55,52 @@ const encodeRequestUrl = (url: string): string => {
 export const buildHeaders = (
   source: LegadoBookSource,
   baseUrl: string,
+  vars: Record<string, unknown> = {},
 ): Record<string, string> => {
-  const headerText = renderTemplate(source.header || '{}', {
-    baseUrl,
-    key: '',
-    page: 1,
-  });
-  const sourceHeaders = safeJsonParse<Record<string, string>>(headerText, {});
+  const header =
+    typeof source.header === 'object' && source.header ? source.header : {};
+  const headerText =
+    typeof source.header === 'string'
+      ? renderTemplate(
+          source.header || '{}',
+          createRequestTemplateVars({
+            ...vars,
+            baseUrl,
+          }),
+        )
+      : '';
+  const sourceHeaders = {
+    ...(header as Record<string, string>),
+    ...safeJsonParse<Record<string, string>>(headerText, {}),
+  };
+  const renderedHeaders = Object.entries(sourceHeaders).reduce<
+    Record<string, string>
+  >((result, [key, value]) => {
+    result[key] = renderTemplate(
+      String(value),
+      createRequestTemplateVars({
+        ...vars,
+        baseUrl,
+      }),
+    );
+    return result;
+  }, {});
+
   return {
     'User-Agent': DEFAULT_USER_AGENT,
-    ...sourceHeaders,
+    ...renderedHeaders,
   };
 };
+
+const stringifyRequestBody = (body: unknown): string | undefined => {
+  if (body == null) {
+    return undefined;
+  }
+  return typeof body === 'object' ? JSON.stringify(body) : String(body);
+};
+
+const hasHeader = (headers: Record<string, string>, name: string) =>
+  Object.keys(headers).some(key => key.toLowerCase() === name.toLowerCase());
 
 export const resolveRequest = (
   source: LegadoBookSource,
@@ -62,10 +108,11 @@ export const resolveRequest = (
   vars: Record<string, unknown>,
   baseUrl = source.bookSourceUrl,
 ): ResolvedRequest => {
-  const templated = renderTemplate(rawUrl, {
+  const templateVars = createRequestTemplateVars({
     ...vars,
     baseUrl,
   });
+  const templated = renderTemplate(rawUrl, templateVars);
   const {url, option} = splitUrlOption(templated);
   const method = String(option.method || 'GET').toUpperCase();
   const optionHeaders =
@@ -75,15 +122,26 @@ export const resolveRequest = (
   const charset = String(option.charset || 'utf-8').toLowerCase();
 
   const resolvedUrl = resolveUrl(url, baseUrl);
+  const body = stringifyRequestBody(option.body);
+  const headers = {
+    ...buildHeaders(source, baseUrl, vars),
+    ...optionHeaders,
+  };
+
+  if (
+    method === 'POST' &&
+    typeof option.body === 'string' &&
+    body !== undefined &&
+    !hasHeader(headers, 'Content-Type')
+  ) {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+  }
 
   return {
     url: encodeRequestUrl(stripUrlHash(resolvedUrl)),
     method,
-    headers: {
-      ...buildHeaders(source, baseUrl),
-      ...optionHeaders,
-    },
-    body: option.body == null ? undefined : String(option.body),
+    headers,
+    body,
     charset,
     webView: Boolean(option.webView),
     retry: Number(option.retry || 0),

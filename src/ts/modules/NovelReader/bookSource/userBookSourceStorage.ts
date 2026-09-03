@@ -1,5 +1,6 @@
 import {Platform} from 'react-native';
 import {LegadoBookSource} from './types';
+import {normalizeLegadoBookSource} from './normalizeBookSource';
 
 const PREF_NAME = 'novel_reader_pref';
 const USER_BOOK_SOURCES_KEY = 'novel_reader_user_book_sources';
@@ -146,10 +147,23 @@ const normalizeSource = (value: unknown): LegadoBookSource | null => {
   }
 
   return {
-    ...(candidate as LegadoBookSource),
+    ...normalizeLegadoBookSource(candidate as LegadoBookSource),
     bookSourceName,
     bookSourceUrl,
   };
+};
+
+const mergeDefinedSourceFields = (
+  previous: LegadoBookSource,
+  next: LegadoBookSource,
+): LegadoBookSource => {
+  const merged = {...previous};
+  Object.entries(next).forEach(([key, value]) => {
+    if (value !== undefined) {
+      (merged as Record<string, unknown>)[key] = value;
+    }
+  });
+  return normalizeLegadoBookSource(merged);
 };
 
 export const parseBookSourceJson = (content: string): ParsedBookSourceImport => {
@@ -168,6 +182,14 @@ export const parseBookSourceJson = (content: string): ParsedBookSourceImport => 
 
     if (sourceMap.has(source.bookSourceUrl)) {
       duplicateCount += 1;
+      sourceMap.set(
+        source.bookSourceUrl,
+        mergeDefinedSourceFields(
+          sourceMap.get(source.bookSourceUrl) as LegadoBookSource,
+          source,
+        ),
+      );
+      return;
     }
     sourceMap.set(source.bookSourceUrl, source);
   });

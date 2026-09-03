@@ -9,8 +9,31 @@ const pathSep = require('path').sep;
 const fs = require('fs');
 const SHA256 = require('crypto-js/sha256');
 
-const basicNameArray = require('./map/basicNameMap.json');
-const homepageArray = require('./map/pageNameMap.json');
+const mapDir = __dirname + pathSep + 'map';
+const basicNameMapPath = mapDir + pathSep + 'basicNameMap.json';
+const pageNameMapPath = mapDir + pathSep + 'pageNameMap.json';
+
+function readNameMap(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return Array.isArray(value) ? value : [];
+  } catch (error) {
+    console.warn('----------readNameMap failed, reset to empty', filePath, error);
+    return [];
+  }
+}
+
+function writeNameMap(filePath, value) {
+  fs.mkdirSync(mapDir, {recursive: true});
+  fs.writeFileSync(filePath, JSON.stringify(value));
+}
+
+const basicNameArray = readNameMap(basicNameMapPath);
+const homepageArray = readNameMap(pageNameMapPath);
 
 function getModuleId(projectRootPath, modulePath, ...bundles) {
   let startIndex = modulePath.indexOf(projectRootPath);
@@ -27,18 +50,12 @@ function createModuleIdFactoryWrap(projectRootPath, ...bundles) {
       if ('basic' === bundles[0]) {
         if (!basicNameArray.includes(jsItem)) {
           basicNameArray.push(jsItem);
-          fs.writeFileSync(
-            __dirname + pathSep + 'map' + pathSep + 'basicNameMap.json',
-            JSON.stringify(basicNameArray),
-          );
+          writeNameMap(basicNameMapPath, basicNameArray);
         }
       } else {
         if (!homepageArray.includes(jsItem)) {
           homepageArray.push(jsItem);
-          fs.writeFileSync(
-            __dirname + pathSep + 'map' + pathSep + 'pageNameMap.json',
-            JSON.stringify(homepageArray),
-          );
+          writeNameMap(pageNameMapPath, homepageArray);
         }
       }
 

@@ -28,9 +28,11 @@ export interface LegadoRuleBookInfo {
 export interface LegadoRuleToc {
   chapterList?: string;
   chapterName?: string;
+  ruleChapterName?: string;
   chapterUrl?: string;
   isVip?: string;
   updateTime?: string;
+  chapterInfo?: string;
   nextTocUrl?: string;
 }
 
@@ -53,15 +55,26 @@ export interface LegadoBookSource {
   enabledCookieJar?: boolean;
   enabledExplore?: boolean;
   exploreUrl?: string | unknown[];
-  header?: string;
+  header?: string | Record<string, string>;
+  jsLib?: string;
   lastUpdateTime?: string | number;
   loginUrl?: string;
+  loginJs?: string;
   respondTime?: number;
   ruleBookInfo?: LegadoRuleBookInfo;
   ruleContent?: LegadoRuleContent;
   ruleExplore?: unknown;
   ruleSearch?: LegadoRuleSearch;
   ruleToc?: LegadoRuleToc;
+  searchRule?: LegadoRuleSearch;
+  bookInfoRule?: LegadoRuleBookInfo;
+  exploreRule?: unknown;
+  tocRule?: LegadoRuleToc;
+  contentRule?: LegadoRuleContent;
+  bookUrlPattern?: string;
+  key?: string;
+  tag?: string;
+  variable?: string;
   searchUrl?: string;
   weight?: number;
 }
@@ -97,12 +110,14 @@ export interface BookSourceSearchGroup extends Book {
 export interface ChapterListResult {
   book: Book;
   chapters: Chapter[];
+  diagnostic?: BookSourceDiagnostic;
 }
 
 export interface ContentResult {
   text: string;
   paragraphs: string[];
   requestUrl: string;
+  diagnostic?: BookSourceDiagnostic;
 }
 
 export interface BookSourceDiagnostic {
@@ -111,7 +126,12 @@ export interface BookSourceDiagnostic {
   ok: boolean;
   stage: string;
   message: string;
+  rule?: string;
+  unsupportedFeatures?: string[];
   requestUrl?: string;
+  requestMethod?: string;
+  requestBodyLength?: number;
+  requestHeaderKeys?: string[];
   htmlLength?: number;
   listCount?: number;
   resultCount?: number;

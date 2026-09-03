@@ -2,8 +2,8 @@ import {Book, Chapter} from '../types/reader';
 import {BUILTIN_BOOK_SOURCES} from './builtinBookSources';
 import {
   createRuleContext,
-  evaluateList,
-  evaluateString,
+  evaluateListAsync,
+  evaluateStringAsync,
   normalizeContentText,
   RuleItem,
 } from './ruleEvaluator';
@@ -28,6 +28,11 @@ import {
 import {bookSourceLogger} from './bookSourceLogger';
 import {loadUserBookSourceRecords} from './userBookSourceStorage';
 import {buildApibiTokenChapterUrl} from './apibiChapterToken';
+import {
+  getUnsupportedBookSourceFeatures,
+  normalizeLegadoBookSource,
+  requiresUnsupportedLogin,
+} from './normalizeBookSource';
 
 const MAX_TOC_PAGES = 30;
 const MAX_CONTENT_PAGES = 10;
@@ -63,13 +68,13 @@ const mergeBookSources = (userSources: LegadoBookSource[]) => {
 
   BUILTIN_BOOK_SOURCES.forEach(source => {
     if (source.bookSourceUrl) {
-      sourceMap.set(source.bookSourceUrl, source);
+      sourceMap.set(source.bookSourceUrl, normalizeLegadoBookSource(source));
     }
   });
 
   userSources.forEach(source => {
     if (source.bookSourceUrl) {
-      sourceMap.set(source.bookSourceUrl, source);
+      sourceMap.set(source.bookSourceUrl, normalizeLegadoBookSource(source));
     }
   });
 
@@ -184,7 +189,7 @@ const applyReplaceRegex = (text: string, replaceRegex?: string) => {
   return applyRegexTail(text, regex, replacement, onlyOne);
 };
 
-const readRuleField = (
+const readRuleField = async (
   rule: string | undefined,
   raw: string,
   baseUrl: string,
@@ -193,19 +198,19 @@ const readRuleField = (
   vars?: Record<string, unknown>,
   json?: unknown,
 ) => {
-  return evaluateString(
+  return evaluateStringAsync(
     rule,
     createRuleContext(raw, baseUrl, item, vars, json),
     key ? URL_RULE_KEYS.has(key) : false,
   );
 };
 
-const readBookInfoInit = (
+const readBookInfoInit = async (
   rule: string | undefined,
   raw: string,
   baseUrl: string,
   vars: Record<string, unknown>,
-): RuleItem | undefined => {
+): Promise<RuleItem | undefined> => {
   const cleanRule = String(rule || '').trim();
   if (!cleanRule) {
     return undefined;
@@ -213,10 +218,10 @@ const readBookInfoInit = (
 
   const context = createRuleContext(raw, baseUrl, undefined, vars);
   if (cleanRule.startsWith(':') || cleanRule.startsWith('-:')) {
-    return evaluateList(cleanRule, context)[0];
+    return (await evaluateListAsync(cleanRule, context))[0];
   }
 
-  const text = readRuleField(
+  const text = await readRuleField(
     cleanRule,
     raw,
     baseUrl,
@@ -239,16 +244,22 @@ const getSearchFieldBaseUrl = (
   source: LegadoBookSource,
   requestUrl: string,
   key: string,
+  rule?: string,
 ) => {
-  return URL_RULE_KEYS.has(key) ? source.bookSourceUrl : requestUrl;
+  const dynamicRule = String(rule || '').includes('@js:') ||
+    String(rule || '').includes('<js>');
+  return URL_RULE_KEYS.has(key) && !dynamicRule ? source.bookSourceUrl : requestUrl;
 };
 
 const getBookInfoFieldBaseUrl = (
   source: LegadoBookSource,
   requestUrl: string,
   key: string,
+  rule?: string,
 ) => {
-  return URL_RULE_KEYS.has(key) ? source.bookSourceUrl : requestUrl;
+  const dynamicRule = String(rule || '').includes('@js:') ||
+    String(rule || '').includes('<js>');
+  return URL_RULE_KEYS.has(key) && !dynamicRule ? source.bookSourceUrl : requestUrl;
 };
 
 const searchWithSource = async (
@@ -264,12 +275,25 @@ const searchWithSource = async (
     sourceUrl: source.bookSourceUrl,
   };
 
+  if (requiresUnsupportedLogin(source)) {
+    const diagnostic = {
+      ...baseDiagnostic,
+      ok: false,
+      stage: 'unsupported',
+      message: '书源依赖登录，本轮暂不支持',
+      unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+    };
+    bookSourceLogger.warn('search', diagnostic.message, diagnostic);
+    return {books: [], diagnostic};
+  }
+
   if (!source.searchUrl || !source.ruleSearch?.bookList) {
     const diagnostic = {
       ...baseDiagnostic,
       ok: false,
       stage: 'config',
       message: '书源缺少 searchUrl 或 ruleSearch.bookList',
+      unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
     };
     bookSourceLogger.warn('search', diagnostic.message, diagnostic);
     return {books: [], diagnostic};
@@ -286,6 +310,21 @@ const searchWithSource = async (
     key: keyword,
     page,
   });
+  if (request.webView) {
+    const diagnostic = {
+      ...baseDiagnostic,
+      ok: false,
+      stage: 'unsupported',
+      message: '搜索请求依赖 webView，本轮暂不支持动态页面',
+      requestUrl: request.url,
+      rule: source.searchUrl,
+      unsupportedFeatures: [
+        ...new Set([...getUnsupportedBookSourceFeatures(source), 'webView']),
+      ],
+    };
+    bookSourceLogger.warn('search', diagnostic.message, diagnostic);
+    return {books: [], diagnostic};
+  }
   bookSourceLogger.log('search', '搜索 URL 已解析', {
     sourceName: source.bookSourceName,
     requestUrl: request.url,
@@ -293,8 +332,9 @@ const searchWithSource = async (
     body: request.body,
   });
   const raw = await requestText(request, source.respondTime || 20000);
-  const context = createRuleContext(raw, request.url);
-  const list = evaluateList(source.ruleSearch.bookList, context);
+  const vars: Record<string, unknown> = {source};
+  const context = createRuleContext(raw, request.url, undefined, vars);
+  const list = await evaluateListAsync(source.ruleSearch.bookList, context);
   bookSourceLogger.log('search', '搜索列表规则匹配完成', {
     sourceName: source.bookSourceName,
     requestUrl: request.url,
@@ -303,13 +343,14 @@ const searchWithSource = async (
     listCount: list.length,
   });
 
-  const books = list
-    .map(item => {
+  const books = (
+    await Promise.all(
+      list.map(async item => {
       const rules = source.ruleSearch || {};
-      const bookUrl = readRuleField(
+      const bookUrl = await readRuleField(
         rules.bookUrl,
         raw,
-        getSearchFieldBaseUrl(source, request.url, 'bookUrl'),
+        getSearchFieldBaseUrl(source, request.url, 'bookUrl', rules.bookUrl),
         item,
         'bookUrl',
       );
@@ -322,17 +363,34 @@ const searchWithSource = async (
       }
 
       const book = normalizeBook(source, {
-        name: readRuleField(rules.name, raw, request.url, item, 'name'),
-        author: readRuleField(rules.author, raw, request.url, item, 'author'),
-        coverUrl: readRuleField(
+        name: await readRuleField(rules.name, raw, request.url, item, 'name'),
+        author: await readRuleField(
+          rules.author,
+          raw,
+          request.url,
+          item,
+          'author',
+        ),
+        coverUrl: await readRuleField(
           rules.coverUrl,
           raw,
-          getSearchFieldBaseUrl(source, request.url, 'coverUrl'),
+          getSearchFieldBaseUrl(
+            source,
+            request.url,
+            'coverUrl',
+            rules.coverUrl,
+          ),
           item,
           'coverUrl',
         ),
-        intro: readRuleField(rules.intro, raw, request.url, item, 'intro'),
-        latestChapterTitle: readRuleField(
+        intro: await readRuleField(
+          rules.intro,
+          raw,
+          request.url,
+          item,
+          'intro',
+        ),
+        latestChapterTitle: await readRuleField(
           rules.lastChapter,
           raw,
           request.url,
@@ -350,8 +408,9 @@ const searchWithSource = async (
       });
 
       return book;
-    })
-    .filter(Boolean) as BookSourceSearchResult[];
+      }),
+    )
+  ).filter(Boolean) as BookSourceSearchResult[];
 
   const diagnostic = {
     ...baseDiagnostic,
@@ -362,6 +421,8 @@ const searchWithSource = async (
         ? `搜索成功，解析到 ${books.length} 本书`
         : `请求成功，但 bookList 只匹配到 ${list.length} 项，最终有效书籍为 0`,
     requestUrl: request.url,
+    rule: source.ruleSearch.bookList,
+    unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
     htmlLength: raw.length,
     listCount: list.length,
     resultCount: books.length,
@@ -386,46 +447,76 @@ const getBookInfo = async (
   throwIfCancelled(cancelToken);
   const rules = source.ruleBookInfo || {};
   vars.book = book;
-  const initItem = readBookInfoInit(rules.bookInfoInit, raw, request.url, vars);
+  vars.source = source;
+  const initItem = await readBookInfoInit(
+    rules.bookInfoInit,
+    raw,
+    request.url,
+    vars,
+  );
 
   const nextBook: Book = {
     ...book,
     name:
-      readRuleField(rules.name, raw, request.url, initItem, 'name', vars) ||
+      (await readRuleField(rules.name, raw, request.url, initItem, 'name', vars)) ||
       book.name,
     author:
-      readRuleField(rules.author, raw, request.url, initItem, 'author', vars) ||
+      (await readRuleField(
+        rules.author,
+        raw,
+        request.url,
+        initItem,
+        'author',
+        vars,
+      )) ||
       book.author,
     coverUrl:
-      readRuleField(
+      (await readRuleField(
         rules.coverUrl,
         raw,
-        getBookInfoFieldBaseUrl(source, request.url, 'coverUrl'),
+        getBookInfoFieldBaseUrl(
+          source,
+          request.url,
+          'coverUrl',
+          rules.coverUrl,
+        ),
         initItem,
         'coverUrl',
         vars,
-      ) || book.coverUrl,
+      )) || book.coverUrl,
     intro:
-      readRuleField(rules.intro, raw, request.url, initItem, 'intro', vars) ||
+      (await readRuleField(
+        rules.intro,
+        raw,
+        request.url,
+        initItem,
+        'intro',
+        vars,
+      )) ||
       book.intro,
     latestChapterTitle:
-      readRuleField(
+      (await readRuleField(
         rules.lastChapter,
         raw,
         request.url,
         initItem,
         'lastChapter',
         vars,
-      ) || book.latestChapterTitle,
+      )) || book.latestChapterTitle,
     tocUrl:
-      readRuleField(
+      (await readRuleField(
         rules.tocUrl,
         raw,
-        getBookInfoFieldBaseUrl(source, request.url, 'tocUrl'),
+        getBookInfoFieldBaseUrl(
+          source,
+          request.url,
+          'tocUrl',
+          rules.tocUrl,
+        ),
         initItem,
         'tocUrl',
         vars,
-      ) ||
+      )) ||
       book.tocUrl ||
       book.bookUrl,
   };
@@ -448,8 +539,33 @@ const loadTocPage = async (
   startIndex: number,
   vars: Record<string, unknown>,
   cancelToken?: BookSourceCancelToken,
-): Promise<{chapters: Chapter[]; nextUrl: string}> => {
+): Promise<{
+  chapters: Chapter[];
+  nextUrl: string;
+  diagnostic: BookSourceDiagnostic;
+}> => {
+  const baseDiagnostic = {
+    sourceName: source.bookSourceName,
+    sourceUrl: source.bookSourceUrl,
+  };
   const request = resolveRequest(source, tocUrl, {}, tocUrl);
+  if (request.webView) {
+    return {
+      chapters: [],
+      nextUrl: '',
+      diagnostic: {
+        ...baseDiagnostic,
+        ok: false,
+        stage: 'unsupported',
+        message: '目录请求依赖 webView，本轮暂不支持动态页面',
+        requestUrl: request.url,
+        rule: source.ruleToc?.chapterList,
+        unsupportedFeatures: [
+          ...new Set([...getUnsupportedBookSourceFeatures(source), 'webView']),
+        ],
+      },
+    };
+  }
   const raw = await requestText(
     request,
     source.respondTime || 20000,
@@ -457,9 +573,10 @@ const loadTocPage = async (
   );
   throwIfCancelled(cancelToken);
   const rules = source.ruleToc || {};
+  vars.source = source;
   const context = createRuleContext(raw, request.url, undefined, vars);
   throwIfCancelled(cancelToken);
-  const list = evaluateList(rules.chapterList, context);
+  const list = await evaluateListAsync(rules.chapterList, context);
   const seen = new Set<string>();
   bookSourceLogger.log('toc', '目录列表规则匹配完成', {
     sourceName: source.bookSourceName,
@@ -482,7 +599,7 @@ const loadTocPage = async (
       chapter: {index: startIndex + offset},
       index: startIndex + offset,
     };
-    const title = readRuleField(
+    const title = await readRuleField(
       rules.chapterName,
       raw,
       request.url,
@@ -491,7 +608,7 @@ const loadTocPage = async (
       ruleVars,
       context.json,
     );
-    const chapterUrl = readRuleField(
+    const chapterUrl = await readRuleField(
       rules.chapterUrl,
       raw,
       request.url,
@@ -522,7 +639,7 @@ const loadTocPage = async (
   }
 
   throwIfCancelled(cancelToken);
-  const nextUrl = readRuleField(
+  const nextUrl = await readRuleField(
     rules.nextTocUrl,
     raw,
     request.url,
@@ -531,7 +648,27 @@ const loadTocPage = async (
     vars,
   );
 
-  return {chapters, nextUrl};
+  const diagnostic = {
+    ...baseDiagnostic,
+    ok: chapters.length > 0,
+    stage: chapters.length > 0 ? 'done' : 'parse',
+    message:
+      chapters.length > 0
+        ? `目录解析成功，解析到 ${chapters.length} 章`
+        : `请求成功，但 chapterList 只匹配到 ${list.length} 项，最终有效章节为 0`,
+    requestUrl: request.url,
+    requestMethod: request.method,
+    requestBodyLength: request.body?.length || 0,
+    requestHeaderKeys: Object.keys(request.headers),
+    rule: rules.chapterList,
+    unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+    htmlLength: raw.length,
+    listCount: list.length,
+    resultCount: chapters.length,
+    sample: raw.slice(0, 160),
+  };
+
+  return {chapters, nextUrl, diagnostic};
 };
 
 export const LocalBookSourceService = {
@@ -646,12 +783,13 @@ export const LocalBookSourceService = {
       bookName: book.name,
       bookUrl: book.bookUrl,
     });
-    const vars: Record<string, unknown> = {};
+    const vars: Record<string, unknown> = {source};
     const detailedBook = await getBookInfo(source, book, vars, cancelToken);
     throwIfCancelled(cancelToken);
     const firstTocUrl = detailedBook.tocUrl || detailedBook.bookUrl;
     const visited = new Set<string>();
     const chapters: Chapter[] = [];
+    const diagnostics: BookSourceDiagnostic[] = [];
     let nextUrl = firstTocUrl;
 
     for (let page = 0; nextUrl && page < MAX_TOC_PAGES; page += 1) {
@@ -670,6 +808,11 @@ export const LocalBookSourceService = {
       );
       throwIfCancelled(cancelToken);
       chapters.push(...result.chapters);
+      diagnostics.push(result.diagnostic);
+      if (!result.diagnostic.ok) {
+        bookSourceLogger.warn('toc', result.diagnostic.message, result.diagnostic);
+        break;
+      }
       nextUrl = result.nextUrl;
     }
 
@@ -685,6 +828,22 @@ export const LocalBookSourceService = {
         ...chapter,
         index,
       })),
+      diagnostic:
+        diagnostics[diagnostics.length - 1] ||
+        ({
+          sourceName: source.bookSourceName,
+          sourceUrl: source.bookSourceUrl,
+          ok: chapters.length > 0,
+          stage: chapters.length > 0 ? 'done' : 'parse',
+          message:
+            chapters.length > 0
+              ? `目录解析成功，解析到 ${chapters.length} 章`
+              : '目录解析为空',
+          requestUrl: firstTocUrl,
+          rule: source.ruleToc?.chapterList,
+          unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+          resultCount: chapters.length,
+        } as BookSourceDiagnostic),
     };
   },
 
@@ -700,7 +859,12 @@ export const LocalBookSourceService = {
 
     const visited = new Set<string>();
     const chunks: string[] = [];
-    const vars: Record<string, unknown> = {book, chapter, title: chapter.title};
+    const vars: Record<string, unknown> = {
+      book,
+      chapter,
+      title: chapter.title,
+      source,
+    };
     let nextUrl = chapter.bookUrl;
     let firstRequestUrl = chapter.bookUrl;
 
@@ -729,6 +893,30 @@ export const LocalBookSourceService = {
         {},
         chapter.baseUrl || nextUrl,
       );
+      if (request.webView) {
+        const diagnostic = {
+          sourceName: source.bookSourceName,
+          sourceUrl: source.bookSourceUrl,
+          ok: false,
+          stage: 'unsupported',
+          message: '正文请求依赖 webView，本轮暂不支持动态页面',
+          requestUrl: request.url,
+          rule: source.ruleContent?.content,
+          unsupportedFeatures: [
+            ...new Set([
+              ...getUnsupportedBookSourceFeatures(source),
+              'webView',
+            ]),
+          ],
+        };
+        bookSourceLogger.warn('content', diagnostic.message, diagnostic);
+        return {
+          text: '',
+          paragraphs: [],
+          requestUrl: request.url,
+          diagnostic,
+        };
+      }
       if (page === 0) {
         firstRequestUrl = request.url;
       }
@@ -739,7 +927,7 @@ export const LocalBookSourceService = {
       );
       throwIfCancelled(cancelToken);
       const rules = source.ruleContent || {};
-      const content = readRuleField(
+      const content = await readRuleField(
         rules.content,
         raw,
         request.url,
@@ -757,7 +945,7 @@ export const LocalBookSourceService = {
         contentLength: content.length,
       });
 
-      nextUrl = readRuleField(
+      nextUrl = await readRuleField(
         rules.nextContentUrl,
         raw,
         request.url,
@@ -792,6 +980,20 @@ export const LocalBookSourceService = {
       text: normalized,
       paragraphs,
       requestUrl: firstRequestUrl,
+      diagnostic: {
+        sourceName: source.bookSourceName,
+        sourceUrl: source.bookSourceUrl,
+        ok: paragraphs.length > 0,
+        stage: paragraphs.length > 0 ? 'done' : 'parse',
+        message:
+          paragraphs.length > 0
+            ? `正文解析成功，解析到 ${paragraphs.length} 段`
+            : '正文解析为空',
+        requestUrl: firstRequestUrl,
+        rule: source.ruleContent?.content,
+        unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+        resultCount: paragraphs.length,
+      },
     };
   },
 };

@@ -15,6 +15,10 @@ import {
   resolveUrl,
   splitRegexTail,
 } from './ruleUtils';
+import {requestText, resolveRequest} from './requestClient';
+import {LegadoBookSource} from './types';
+
+const CryptoJS = require('crypto-js');
 
 type RegexMatchContext = {
   __regexMatch: string[];
@@ -44,6 +48,24 @@ export interface RuleContext {
   json?: unknown;
   vars?: Record<string, unknown>;
 }
+
+type JavaResponseLike = {
+  body: () => string;
+  bodyString: () => string;
+  code: () => number;
+  headers: () => Record<string, string>;
+};
+
+type RuleNetworkState = {
+  pending?: {
+    key: string;
+    request: ReturnType<typeof resolveRequest>;
+  };
+  cache: Record<string, string>;
+};
+
+const RULE_NETWORK_STATE_KEY = '__ruleNetworkState';
+const MAX_RULE_NETWORK_ROUNDS = 8;
 
 const EXTRACTOR_NAMES = new Set([
   'text',
@@ -197,7 +219,11 @@ const readSimpleJsonArrayPath = (rule: string, data: unknown) => {
   return Array.isArray(result.value) ? (result.value as RuleItem[]) : [];
 };
 
-const evalJsonPath = (rule: string, context: RuleContext): RuleItem[] => {
+const evalJsonPath = (
+  rule: string,
+  context: RuleContext,
+  flattenArrayResult = false,
+): RuleItem[] => {
   const data =
     context.item && !isNode(context.item) && !isRegexContext(context.item)
       ? context.item
@@ -212,11 +238,26 @@ const evalJsonPath = (rule: string, context: RuleContext): RuleItem[] => {
       return simpleList;
     }
 
+    if (flattenArrayResult) {
+      const simpleResult = readSimpleJsonPath(data, rule);
+      if (simpleResult.matched && Array.isArray(simpleResult.value)) {
+        return simpleResult.value as RuleItem[];
+      }
+    }
+
     const result = JSONPath({
       path: normalizeJsonPath(rule),
       json: data as any,
       wrap: true,
     });
+    if (
+      flattenArrayResult &&
+      Array.isArray(result) &&
+      result.length === 1 &&
+      Array.isArray(result[0])
+    ) {
+      return result[0] as RuleItem[];
+    }
     return Array.isArray(result)
       ? (result as RuleItem[])
       : [result as RuleItem];
@@ -227,7 +268,12 @@ const evalJsonPath = (rule: string, context: RuleContext): RuleItem[] => {
 };
 
 const parseXPathDocument = (raw: string) => {
-  const wrapped = `<root>${raw}</root>`;
+  const html = parseHtml(raw);
+  const normalized = serialize(html.children as never, {
+    decodeEntities: false,
+    xmlMode: true,
+  });
+  const wrapped = `<root>${normalized}</root>`;
   return new DOMParser().parseFromString(wrapped, 'text/xml');
 };
 
@@ -552,6 +598,50 @@ const parseCombinator = (rule: string) => {
     return undefined;
   }
 
+  const splitTopLevel = (op: string) => {
+    const parts: string[] = [];
+    let quote = '';
+    let escaped = false;
+    let depth = 0;
+    let start = 0;
+    for (let index = 0; index < rule.length; index += 1) {
+      const char = rule[index];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        if (char === quote) {
+          quote = '';
+        }
+        continue;
+      }
+      if (char === '"' || char === "'" || char === '`') {
+        quote = char;
+        continue;
+      }
+      if ('({['.includes(char)) {
+        depth += 1;
+        continue;
+      }
+      if (')}]'.includes(char)) {
+        depth = Math.max(0, depth - 1);
+        continue;
+      }
+      if (depth === 0 && rule.startsWith(op, index)) {
+        parts.push(rule.slice(start, index).trim());
+        index += op.length - 1;
+        start = index + 1;
+      }
+    }
+    parts.push(rule.slice(start).trim());
+    return parts.filter(Boolean);
+  };
+
   let quote = '';
   let escaped = false;
   let depth = 0;
@@ -588,10 +678,7 @@ const parseCombinator = (rule: string) => {
       if (op) {
         return {
           op,
-          parts: rule
-            .split(op)
-            .map(item => item.trim())
-            .filter(Boolean),
+          parts: splitTopLevel(op),
         };
       }
     }
@@ -682,7 +769,7 @@ export const evaluateList = (
       ),
     );
   } else if (cleanRule.startsWith('@json:') || cleanRule.startsWith('$')) {
-    result = evalJsonPath(cleanRule, context);
+    result = evalJsonPath(cleanRule, context, true);
   } else if (
     cleanRule.startsWith('@XPath:') ||
     cleanRule.startsWith('@xpath:') ||
@@ -699,6 +786,59 @@ export const evaluateList = (
       console.warn('[bookSource] CSS 列表解析失败', cleanRule, error);
       result = [];
     }
+  }
+
+  return shouldReverse ? result.reverse() : result;
+};
+
+export const evaluateListAsync = async (
+  rule: string | undefined,
+  context: RuleContext,
+): Promise<RuleItem[]> => {
+  let cleanRule = String(rule || '').trim();
+  if (!cleanRule) {
+    return [] as RuleItem[];
+  }
+
+  const combinator = parseCombinator(cleanRule);
+  if (combinator) {
+    return combineLists(
+      await Promise.all(
+        combinator.parts.map(part => evaluateListAsync(part, context)),
+      ),
+      combinator.op,
+    );
+  }
+
+  if (cleanRule.startsWith(':') || cleanRule.startsWith('-:')) {
+    return evalRegexList(cleanRule, context);
+  }
+
+  const shouldReverse = cleanRule.startsWith('-');
+  if (shouldReverse) {
+    cleanRule = cleanRule.slice(1).trim();
+  }
+
+  let result: RuleItem[];
+  const legadoJs = cleanRule.match(/^<js>([\s\S]*)<\/js>$/i);
+  if (legadoJs) {
+    result = normalizeJsListResult(
+      await executeRuleJsValueAsync(
+        legadoJs[1],
+        defaultRuleResult(context),
+        context,
+      ),
+    );
+  } else if (cleanRule.startsWith('@js:')) {
+    result = normalizeJsListResult(
+      await executeRuleJsValueAsync(
+        cleanRule.slice(4),
+        defaultRuleResult(context),
+        context,
+      ),
+    );
+  } else {
+    result = evaluateList(cleanRule, context);
   }
 
   return shouldReverse ? result.reverse() : result;
@@ -781,6 +921,29 @@ const evaluatePutRule = (rule: string, context: RuleContext) => {
   return '';
 };
 
+const evaluatePutRuleAsync = async (rule: string, context: RuleContext) => {
+  const vars = context.vars || {};
+  context.vars = vars;
+  const body = rule.replace(/^@put:/i, '').trim();
+  const content =
+    body.startsWith('{') && body.endsWith('}') ? body.slice(1, -1) : body;
+
+  const pairRegex = /([\w$]+)\s*:\s*("[^"]*"|'[^']*'|[^,}]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pairRegex.exec(content))) {
+    const key = match[1];
+    const rawRule = match[2].trim();
+    const valueRule =
+      (rawRule.startsWith('"') && rawRule.endsWith('"')) ||
+      (rawRule.startsWith("'") && rawRule.endsWith("'"))
+        ? rawRule.slice(1, -1)
+        : rawRule;
+    vars[key] = await evaluateStringAsync(valueRule, context);
+  }
+
+  return '';
+};
+
 const evaluateRawString = (rule: string, context: RuleContext): string => {
   const item = context.item;
   if (isRegexContext(item)) {
@@ -791,6 +954,16 @@ const evaluateRawString = (rule: string, context: RuleContext): string => {
       /\$(\d+)/g,
       (_match, index) => item.__regexMatch[Number(index)] || '',
     );
+  }
+
+  if (rule.startsWith('@') && rule.length > 1) {
+    const attr = rule.slice(1);
+    if (isNode(item)) {
+      return extractFromNode(item, attr);
+    }
+    if (isXPathContext(item)) {
+      return stringifyXPathNode((item as XPathNodeContext).__xpathNode, attr);
+    }
   }
 
   if (isNode(item) && isSimpleExtractor(rule)) {
@@ -854,6 +1027,7 @@ type RuleJsFunction = (
   chapter: unknown,
   book: unknown,
   vars: Record<string, unknown>,
+  source: unknown,
 ) => unknown;
 
 const ruleExpressionJsCache = new Map<string, RuleJsFunction>();
@@ -866,12 +1040,262 @@ const stringifyRuleJsValue = (value: unknown): string =>
     ? value
     : JSON.stringify(value);
 
+const getRuleSource = (context: RuleContext): LegadoBookSource | undefined => {
+  const source = context.vars?.source;
+  return source && typeof source === 'object'
+    ? (source as LegadoBookSource)
+    : undefined;
+};
+
+const getSourceVariableStore = (context: RuleContext) => {
+  const vars = context.vars || {};
+  context.vars = vars;
+  const key = '__sourceVariables';
+  if (!vars[key] || typeof vars[key] !== 'object') {
+    vars[key] = {};
+  }
+  return vars[key] as Record<string, string>;
+};
+
+const createSourceBridge = (context: RuleContext) => {
+  const source = getRuleSource(context);
+  const store = getSourceVariableStore(context);
+  const storeKey = source?.bookSourceUrl || source?.bookSourceName || 'default';
+  if (store[storeKey] == null && source?.variable != null) {
+    store[storeKey] = String(source.variable);
+  }
+
+  return {
+    getKey: () => source?.key || source?.bookSourceUrl || context.baseUrl,
+    getName: () => source?.bookSourceName || '',
+    getVariable: () => store[storeKey] || '',
+    setVariable: (value: unknown) => {
+      store[storeKey] = String(value ?? '');
+      return value;
+    },
+  };
+};
+
+const createResponseLike = (
+  body: string,
+  code = 200,
+  headers: Record<string, string> = {},
+): JavaResponseLike => ({
+  body: () => body,
+  bodyString: () => body,
+  code: () => code,
+  headers: () => headers,
+});
+
+const normalizeHeaders = (headers: unknown): Record<string, string> =>
+  headers && typeof headers === 'object'
+    ? Object.entries(headers as Record<string, unknown>).reduce<
+        Record<string, string>
+      >((result, [key, value]) => {
+        result[key] = String(value ?? '');
+        return result;
+      }, {})
+    : {};
+
+const getRuleNetworkState = (context: RuleContext): RuleNetworkState => {
+  const vars = context.vars || {};
+  context.vars = vars;
+  if (!vars[RULE_NETWORK_STATE_KEY]) {
+    vars[RULE_NETWORK_STATE_KEY] = {cache: {}};
+  }
+  const state = vars[RULE_NETWORK_STATE_KEY] as RuleNetworkState;
+  if (!state.cache) {
+    state.cache = {};
+  }
+  return state;
+};
+
+const makeRequestCacheKey = (
+  method: 'GET' | 'POST',
+  url: string,
+  body?: unknown,
+  headers?: unknown,
+) =>
+  JSON.stringify({
+    method,
+    url,
+    body: body == null ? '' : String(body),
+    headers: normalizeHeaders(headers),
+  });
+
+class PendingRuleNetworkRequest {
+  readonly pending = true;
+
+  constructor(
+    readonly key: string,
+    readonly request: ReturnType<typeof resolveRequest>,
+  ) {}
+}
+
+const buildJava = (
+  context: RuleContext,
+  asyncNetwork?: boolean,
+): Record<string, unknown> => {
+  const vars = context.vars || {};
+  context.vars = vars;
+  const source = getRuleSource(context);
+  const requestSource =
+    source ||
+    ({
+      bookSourceName: '',
+      bookSourceUrl: context.baseUrl,
+    } as LegadoBookSource);
+  const requestTimeout = source?.respondTime || 20000;
+  const buildRequest = (
+    method: 'GET' | 'POST',
+    url: string,
+    body?: unknown,
+    headers?: unknown,
+  ) => {
+    const option = {
+      method,
+      ...(body == null ? {} : {body: String(body)}),
+      ...(headers ? {headers: normalizeHeaders(headers)} : {}),
+    };
+    return resolveRequest(
+      requestSource,
+      `${url},${JSON.stringify(option)}`,
+      {},
+      context.baseUrl,
+    );
+  };
+  const request = (
+    method: 'GET' | 'POST',
+    url: string,
+    body?: unknown,
+    headers?: unknown,
+  ) => {
+    if (!asyncNetwork) {
+      return createResponseLike('');
+    }
+    const key = makeRequestCacheKey(method, url, body, headers);
+    const state = getRuleNetworkState(context);
+    if (state.cache[key] != null) {
+      return createResponseLike(state.cache[key]);
+    }
+    const resolved = buildRequest(method, url, body, headers);
+    state.pending = {
+      key,
+      request: resolved,
+    };
+    throw new PendingRuleNetworkRequest(key, resolved);
+  };
+
+  return {
+    ajax: asyncNetwork
+      ? (url: string) => request('GET', url).body()
+      : () => '',
+    get: asyncNetwork
+      ? (keyOrUrl: string, headers?: unknown) => {
+          const text = String(keyOrUrl || '');
+          if (
+            headers === undefined &&
+            !/^(https?:)?\/\//i.test(text) &&
+            !text.startsWith('/')
+          ) {
+            return vars[text];
+          }
+          return request('GET', text, undefined, headers);
+        }
+      : (key: string) => vars[key],
+    post: asyncNetwork
+      ? (url: string, body?: unknown, headers?: unknown) =>
+          request('POST', url, body, headers)
+      : () => createResponseLike(''),
+    base64Encode: (value: string) =>
+      typeof btoa === 'function'
+        ? btoa(String(value))
+        : Buffer.from(String(value), 'utf8').toString('base64'),
+    encodeURI: (value: string) => encodeURIComponent(String(value)),
+    md5Encode: (value: unknown) =>
+      CryptoJS.MD5(String(value ?? '')).toString(CryptoJS.enc.Hex),
+    log: (value: unknown) => console.log('[bookSource:js]', value),
+    put: (key: string, value: unknown) => {
+      vars[key] = value;
+      return value;
+    },
+    getString: (rule: string, isUrl = false) =>
+      evaluateString(rule, context, isUrl),
+    getStringList: (rule: string, isUrl = false) =>
+      evaluateList(rule, context).map(item =>
+        evaluateString('text', {...context, item}, isUrl),
+      ),
+  };
+};
+
+const createScriptWithLibrary = (script: string, context: RuleContext) => {
+  const jsLib = getRuleSource(context)?.jsLib || '';
+  return jsLib ? `${jsLib}\n${script}` : script;
+};
+
 const isRuleJsExpression = (script: string) => {
   const trimmed = script.trim();
   return (
     /^[\[{]/.test(trimmed) ||
-    /^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed)
+    /^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed) ||
+    !/[;\n]/.test(trimmed)
   );
+};
+
+const tryEvaluateTrailingExpression = (
+  script: string,
+  result: string,
+  context: RuleContext,
+  java: Record<string, unknown>,
+  source: unknown,
+) => {
+  const trimmed = script.trim();
+  if (!trimmed.endsWith(';')) {
+    return undefined;
+  }
+
+  const expression = trimmed.slice(0, -1).trim();
+  if (
+    !expression ||
+    /[;\n{}]/.test(expression) ||
+    /\b(var|let|const|if|for|while|return|try|catch|function)\b/.test(
+      expression,
+    )
+  ) {
+    return undefined;
+  }
+
+  try {
+    const vars = context.vars || {};
+    const jsLib = getRuleSource(context)?.jsLib || '';
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(
+      'result',
+      'java',
+      'baseUrl',
+      'src',
+      'chapter',
+      'book',
+      'vars',
+      'source',
+      `${jsLib}\nreturn (${expression});`,
+    ) as RuleJsFunction;
+    return fn(
+      result,
+      java,
+      context.baseUrl,
+      context.raw,
+      vars.chapter || {},
+      vars.book || {},
+      vars,
+      source,
+    );
+  } catch (error) {
+    if (error instanceof PendingRuleNetworkRequest) {
+      throw error;
+    }
+    return undefined;
+  }
 };
 
 const executeRuleJsValue = (
@@ -882,30 +1306,23 @@ const executeRuleJsValue = (
   try {
     const vars = context.vars || {};
     context.vars = vars;
-    const java = {
-      ajax: () => '',
-      base64Encode: (value: string) =>
-        typeof btoa === 'function'
-          ? btoa(String(value))
-          : Buffer.from(String(value), 'utf8').toString('base64'),
-      encodeURI: (value: string) => encodeURIComponent(String(value)),
-      log: (value: unknown) => console.log('[bookSource:js]', value),
-      put: (key: string, value: unknown) => {
-        vars[key] = value;
-        return value;
-      },
-      get: (key: string) => vars[key],
-      getString: (rule: string, isUrl = false) =>
-        evaluateString(rule, context, isUrl),
-      getStringList: (rule: string, isUrl = false) =>
-        evaluateList(rule, context).map(item =>
-          evaluateString('text', {...context, item}, isUrl),
-        ),
-    };
+    const java = buildJava(context, false);
+    const source = createSourceBridge(context);
+    const executableScript = createScriptWithLibrary(script, context);
+    const trailingExpression = tryEvaluateTrailingExpression(
+      script,
+      result,
+      context,
+      java,
+      source,
+    );
+    if (trailingExpression !== undefined) {
+      return trailingExpression;
+    }
 
     const trimmed = script.trim();
     if (isRuleJsExpression(trimmed)) {
-      let exprFn = ruleExpressionJsCache.get(script);
+      let exprFn = ruleExpressionJsCache.get(executableScript);
       try {
         if (!exprFn) {
           // eslint-disable-next-line no-new-func
@@ -917,9 +1334,10 @@ const executeRuleJsValue = (
             'chapter',
             'book',
             'vars',
-            `return (${script});`,
+            'source',
+            `${getRuleSource(context)?.jsLib || ''}\nreturn (${script});`,
           ) as RuleJsFunction;
-          ruleExpressionJsCache.set(script, exprFn);
+          ruleExpressionJsCache.set(executableScript, exprFn);
         }
         return exprFn(
           result,
@@ -929,6 +1347,7 @@ const executeRuleJsValue = (
           vars.chapter || {},
           vars.book || {},
           vars,
+          source,
         );
       } catch (_error) {
         // 不是所有以 { 开头的脚本都是表达式，失败后按语句规则继续执行。
@@ -936,7 +1355,7 @@ const executeRuleJsValue = (
     }
 
     // 书源 JS 只在内置或用户信任的规则中执行，并且只暴露本地白名单对象。
-    let fn = ruleStatementJsCache.get(script);
+    let fn = ruleStatementJsCache.get(executableScript);
     if (!fn) {
       // eslint-disable-next-line no-new-func
       fn = new Function(
@@ -947,9 +1366,10 @@ const executeRuleJsValue = (
         'chapter',
         'book',
         'vars',
-        `${script}; return result;`,
+        'source',
+        `const __initialResult = result; ${executableScript}; if (typeof text !== 'undefined') return text; if (result !== __initialResult) return result; if (typeof html !== 'undefined' && html !== __initialResult) return html; return result;`,
       ) as RuleJsFunction;
-      ruleStatementJsCache.set(script, fn);
+      ruleStatementJsCache.set(executableScript, fn);
     }
     const value = fn(
       result,
@@ -959,6 +1379,7 @@ const executeRuleJsValue = (
       vars.chapter || {},
       vars.book || {},
       vars,
+      source,
     );
     return value;
   } catch (error) {
@@ -972,6 +1393,130 @@ const executeRuleJs = (
   result: string,
   context: RuleContext,
 ): string => stringifyRuleJsValue(executeRuleJsValue(script, result, context));
+
+const executeRuleJsValueWithNetwork = (
+  script: string,
+  result: string,
+  context: RuleContext,
+): unknown => {
+  const vars = context.vars || {};
+  context.vars = vars;
+  const java = buildJava(context, true);
+  const source = createSourceBridge(context);
+  const executableScript = createScriptWithLibrary(script, context);
+  const trailingExpression = tryEvaluateTrailingExpression(
+    script,
+    result,
+    context,
+    java,
+    source,
+  );
+  if (trailingExpression !== undefined) {
+    return trailingExpression;
+  }
+  const trimmed = script.trim();
+
+  if (isRuleJsExpression(trimmed)) {
+    try {
+      // eslint-disable-next-line no-new-func
+      const exprFn = new Function(
+        'result',
+        'java',
+        'baseUrl',
+        'src',
+        'chapter',
+        'book',
+        'vars',
+        'source',
+        `${getRuleSource(context)?.jsLib || ''}\nreturn (${script});`,
+      ) as RuleJsFunction;
+      return exprFn(
+        result,
+        java,
+        context.baseUrl,
+        context.raw,
+        vars.chapter || {},
+        vars.book || {},
+        vars,
+        source,
+      );
+    } catch (error) {
+      if (error instanceof PendingRuleNetworkRequest) {
+        throw error;
+      }
+      // 不是所有以表达式形态出现的脚本都能用 return 包装。
+    }
+  }
+
+  // eslint-disable-next-line no-new-func
+  const fn = new Function(
+    'result',
+    'java',
+    'baseUrl',
+    'src',
+    'chapter',
+    'book',
+    'vars',
+    'source',
+    `const __initialResult = result; ${executableScript}; if (typeof text !== 'undefined') return text; if (result !== __initialResult) return result; if (typeof html !== 'undefined' && html !== __initialResult) return html; return result;`,
+  ) as RuleJsFunction;
+  return fn(
+    result,
+    java,
+    context.baseUrl,
+    context.raw,
+    vars.chapter || {},
+    vars.book || {},
+    vars,
+    source,
+  );
+};
+
+const executeRuleJsValueAsync = async (
+  script: string,
+  result: string,
+  context: RuleContext,
+): Promise<unknown> => {
+  const state = getRuleNetworkState(context);
+
+  for (let round = 0; round < MAX_RULE_NETWORK_ROUNDS; round += 1) {
+    state.pending = undefined;
+    try {
+      const value = executeRuleJsValueWithNetwork(script, result, context);
+      const pending = state.pending as RuleNetworkState['pending'];
+      if (pending) {
+        const text = await requestText(
+          pending.request,
+          getRuleSource(context)?.respondTime || 20000,
+        );
+        state.cache[pending.key] = text;
+        continue;
+      }
+      return value;
+    } catch (error) {
+      if (error instanceof PendingRuleNetworkRequest) {
+        const text = await requestText(
+          error.request,
+          getRuleSource(context)?.respondTime || 20000,
+        );
+        state.cache[error.key] = text;
+        continue;
+      }
+      console.warn('[bookSource] JS 规则执行失败', script, error);
+      return '';
+    }
+  }
+
+  console.warn('[bookSource] JS 规则网络请求轮次过多', script);
+  return '';
+};
+
+const executeRuleJsAsync = async (
+  script: string,
+  result: string,
+  context: RuleContext,
+): Promise<string> =>
+  stringifyRuleJsValue(await executeRuleJsValueAsync(script, result, context));
 
 const normalizeJsListResult = (value: unknown): RuleItem[] => {
   if (value == null || value === '') {
@@ -1117,6 +1662,88 @@ export const evaluateString = (
         value = evaluateCssString(targetRule, context, asUrl);
       } else {
         value = evaluateRawString(targetRule, context);
+      }
+    }
+  } catch (error) {
+    console.warn('[bookSource] 字符串规则解析失败', cleanRule, error);
+    value = '';
+  }
+
+  const replaced = applyRegexTail(value, regex, replacement, onlyOne);
+  return asUrl
+    ? resolveUrlWithOption(replaced, context.baseUrl)
+    : normalizeWhitespace(replaced);
+};
+
+export const evaluateStringAsync = async (
+  rule: string | undefined,
+  context: RuleContext,
+  asUrl = false,
+): Promise<string> => {
+  const cleanRule = String(rule || '').trim();
+  if (!cleanRule) {
+    return '';
+  }
+
+  const combinator = parseCombinator(cleanRule);
+  if (combinator) {
+    const values = (
+      await Promise.all(
+        combinator.parts.map(part => evaluateStringAsync(part, context, asUrl)),
+      )
+    ).filter(Boolean);
+    if (combinator.op === '||') {
+      return values[0] || '';
+    }
+    if (combinator.op === '%%') {
+      const lines = values.map(value => value.split('\n'));
+      const result: string[] = [];
+      const max = Math.max(...lines.map(item => item.length), 0);
+      for (let index = 0; index < max; index += 1) {
+        lines.forEach(list => {
+          if (list[index]) {
+            result.push(list[index]);
+          }
+        });
+      }
+      return result.join('\n');
+    }
+    return values.join('\n');
+  }
+
+  const {baseRule, regex, replacement, onlyOne} = splitRegexTail(cleanRule);
+  const targetRule = baseRule.trim() || 'all';
+  let value = '';
+
+  try {
+    const legadoJs = targetRule.match(/^<js>([\s\S]*)<\/js>$/i);
+    if (legadoJs) {
+      value = await executeRuleJsAsync(
+        legadoJs[1],
+        defaultRuleResult(context),
+        context,
+      );
+    } else if (targetRule.startsWith('@put:')) {
+      value = await evaluatePutRuleAsync(targetRule, context);
+    } else if (targetRule.startsWith('@get:')) {
+      value = String(
+        context.vars?.[targetRule.replace(/^@get:/i, '').trim()] ?? '',
+      );
+    } else {
+      const jsIndex = targetRule.indexOf('@js:');
+      if (jsIndex > 0) {
+        const beforeJs = targetRule.slice(0, jsIndex);
+        const script = targetRule.slice(jsIndex + 4);
+        const result = await evaluateStringAsync(beforeJs, context, false);
+        value = await executeRuleJsAsync(script, result, context);
+      } else if (targetRule.startsWith('@js:')) {
+        value = await executeRuleJsAsync(
+          targetRule.slice(4),
+          defaultRuleResult(context),
+          context,
+        );
+      } else {
+        value = evaluateString(targetRule, context, asUrl);
       }
     }
   } catch (error) {
