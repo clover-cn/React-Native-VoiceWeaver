@@ -1,5 +1,9 @@
 import {Platform} from 'react-native';
-import {LegadoBookSource} from './types';
+import {
+  BookSourceValidationResult,
+  BookSourceValidationStatus,
+  LegadoBookSource,
+} from './types';
 import {normalizeLegadoBookSource} from './normalizeBookSource';
 
 const PREF_NAME = 'novel_reader_pref';
@@ -8,6 +12,10 @@ const USER_BOOK_SOURCES_KEY = 'novel_reader_user_book_sources';
 export interface UserBookSourceRecord {
   source: LegadoBookSource;
   importedAt: number;
+  lastValidatedAt?: number;
+  validationStatus?: BookSourceValidationStatus;
+  validationMessage?: string;
+  validationResultCount?: number;
 }
 
 export interface ParsedBookSourceImport {
@@ -77,7 +85,8 @@ const writeJson = (key: string, value: unknown) => {
 };
 
 const getBridge = () => {
-  return require('../../base/utils/bridge').default as typeof import('../../base/utils/bridge').default;
+  return require('../../base/utils/bridge')
+    .default as typeof import('../../base/utils/bridge').default;
 };
 
 const readPrefJson = <T>(key: string, fallback: T): Promise<T> => {
@@ -153,6 +162,33 @@ const normalizeSource = (value: unknown): LegadoBookSource | null => {
   };
 };
 
+const normalizeRecord = (
+  record: Partial<UserBookSourceRecord> | null | undefined,
+): UserBookSourceRecord | null => {
+  const source = normalizeSource(record?.source);
+  if (!source) {
+    return null;
+  }
+
+  const lastValidatedAt = Number(record?.lastValidatedAt);
+  const validationResultCount = Number(record?.validationResultCount);
+  const importedAt = Number(record?.importedAt);
+  const validationStatus = record?.validationStatus;
+
+  return {
+    source,
+    importedAt: Number.isFinite(importedAt) ? importedAt : Date.now(),
+    ...(Number.isFinite(lastValidatedAt) && lastValidatedAt > 0
+      ? {lastValidatedAt}
+      : {}),
+    ...(validationStatus ? {validationStatus} : {}),
+    ...(record?.validationMessage
+      ? {validationMessage: String(record.validationMessage)}
+      : {}),
+    ...(Number.isFinite(validationResultCount) ? {validationResultCount} : {}),
+  };
+};
+
 const mergeDefinedSourceFields = (
   previous: LegadoBookSource,
   next: LegadoBookSource,
@@ -166,7 +202,9 @@ const mergeDefinedSourceFields = (
   return normalizeLegadoBookSource(merged);
 };
 
-export const parseBookSourceJson = (content: string): ParsedBookSourceImport => {
+export const parseBookSourceJson = (
+  content: string,
+): ParsedBookSourceImport => {
   const parsed = JSON.parse(content);
   const rawList = Array.isArray(parsed) ? parsed : [parsed];
   const sourceMap = new Map<string, LegadoBookSource>();
@@ -217,18 +255,7 @@ export const loadUserBookSourceRecords = async (): Promise<
   }
 
   return records
-    .map(record => {
-      const source = normalizeSource(record?.source);
-      if (!source) {
-        return null;
-      }
-      return {
-        source,
-        importedAt: Number.isFinite(record.importedAt)
-          ? Number(record.importedAt)
-          : Date.now(),
-      };
-    })
+    .map(record => normalizeRecord(record))
     .filter(Boolean) as UserBookSourceRecord[];
 };
 
@@ -236,18 +263,7 @@ export const saveUserBookSourceRecords = async (
   records: UserBookSourceRecord[],
 ): Promise<void> => {
   const normalizedRecords = records
-    .map(record => {
-      const source = normalizeSource(record.source);
-      if (!source) {
-        return null;
-      }
-      return {
-        source,
-        importedAt: Number.isFinite(record.importedAt)
-          ? Number(record.importedAt)
-          : Date.now(),
-      };
-    })
+    .map(record => normalizeRecord(record))
     .filter(Boolean) as UserBookSourceRecord[];
 
   if (isHarmonyBridgeAvailable()) {
@@ -305,6 +321,59 @@ export const deleteUserBookSource = async (
   );
   await saveUserBookSourceRecords(nextRecords);
   return nextRecords;
+};
+
+export const updateUserBookSource = async (
+  bookSourceUrl: string,
+  updater: (
+    record: UserBookSourceRecord,
+  ) => UserBookSourceRecord | null | undefined,
+): Promise<UserBookSourceRecord[]> => {
+  const records = await loadUserBookSourceRecords();
+  let matched = false;
+  const nextRecords = records
+    .map(record => {
+      if (record.source.bookSourceUrl !== bookSourceUrl) {
+        return record;
+      }
+      matched = true;
+      const nextRecord = updater(record);
+      return nextRecord ? normalizeRecord(nextRecord) : null;
+    })
+    .filter(Boolean) as UserBookSourceRecord[];
+
+  if (!matched) {
+    return records;
+  }
+
+  await saveUserBookSourceRecords(nextRecords);
+  return nextRecords;
+};
+
+export const setUserBookSourceEnabled = async (
+  bookSourceUrl: string,
+  enabled: boolean,
+): Promise<UserBookSourceRecord[]> => {
+  return updateUserBookSource(bookSourceUrl, record => ({
+    ...record,
+    source: {
+      ...record.source,
+      enabled,
+    },
+  }));
+};
+
+export const saveUserBookSourceValidation = async (
+  bookSourceUrl: string,
+  result: BookSourceValidationResult,
+): Promise<UserBookSourceRecord[]> => {
+  return updateUserBookSource(bookSourceUrl, record => ({
+    ...record,
+    lastValidatedAt: result.validatedAt,
+    validationStatus: result.status,
+    validationMessage: result.message,
+    validationResultCount: result.resultCount,
+  }));
 };
 
 export const buildExportBookSourceJson = (source: LegadoBookSource) => {

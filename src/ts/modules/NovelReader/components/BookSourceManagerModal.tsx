@@ -7,11 +7,14 @@ import {
   Platform,
   SafeAreaView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import bridge from '../../base/utils/bridge';
+import LocalBookSourceService from '../bookSource/LocalBookSourceService';
 import {LegadoBookSource} from '../bookSource/types';
 import {
   buildBookSourceExportFileName,
@@ -19,6 +22,8 @@ import {
   deleteUserBookSource,
   importUserBookSourcesFromJson,
   loadUserBookSourceRecords,
+  saveUserBookSourceValidation,
+  setUserBookSourceEnabled,
   UserBookSourceRecord,
 } from '../bookSource/userBookSourceStorage';
 
@@ -78,6 +83,9 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [validationKeyword, setValidationKeyword] = useState('');
+  const [validatingUrls, setValidatingUrls] = useState<string[]>([]);
+  const [validatingAll, setValidatingAll] = useState(false);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -100,6 +108,120 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
   const notifySourcesChanged = useCallback(() => {
     onSourcesChanged?.();
   }, [onSourcesChanged]);
+
+  const setUrlValidating = useCallback(
+    (bookSourceUrl: string, active: boolean) => {
+      setValidatingUrls(current => {
+        if (active) {
+          return current.includes(bookSourceUrl)
+            ? current
+            : [...current, bookSourceUrl];
+        }
+        return current.filter(item => item !== bookSourceUrl);
+      });
+    },
+    [],
+  );
+
+  const handleToggleEnabled = useCallback(
+    async (source: LegadoBookSource, enabled: boolean) => {
+      setPendingUrl(source.bookSourceUrl);
+      try {
+        const nextRecords = await setUserBookSourceEnabled(
+          source.bookSourceUrl,
+          enabled,
+        );
+        setRecords(nextRecords);
+        notifySourcesChanged();
+      } catch (error) {
+        Alert.alert(
+          '更新失败',
+          error instanceof Error ? error.message : '更新书源状态失败。',
+        );
+      } finally {
+        setPendingUrl(null);
+      }
+    },
+    [notifySourcesChanged],
+  );
+
+  const validateRecord = useCallback(
+    async (record: UserBookSourceRecord) => {
+      const keyword = validationKeyword.trim();
+      if (!keyword) {
+        Alert.alert('请输入关键词', '请输入一个用于校验搜索的关键词。');
+        return null;
+      }
+
+      const bookSourceUrl = record.source.bookSourceUrl;
+      setUrlValidating(bookSourceUrl, true);
+      try {
+        const result = await LocalBookSourceService.validateBookSource(
+          bookSourceUrl,
+          keyword,
+        );
+        const nextRecords = await saveUserBookSourceValidation(
+          bookSourceUrl,
+          result,
+        );
+        setRecords(nextRecords);
+        return result;
+      } catch (error) {
+        const result = {
+          sourceId: bookSourceUrl,
+          sourceName: record.source.bookSourceName,
+          ok: false,
+          status: 'failed' as const,
+          stage: 'exception',
+          message: error instanceof Error ? error.message : '书源校验失败。',
+          resultCount: 0,
+          validatedAt: Date.now(),
+        };
+        const nextRecords = await saveUserBookSourceValidation(
+          bookSourceUrl,
+          result,
+        );
+        setRecords(nextRecords);
+        return result;
+      } finally {
+        setUrlValidating(bookSourceUrl, false);
+      }
+    },
+    [setUrlValidating, validationKeyword],
+  );
+
+  const handleValidateAll = useCallback(async () => {
+    if (!validationKeyword.trim()) {
+      Alert.alert('请输入关键词', '请输入一个用于校验搜索的关键词。');
+      return;
+    }
+    if (records.length === 0 || validatingAll) {
+      return;
+    }
+
+    setValidatingAll(true);
+    let okCount = 0;
+    let failedCount = 0;
+    try {
+      for (const record of records) {
+        const result = await validateRecord(record);
+        if (!result) {
+          continue;
+        }
+        if (result.ok) {
+          okCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
+      Alert.alert(
+        '校验完成',
+        `可用 ${okCount} 个，失败 ${failedCount} 个。失败书源可在列表中手动禁用或删除。`,
+      );
+    } finally {
+      setValidatingAll(false);
+    }
+  }, [records, validateRecord, validatingAll, validationKeyword]);
 
   const pickJsonDocument = useCallback(async () => {
     const payload = await new Promise<string>((resolve, reject) => {
@@ -275,14 +397,59 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
             )}
           </TouchableOpacity>
         </View>
+        <View style={styles.validationCard}>
+          <Text style={styles.validationTitle}>书源校验</Text>
+          <TextInput
+            value={validationKeyword}
+            onChangeText={setValidationKeyword}
+            placeholder="输入校验关键词，如 斗破苍穹"
+            placeholderTextColor="#8E8E93"
+            style={styles.validationInput}
+            returnKeyType="search"
+          />
+          <View style={styles.validationActionRow}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryBtn,
+                (validatingAll || records.length === 0) && styles.disabledBtn,
+              ]}
+              disabled={validatingAll || records.length === 0}
+              onPress={handleValidateAll}>
+              {validatingAll ? (
+                <ActivityIndicator size="small" color="#1C1C1E" />
+              ) : (
+                <Text style={styles.secondaryBtnText}>校验全部</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     ),
-    [fetchRecords, handleImportPress, importing],
+    [
+      fetchRecords,
+      handleImportPress,
+      handleValidateAll,
+      importing,
+      records.length,
+      validationKeyword,
+      validatingAll,
+    ],
   );
 
   const renderItem = ({item}: {item: UserBookSourceRecord}) => {
     const source = item.source;
     const isPending = pendingUrl === source.bookSourceUrl;
+    const isValidating = validatingUrls.includes(source.bookSourceUrl);
+    const isEnabled = source.enabled !== false;
+    const validationStatus = isValidating
+      ? 'checking'
+      : item.validationStatus || 'unknown';
+    const validationMessage =
+      validationStatus === 'checking'
+        ? '正在校验...'
+        : item.validationMessage || '尚未校验';
+    const validationOk = validationStatus === 'ok';
+    const validationFailed = validationStatus === 'failed';
 
     return (
       <View style={styles.card}>
@@ -292,15 +459,63 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
               {source.bookSourceName || '未命名书源'}
             </Text>
             <Text style={styles.cardMeta} numberOfLines={1}>
-              {source.bookSourceGroup || '未分组'} · {formatDate(item.importedAt)}
+              {source.bookSourceGroup || '未分组'} ·{' '}
+              {formatDate(item.importedAt)}
             </Text>
           </View>
-          {isPending ? <ActivityIndicator size="small" color="#007AFF" /> : null}
+          <View style={styles.enabledWrap}>
+            {isPending ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : (
+              <View style={styles.enabledControl}>
+                <Text
+                  style={[
+                    styles.enabledText,
+                    !isEnabled && styles.disabledText,
+                  ]}>
+                  {isEnabled ? '启用' : '停用'}
+                </Text>
+                <Switch
+                  value={isEnabled}
+                  disabled={isPending}
+                  onValueChange={value => handleToggleEnabled(source, value)}
+                  trackColor={{false: '#D1D1D6', true: '#BBD7FF'}}
+                  thumbColor={isEnabled ? '#007AFF' : '#F4F4F4'}
+                />
+              </View>
+            )}
+          </View>
         </View>
 
         <Text style={styles.sourceUrl} numberOfLines={2}>
           {source.bookSourceUrl}
         </Text>
+
+        <View
+          style={[
+            styles.validationStatus,
+            validationOk && styles.validationStatusOk,
+            validationFailed && styles.validationStatusFailed,
+          ]}>
+          <Text
+            style={[
+              styles.validationStatusText,
+              validationOk && styles.validationStatusTextOk,
+              validationFailed && styles.validationStatusTextFailed,
+            ]}
+            numberOfLines={2}>
+            {validationOk
+              ? `可用 · ${item.validationResultCount || 0} 条结果`
+              : validationFailed
+              ? `失败 · ${validationMessage}`
+              : validationMessage}
+          </Text>
+          {item.lastValidatedAt && !isValidating ? (
+            <Text style={styles.validationTime}>
+              {formatDate(item.lastValidatedAt)}
+            </Text>
+          ) : null}
+        </View>
 
         <View style={styles.itemActionRow}>
           <TouchableOpacity
@@ -308,6 +523,24 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
             disabled={isPending}
             onPress={() => handleDeletePress(item)}>
             <Text style={styles.itemGhostBtnText}>删除</Text>
+          </TouchableOpacity>
+          {validationFailed && isEnabled ? (
+            <TouchableOpacity
+              style={styles.itemWarnBtn}
+              disabled={isPending}
+              onPress={() => handleToggleEnabled(source, false)}>
+              <Text style={styles.itemWarnBtnText}>禁用</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={styles.itemPrimaryBtn}
+            disabled={isPending || isValidating}
+            onPress={() => validateRecord(item)}>
+            {isValidating ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.itemPrimaryBtnText}>校验</Text>
+            )}
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.itemPrimaryBtn}
@@ -454,6 +687,31 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 8,
   },
+  validationCard: {
+    borderRadius: 12,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginBottom: 8,
+  },
+  validationTitle: {
+    color: '#1C1C1E',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  validationInput: {
+    minHeight: 42,
+    borderRadius: 8,
+    backgroundColor: '#F2F2F7',
+    color: '#1C1C1E',
+    fontSize: 14,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  validationActionRow: {
+    flexDirection: 'row',
+  },
   secondaryBtn: {
     flex: 1,
     borderRadius: 12,
@@ -467,6 +725,9 @@ const styles = StyleSheet.create({
     color: '#1C1C1E',
     fontSize: 14,
     fontWeight: '600',
+  },
+  disabledBtn: {
+    opacity: 0.55,
   },
   primaryBtn: {
     flex: 1,
@@ -521,6 +782,55 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginBottom: 12,
   },
+  enabledWrap: {
+    minWidth: 82,
+    alignItems: 'flex-end',
+  },
+  enabledControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
+  enabledText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  disabledText: {
+    color: '#8E8E93',
+  },
+  validationStatus: {
+    borderRadius: 8,
+    backgroundColor: '#F2F2F7',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  validationStatusOk: {
+    backgroundColor: 'rgba(52, 199, 89, 0.12)',
+  },
+  validationStatusFailed: {
+    backgroundColor: '#FFF5F5',
+  },
+  validationStatusText: {
+    color: '#636366',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  validationStatusTextOk: {
+    color: '#248A3D',
+    fontWeight: '700',
+  },
+  validationStatusTextFailed: {
+    color: '#FF3B30',
+    fontWeight: '700',
+  },
+  validationTime: {
+    color: '#8E8E93',
+    fontSize: 11,
+    marginTop: 4,
+  },
   itemActionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -535,6 +845,18 @@ const styles = StyleSheet.create({
   },
   itemGhostBtnText: {
     color: '#FF3B30',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  itemWarnBtn: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: '#FFF3D6',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  itemWarnBtnText: {
+    color: '#B76E00',
     fontSize: 14,
     fontWeight: '700',
   },

@@ -19,6 +19,7 @@ import {
   BookSourceDiagnostic,
   BookSourceSearchGroup,
   BookSourceSearchResult,
+  BookSourceValidationResult,
   ChapterListResult,
   ContentResult,
   LegadoBookSource,
@@ -85,6 +86,13 @@ const enabledSources = async () => {
   const userRecords = await loadUserBookSourceRecords();
   return mergeBookSources(userRecords.map(record => record.source)).filter(
     source => source.enabled !== false && source.bookSourceType !== 1,
+  );
+};
+
+const allBookSources = async () => {
+  const userRecords = await loadUserBookSourceRecords();
+  return mergeBookSources(userRecords.map(record => record.source)).filter(
+    source => source.bookSourceType !== 1,
   );
 };
 
@@ -674,6 +682,56 @@ const loadTocPage = async (
 export const LocalBookSourceService = {
   async getSources(): Promise<LegadoBookSource[]> {
     return enabledSources();
+  },
+
+  async validateBookSource(
+    sourceId: string,
+    keyword: string,
+  ): Promise<BookSourceValidationResult> {
+    const sources = await allBookSources();
+    const source = sources.find(item => item.bookSourceUrl === sourceId);
+    const validatedAt = Date.now();
+
+    if (!source) {
+      return {
+        sourceId,
+        sourceName: '未知书源',
+        ok: false,
+        status: 'failed',
+        stage: 'config',
+        message: '未找到待校验书源',
+        resultCount: 0,
+        validatedAt,
+      };
+    }
+
+    try {
+      const {books, diagnostic} = await searchWithSource(source, keyword, 1);
+      const ok = diagnostic.ok && books.length > 0;
+      return {
+        sourceId: source.bookSourceUrl,
+        sourceName: source.bookSourceName,
+        ok,
+        status: ok ? 'ok' : 'failed',
+        stage: diagnostic.stage,
+        message: ok
+          ? `校验通过，解析到 ${books.length} 本书`
+          : diagnostic.message || '校验失败，未解析到有效搜索结果',
+        resultCount: books.length,
+        validatedAt,
+      };
+    } catch (error) {
+      return {
+        sourceId: source.bookSourceUrl,
+        sourceName: source.bookSourceName,
+        ok: false,
+        status: 'failed',
+        stage: 'exception',
+        message: bookSourceLogger.errorMessage(error),
+        resultCount: 0,
+        validatedAt,
+      };
+    }
   },
 
   async searchBooksWithDiagnostics(

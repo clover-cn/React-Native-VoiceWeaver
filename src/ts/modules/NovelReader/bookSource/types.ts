@@ -138,6 +138,23 @@ export interface BookSourceDiagnostic {
   sample?: string;
 }
 
+export type BookSourceValidationStatus =
+  | 'unknown'
+  | 'checking'
+  | 'ok'
+  | 'failed';
+
+export interface BookSourceValidationResult {
+  sourceId: string;
+  sourceName: string;
+  ok: boolean;
+  status: Exclude<BookSourceValidationStatus, 'unknown' | 'checking'>;
+  message: string;
+  stage: string;
+  resultCount: number;
+  validatedAt: number;
+}
+
 export interface SearchBooksResult {
   books: BookSourceSearchResult[];
   diagnostics: BookSourceDiagnostic[];
