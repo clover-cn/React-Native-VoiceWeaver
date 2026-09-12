@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef} from 'react';
 import {
   View,
   Text,
@@ -10,13 +10,15 @@ import {
   SafeAreaView,
 } from 'react-native';
 import {Book} from '../types/reader';
-import LocalBookSourceService from '../bookSource/LocalBookSourceService';
+import {BookSourceSearchResult} from '../bookSource/types';
+import {useBookSourceSearch} from '../hooks/useBookSourceSearch';
+import {SearchResultsFooter} from './SearchResultsFooter';
 
 interface SourceSwitchModalProps {
   visible: boolean;
   currentBook: Book | null;
   onClose: () => void;
-  onSourceSelect: (source: any) => void;
+  onSourceSelect: (source: BookSourceSearchResult) => void;
 }
 
 export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
@@ -25,34 +27,45 @@ export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
   onClose,
   onSourceSelect,
 }) => {
-  const [sources, setSources] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const searchState = useBookSourceSearch();
+  const {search, reset, loading, error} = searchState;
+  const canAutoLoad = useRef(false);
+  const sources = useMemo(
+    () =>
+      searchState.books.filter(item => {
+        if (!currentBook) {
+          return false;
+        }
+        const sameName =
+          item.name === currentBook.name ||
+          item.name.includes(currentBook.name);
+        const sameAuthor =
+          !currentBook.author ||
+          !item.author ||
+          item.author === currentBook.author ||
+          item.author.includes(currentBook.author);
+        return sameName && sameAuthor;
+      }),
+    [searchState.books, currentBook],
+  );
 
   const fetchSources = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const list = currentBook
-        ? await LocalBookSourceService.searchBookSources(currentBook)
-        : [];
-      setSources(list);
-    } catch (e) {
-      console.warn('获取书源失败', e);
-      setError('获取书源异常：本地解析失败或网络超时');
-    } finally {
-      setLoading(false);
-    }
-  }, [currentBook]);
+    canAutoLoad.current = false;
+    await search(currentBook?.name || '');
+  }, [currentBook?.name, search]);
 
   useEffect(() => {
     if (visible && currentBook) {
       fetchSources();
+    } else {
+      reset();
     }
-  }, [fetchSources, visible, currentBook]);
+  }, [fetchSources, visible, currentBook, reset]);
 
-  const renderItem = ({item}: {item: any}) => {
-    const isCurrent = item.bookUrl === currentBook?.bookUrl;
+  const renderItem = ({item}: {item: BookSourceSearchResult}) => {
+    const isCurrent =
+      item.bookUrl === currentBook?.bookUrl &&
+      item.sourceId === currentBook?.origin;
 
     return (
       <TouchableOpacity
@@ -96,7 +109,7 @@ export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            {loading ? (
+            {loading && !searchState.hasSearched ? (
               <View style={styles.centerContainer}>
                 <ActivityIndicator size="large" color="#007AFF" />
                 <Text style={styles.loadingText}>正在为您搜索所有书源...</Text>
@@ -110,16 +123,36 @@ export const SourceSwitchModal: React.FC<SourceSwitchModalProps> = ({
                   <Text style={styles.retryText}>重新获取</Text>
                 </TouchableOpacity>
               </View>
-            ) : sources.length === 0 ? (
-              <View style={styles.centerContainer}>
-                <Text style={styles.emptyText}>没有找到其他可用的书源</Text>
-              </View>
             ) : (
               <FlatList
                 data={sources}
-                keyExtractor={(item, index) => item.bookUrl || String(index)}
+                keyExtractor={item =>
+                  JSON.stringify([item.sourceId, item.bookUrl])
+                }
                 renderItem={renderItem}
                 contentContainerStyle={styles.listContent}
+                ListEmptyComponent={
+                  <Text style={styles.emptyText}>
+                    当前页没有找到匹配书源，可继续加载
+                  </Text>
+                }
+                onScrollBeginDrag={() => {
+                  canAutoLoad.current = true;
+                }}
+                onEndReachedThreshold={0.3}
+                onEndReached={() => {
+                  if (canAutoLoad.current && !loading) {
+                    canAutoLoad.current = false;
+                    searchState.loadMore();
+                  }
+                }}
+                ListFooterComponent={
+                  <SearchResultsFooter
+                    {...searchState}
+                    onMore={() => searchState.loadMore()}
+                    onRetry={() => searchState.loadMore(true)}
+                  />
+                }
               />
             )}
           </SafeAreaView>

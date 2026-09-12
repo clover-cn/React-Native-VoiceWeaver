@@ -17,6 +17,10 @@ import bridge from '../../base/utils/bridge';
 import LocalBookSourceService from '../bookSource/LocalBookSourceService';
 import {LegadoBookSource} from '../bookSource/types';
 import {
+  openBookSourceLogin,
+  clearBookSourceSession,
+} from '../bookSource/bookSourceSession';
+import {
   buildBookSourceExportFileName,
   buildExportBookSourceJson,
   deleteUserBookSource,
@@ -108,6 +112,42 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
   const notifySourcesChanged = useCallback(() => {
     onSourcesChanged?.();
   }, [onSourcesChanged]);
+
+  const handleLogin = async (source: LegadoBookSource) => {
+    setPendingUrl(source.bookSourceUrl);
+    try {
+      const result = await openBookSourceLogin(source);
+      if (result.status === 'authenticated') {
+        Alert.alert('登录完成', '书源登录状态已保存，可以校验或重新搜索。');
+        notifySourcesChanged();
+      } else if (result.status === 'failed') {
+        Alert.alert('登录失败', result.message || '无法完成书源登录');
+      }
+    } catch (error) {
+      Alert.alert(
+        '登录失败',
+        error instanceof Error ? error.message : '无法打开登录页',
+      );
+    } finally {
+      setPendingUrl(null);
+    }
+  };
+
+  const handleLogout = async (source: LegadoBookSource) => {
+    setPendingUrl(source.bookSourceUrl);
+    try {
+      await clearBookSourceSession(source.bookSourceUrl);
+      notifySourcesChanged();
+      Alert.alert('已退出书源登录', '该书源保存的登录状态已清除。');
+    } catch (error) {
+      Alert.alert(
+        '退出失败',
+        error instanceof Error ? error.message : '清除登录状态失败',
+      );
+    } finally {
+      setPendingUrl(null);
+    }
+  };
 
   const setUrlValidating = useCallback(
     (bookSourceUrl: string, active: boolean) => {
@@ -352,6 +392,7 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
             onPress: async () => {
               setPendingUrl(record.source.bookSourceUrl);
               try {
+                await clearBookSourceSession(record.source.bookSourceUrl);
                 const nextRecords = await deleteUserBookSource(
                   record.source.bookSourceUrl,
                 );
@@ -505,7 +546,7 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
             ]}
             numberOfLines={2}>
             {validationOk
-              ? `可用 · ${item.validationResultCount || 0} 条结果`
+              ? `搜索通过 · ${item.validationResultCount || 0} 条结果`
               : validationFailed
               ? `失败 · ${validationMessage}`
               : validationMessage}
@@ -518,6 +559,22 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
         </View>
 
         <View style={styles.itemActionRow}>
+          {!!source.loginUrl && (
+            <>
+              <TouchableOpacity
+                style={styles.itemGhostBtn}
+                disabled={isPending}
+                onPress={() => handleLogin(source)}>
+                <Text style={styles.itemGhostBtnText}>登录</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.itemGhostBtn}
+                disabled={isPending}
+                onPress={() => handleLogout(source)}>
+                <Text style={styles.itemGhostBtnText}>退出登录</Text>
+              </TouchableOpacity>
+            </>
+          )}
           <TouchableOpacity
             style={styles.itemGhostBtn}
             disabled={isPending}
@@ -833,11 +890,13 @@ const styles = StyleSheet.create({
   },
   itemActionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     gap: 12,
   },
   itemGhostBtn: {
     flex: 1,
+    minWidth: 76,
     borderRadius: 12,
     backgroundColor: '#FFF5F5',
     paddingVertical: 12,
@@ -850,6 +909,7 @@ const styles = StyleSheet.create({
   },
   itemWarnBtn: {
     flex: 1,
+    minWidth: 76,
     borderRadius: 12,
     backgroundColor: '#FFF3D6',
     paddingVertical: 12,
@@ -862,6 +922,7 @@ const styles = StyleSheet.create({
   },
   itemPrimaryBtn: {
     flex: 1,
+    minWidth: 76,
     borderRadius: 12,
     backgroundColor: '#007AFF',
     paddingVertical: 12,

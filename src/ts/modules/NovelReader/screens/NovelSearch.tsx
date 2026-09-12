@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   View,
   Text,
@@ -18,12 +18,12 @@ import {
   clearSearchHistory,
   loadSearchHistory,
 } from '../utils/readerStorage';
-import LocalBookSourceService from '../bookSource/LocalBookSourceService';
-import {
-  BookSourceDiagnostic,
-  BookSourceSearchGroup,
-  LegadoBookSource,
-} from '../bookSource/types';
+import LocalBookSourceService, {
+  mergeBookSourceSearchResults,
+} from '../bookSource/LocalBookSourceService';
+import {useBookSourceSearch} from '../hooks/useBookSourceSearch';
+import {SearchResultsFooter} from '../components/SearchResultsFooter';
+import {BookSourceSearchGroup, LegadoBookSource} from '../bookSource/types';
 
 interface NovelSearchProps {
   onBack: () => void;
@@ -37,18 +37,18 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
   sourceRefreshVersion = 0,
 }) => {
   const [keyword, setKeyword] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [results, setResults] = useState<BookSourceSearchGroup[]>([]);
+  const searchState = useBookSourceSearch();
+  const {loading: isSearching, hasSearched, reset} = searchState;
+  const results = useMemo(
+    () => mergeBookSourceSearchResults(searchState.books),
+    [searchState.books],
+  );
+  const canAutoLoad = useRef(false);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
-  const [searchError, setSearchError] = useState<string | null>(null);
   const [availableSources, setAvailableSources] = useState<LegadoBookSource[]>(
     [],
   );
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [searchDiagnostics, setSearchDiagnostics] = useState<
-    BookSourceDiagnostic[]
-  >([]);
 
   const refreshAvailableSources = useCallback(async () => {
     try {
@@ -67,9 +67,11 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
   useEffect(() => {
     loadSearchHistory().then(setSearchHistory);
     refreshAvailableSources();
-  }, [refreshAvailableSources, sourceRefreshVersion]);
+    reset();
+  }, [refreshAvailableSources, sourceRefreshVersion, reset]);
 
   const toggleSource = (sourceId: string) => {
+    reset();
     setSelectedSourceIds(current =>
       current.includes(sourceId)
         ? current.filter(item => item !== sourceId)
@@ -83,42 +85,15 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
       return;
     }
 
-    setIsSearching(true);
-    setHasSearched(false);
-    setResults([]);
-    setSearchError(null);
-    setSearchDiagnostics([]);
-
+    canAutoLoad.current = false;
+    const searching = searchState.search(term, selectedSourceIds);
     try {
-      const {books, diagnostics} =
-        await LocalBookSourceService.searchBookGroupsWithDiagnostics(
-          term,
-          1,
-          selectedSourceIds,
-        );
-      setResults(books);
-      setSearchDiagnostics(diagnostics);
-      if (books.length === 0) {
-        const failedCount = diagnostics.filter(item => !item.ok).length;
-        const summary = diagnostics
-          .map(item => `${item.sourceName}: ${item.message}`)
-          .join('\n');
-        setSearchError(
-          failedCount === diagnostics.length
-            ? `所有书源搜索失败。\n${summary}`
-            : `没有解析到有效搜索结果。\n${summary}`,
-        );
-      }
       const nextHistory = await addSearchHistory(term);
       setSearchHistory(nextHistory);
-    } catch (e) {
-      console.error('搜索失败:', e);
-      setSearchError(e instanceof Error ? e.message : String(e));
-      setResults([]);
-    } finally {
-      setIsSearching(false);
-      setHasSearched(true);
+    } catch {
+      /* 历史记录写入失败不影响搜索。 */
     }
+    await searching;
   };
 
   const handleHistoryPress = (term: string) => {
@@ -147,7 +122,10 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
               styles.sourceChip,
               selectedSourceIds.length === 0 && styles.activeSourceChip,
             ]}
-            onPress={() => setSelectedSourceIds([])}
+            onPress={() => {
+              reset();
+              setSelectedSourceIds([]);
+            }}
             activeOpacity={0.8}>
             <Text
               style={[
@@ -293,30 +271,35 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
       {hasSearched && results.length === 0 && !isSearching && (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>未找到相关作品，换个关键词试试？</Text>
-          {searchError ? (
-            <Text style={styles.debugText}>{searchError}</Text>
-          ) : null}
-          {searchDiagnostics.length > 0 ? (
-            <View style={styles.debugPanel}>
-              {searchDiagnostics.map(item => (
-                <Text key={item.sourceUrl} style={styles.debugLine} selectable>
-                  {item.ok ? 'OK' : 'FAIL'} {item.sourceName} | 阶段:
-                  {item.stage} | 列表:
-                  {item.listCount ?? '-'} | 结果:
-                  {item.resultCount ?? '-'}
-                </Text>
-              ))}
-            </View>
+          {searchState.error ? (
+            <Text style={styles.debugText}>{searchState.error}</Text>
           ) : null}
         </View>
       )}
 
       <FlatList
         data={results}
-        keyExtractor={(item, idx) => item.bookUrl + idx}
+        keyExtractor={item => JSON.stringify([item.sourceId, item.bookUrl])}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        onScrollBeginDrag={() => {
+          canAutoLoad.current = true;
+        }}
+        onEndReachedThreshold={0.3}
+        onEndReached={() => {
+          if (canAutoLoad.current && !isSearching) {
+            canAutoLoad.current = false;
+            searchState.loadMore();
+          }
+        }}
+        ListFooterComponent={
+          <SearchResultsFooter
+            {...searchState}
+            onMore={() => searchState.loadMore()}
+            onRetry={() => searchState.loadMore(true)}
+          />
+        }
       />
     </SafeAreaView>
   );
@@ -452,17 +435,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 20,
     textAlign: 'left',
-  },
-  debugPanel: {
-    marginTop: 12,
-    paddingHorizontal: 20,
-    width: '100%',
-  },
-  debugLine: {
-    color: '#636366',
-    fontSize: 11,
-    lineHeight: 17,
-    marginBottom: 4,
   },
   card: {
     flexDirection: 'row',

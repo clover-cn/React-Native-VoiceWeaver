@@ -22,6 +22,7 @@
     "@react-native-ohos/checkbox": "0.5.17-rc.4",
     "@react-native-ohos/react-native-linear-gradient": "3.0.1-rc.1",
     "@xmldom/xmldom": "^0.9.10",
+    "acorn": "8.16.0",
     "buffer": "^6.0.3",
     "crypto-js": "4.2.0",
     "css-select": "4.3.0",

@@ -23,6 +23,7 @@ import { NativeAudioPlayerManager } from './NativeAudioPlayerManager';
 import picker from '@ohos.file.picker';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import request from '@ohos.request';
+import { BookSourceSessionManager } from './BookSourceSessionManager';
 const TAG = 'RnBridge';
 const LISTEN_AUDIO_CACHE_PREFIX = 'listen_book_audio_';
 
@@ -174,6 +175,45 @@ class NativeAudioSessionCommandHandler extends AVSessionCommandHandler {
 
 export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
   prePageName: string = ''
+
+  openBookSourceLogin(sourceId: string, loginUrl: string, callback: (result: string) => void): void {
+    const id = BookSourceSessionManager.begin(sourceId, loginUrl, callback);
+    if (!id) {
+      return;
+    }
+    const uiContext = LoadManager.uiContext;
+    if (!uiContext) {
+      BookSourceSessionManager.finish(id, { status: 'failed', message: '登录页面暂不可用' });
+      return;
+    }
+    try {
+      uiContext.getRouter().pushUrl({ url: 'pages/BookSourceLoginPage', params: { requestId: id } },
+        (error: BusinessError) => {
+          if (error) {
+            BookSourceSessionManager.finish(id, { status: 'failed', message: '无法打开登录页面' });
+          }
+        });
+    } catch (_error) {
+      BookSourceSessionManager.finish(id, { status: 'failed', message: '无法打开登录页面' });
+    }
+  }
+
+  getBookSourceSession(sourceId: string, callback: (result: string) => void): void {
+    BookSourceSessionManager.getSession(sourceId).then(session => {
+      // 专用服务回调含会话，不可输出到日志或转发到网页。
+      callback(JSON.stringify({ success: true, session: session || {} }));
+    }).catch(() => {
+      callback(JSON.stringify({ success: false }));
+    });
+  }
+
+  clearBookSourceSession(sourceId: string, callback: (result: string) => void): void {
+    BookSourceSessionManager.clearSession(sourceId).then(() => {
+      callback(JSON.stringify({ success: true }));
+    }).catch(() => {
+      callback(JSON.stringify({ success: false }));
+    });
+  }
 
   private getUriScheme(uri: string): string {
     const safeUri = uri ? uri.trim() : ''

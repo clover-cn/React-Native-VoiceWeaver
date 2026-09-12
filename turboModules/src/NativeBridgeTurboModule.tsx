@@ -69,6 +69,22 @@ export interface Spec extends TurboModule {
 
   selectJsonDocument(callback: (result: string) => void): void;
 
+  openBookSourceLogin(
+    sourceId: string,
+    loginUrl: string,
+    callback: (result: string) => void,
+  ): void;
+
+  getBookSourceSession(
+    sourceId: string,
+    callback: (result: string) => void,
+  ): void;
+
+  clearBookSourceSession(
+    sourceId: string,
+    callback: (result: string) => void,
+  ): void;
+
   selectTxtDocument(callback: (result: string) => void): void;
 
   readLocalTxtBook(

@@ -8,16 +8,18 @@ import {
 } from './types';
 import {
   renderTemplate,
+  renderPageChoices,
   resolveUrl,
   safeJsonParse,
   stripUrlHash,
 } from './ruleUtils';
 import {bookSourceLogger} from './bookSourceLogger';
+import {createRuleContext, evaluateStringAsync} from './ruleEvaluator';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36';
 
-const splitUrlOption = (rawUrl: string) => {
+export const splitUrlOption = (rawUrl: string) => {
   const text = rawUrl.trim();
   const match = text.match(/,\s*(\{[\s\S]*\})\s*$/);
   if (!match || match.index == null) {
@@ -25,11 +27,22 @@ const splitUrlOption = (rawUrl: string) => {
   }
 
   const url = text.slice(0, match.index).trim();
-  const option = safeJsonParse<Record<string, unknown>>(
-    match[1],
-    {},
-  );
+  const option = safeJsonParse<Record<string, unknown>>(match[1], {});
   return {url, option};
+};
+
+/** URL options 的 headers 在阅读书源中允许使用 JSON 字符串。 */
+export const parseRequestHeaders = (
+  headers: unknown,
+): Record<string, string> => {
+  const value =
+    typeof headers === 'string' ? safeJsonParse(headers, {}) : headers;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, String(item ?? '')]),
+  );
 };
 
 const createRequestTemplateVars = (vars: Record<string, unknown>) => {
@@ -112,13 +125,15 @@ export const resolveRequest = (
     ...vars,
     baseUrl,
   });
-  const templated = renderTemplate(rawUrl, templateVars);
+  const templated = renderTemplate(
+    renderPageChoices(rawUrl, vars.page).replace(/\{\{\s*key\s*\}\}/g, () =>
+      encodeURIComponent(String(vars.key ?? '')),
+    ),
+    templateVars,
+  );
   const {url, option} = splitUrlOption(templated);
   const method = String(option.method || 'GET').toUpperCase();
-  const optionHeaders =
-    typeof option.headers === 'object' && option.headers
-      ? (option.headers as Record<string, string>)
-      : {};
+  const optionHeaders = parseRequestHeaders(option.headers);
   const charset = String(option.charset || 'utf-8').toLowerCase();
 
   const resolvedUrl = resolveUrl(url, baseUrl);
@@ -134,11 +149,14 @@ export const resolveRequest = (
     body !== undefined &&
     !hasHeader(headers, 'Content-Type')
   ) {
-    headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+    headers['Content-Type'] =
+      'application/x-www-form-urlencoded; charset=UTF-8';
   }
 
   return {
-    url: encodeRequestUrl(stripUrlHash(resolvedUrl)),
+    url: /^data:/i.test(url)
+      ? templated
+      : encodeRequestUrl(stripUrlHash(resolvedUrl)),
     method,
     headers,
     body,
@@ -146,6 +164,30 @@ export const resolveRequest = (
     webView: Boolean(option.webView),
     retry: Number(option.retry || 0),
   };
+};
+
+/** 所有请求地址与字段规则使用同一脚本运行时，保留同步纯 URL 入口供 java 桥调用。 */
+export const resolveRequestAsync = async (
+  source: LegadoBookSource,
+  rawUrl: string,
+  vars: Record<string, unknown> = {},
+  baseUrl = source.bookSourceUrl,
+): Promise<ResolvedRequest> => {
+  if (!/<js>|@js:/i.test(rawUrl)) {
+    return resolveRequest(source, rawUrl, vars, baseUrl);
+  }
+  const template = renderTemplate(
+    rawUrl.replace(/\{\{\s*key\s*\}\}/g, () =>
+      encodeURIComponent(String(vars.key ?? '')),
+    ),
+    createRequestTemplateVars({...vars, baseUrl}),
+  );
+  const context = createRuleContext('', baseUrl, undefined, {...vars, source});
+  const value = await evaluateStringAsync(template, context);
+  if (!value) {
+    throw new Error('书源请求地址规则返回空值');
+  }
+  return resolveRequest(source, value, vars, baseUrl);
 };
 
 const decodeArrayBuffer = (buffer: ArrayBuffer, charset: string) => {
@@ -173,11 +215,49 @@ const throwIfCancelled = (cancelToken?: BookSourceCancelToken) => {
   }
 };
 
+/** 认证失败不能进入书源的“错误消息作为正文/搜索项”规则。 */
+export const checkBookSourceAuthentication = (text: string) => {
+  let response: {code?: unknown; message?: unknown; msg?: unknown};
+  try {
+    response = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!response || typeof response !== 'object') {
+    return;
+  }
+  const code = Number(response.code);
+  const message = String(response.message || response.msg || '');
+  if (
+    [401, 403].includes(code) ||
+    (response.code != null &&
+      ![0, 200].includes(code) &&
+      /登录|登陆|未认证|令牌.*(失效|过期)|unauthenticated|unauthorized|token.*expired/i.test(
+        message,
+      ))
+  ) {
+    throw new Error('书源需要登录或登录已过期，请在书源管理中登录后重试');
+  }
+};
+
 export const requestText = async (
   request: ResolvedRequest,
   timeoutMs = 20000,
   cancelToken?: BookSourceCancelToken,
 ): Promise<string> => {
+  throwIfCancelled(cancelToken);
+  if (/^data:/i.test(request.url)) {
+    const {url} = splitUrlOption(request.url);
+    const match = url.match(/^data:([^,]*),([\s\S]*)$/i);
+    if (!match) {
+      throw new Error('书源 data 地址格式不正确');
+    }
+    const bytes = /;base64(?:;|$)/i.test(match[1])
+      ? Buffer.from(match[2], 'base64')
+      : Buffer.from(decodeURIComponent(match[2]), 'utf8');
+    // 阅读把二进制 data 响应作为十六进制 result 交给初始化/正文规则。
+    return bytes.toString('hex');
+  }
   let attempt = 0;
   const maxAttempt = Math.max(1, request.retry + 1);
 
@@ -207,9 +287,10 @@ export const requestText = async (
         bytes: buffer.byteLength,
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${request.url}`);
+        throw new Error(`HTTP ${response.status}`);
       }
       const text = decodeArrayBuffer(buffer, request.charset);
+      checkBookSourceAuthentication(text);
       bookSourceLogger.log('request', '响应解码完成', {
         url: request.url,
         textLength: text.length,

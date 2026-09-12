@@ -79,6 +79,10 @@ export const resolveUrl = (value: string, baseUrl: string): string => {
   }
 
   const cleanUrl = url.replace(/&amp;/g, '&');
+  // data 等不透明地址由请求层解码，不能交给相对 HTTP 路径修复。
+  if (/^[a-z][a-z\d+.-]*:/i.test(cleanUrl)) {
+    return cleanUrl;
+  }
   if (/^(https?:)?\/\//i.test(cleanUrl)) {
     return cleanUrl.startsWith('//') ? `https:${cleanUrl}` : cleanUrl;
   }
@@ -206,6 +210,15 @@ export const renderTemplate = (
       },
     )
     .replace(/\{\{([\s\S]*?)\}\}/g, (_match, rawExpr) => renderExpr(rawExpr));
+};
+
+/** 阅读 URL 的 <第一页,后续页> 分支；超过分支数时使用最后一项。 */
+export const renderPageChoices = (template: string, page: unknown): string => {
+  const index = Math.max(0, Math.floor(Number(page) || 1) - 1);
+  return template.replace(/<([^<>\n]*,[^<>\n]*)>/g, (_match, choices) => {
+    const parts = String(choices).split(',');
+    return parts[Math.min(index, parts.length - 1)];
+  });
 };
 
 export const renderJsonPathPlaceholders = (

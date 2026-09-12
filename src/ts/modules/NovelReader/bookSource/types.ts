@@ -14,6 +14,7 @@ export interface LegadoRuleSearch {
 }
 
 export interface LegadoRuleBookInfo {
+  init?: string;
   bookInfoInit?: string;
   name?: string;
   author?: string;
@@ -136,6 +137,7 @@ export interface BookSourceDiagnostic {
   listCount?: number;
   resultCount?: number;
   sample?: string;
+  page?: number;
 }
 
 export type BookSourceValidationStatus =
@@ -157,10 +159,5 @@ export interface BookSourceValidationResult {
 
 export interface SearchBooksResult {
   books: BookSourceSearchResult[];
-  diagnostics: BookSourceDiagnostic[];
-}
-
-export interface SearchBookGroupsResult {
-  books: BookSourceSearchGroup[];
   diagnostics: BookSourceDiagnostic[];
 }

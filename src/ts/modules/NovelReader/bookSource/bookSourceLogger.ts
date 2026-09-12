@@ -1,4 +1,4 @@
-const BOOK_SOURCE_DEBUG = true;
+const BOOK_SOURCE_DEBUG = false;
 
 const PREFIX = '[bookSource]';
 

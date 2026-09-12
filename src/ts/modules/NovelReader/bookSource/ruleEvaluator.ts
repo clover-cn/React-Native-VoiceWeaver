@@ -15,8 +15,14 @@ import {
   resolveUrl,
   splitRegexTail,
 } from './ruleUtils';
-import {requestText, resolveRequest} from './requestClient';
-import {LegadoBookSource} from './types';
+import {
+  requestText,
+  resolveRequest,
+  splitUrlOption,
+  parseRequestHeaders,
+} from './requestClient';
+import {executeRuleScript} from './ruleJsRuntime';
+import {BookSourceCancelToken, LegadoBookSource} from './types';
 
 const CryptoJS = require('crypto-js');
 
@@ -228,7 +234,10 @@ const evalJsonPath = (
     context.item && !isNode(context.item) && !isRegexContext(context.item)
       ? context.item
       : context.json;
-  if (!data) {
+  if (data === undefined && context.raw.trim()) {
+    throw new BookSourceRuleError('书源返回内容不是有效 JSON');
+  }
+  if (data == null) {
     return [];
   }
 
@@ -262,8 +271,7 @@ const evalJsonPath = (
       ? (result as RuleItem[])
       : [result as RuleItem];
   } catch (error) {
-    console.warn('[bookSource] JSONPath 解析失败', rule, error);
-    return [];
+    throw new BookSourceRuleError('书源 JSONPath 规则解析失败');
   }
 };
 
@@ -287,15 +295,14 @@ const evalXPath = (rule: string, context: RuleContext): RuleItem[] => {
     const base = hasXPathItem
       ? context.item.__xpathNode
       : parseXPathDocument(context.raw);
-    const result = xpath.select(expression, base) as unknown[];
-    return result.map(item =>
+    const result = xpath.select(expression, base);
+    return (Array.isArray(result) ? result : [result]).map(item =>
       item && typeof item === 'object' && 'nodeType' in item
         ? ({__xpathNode: item} as XPathNodeContext)
         : (String(item) as RuleItem),
     );
   } catch (error) {
-    console.warn('[bookSource] XPath 解析失败', rule, error);
-    return [];
+    throw new BookSourceRuleError('书源 XPath 规则解析失败');
   }
 };
 
@@ -314,8 +321,7 @@ const evalRegexList = (rule: string, context: RuleContext): RuleItem[] => {
     }
     return shouldReverse ? list.reverse() : list;
   } catch (error) {
-    console.warn('[bookSource] AllInOne 正则失败', rule, error);
-    return [];
+    throw new BookSourceRuleError('书源列表正则表达式无效');
   }
 };
 
@@ -706,6 +712,9 @@ const combineLists = (parts: RuleItem[][], op: string) => {
 };
 
 const resolveUrlWithOption = (value: string, baseUrl: string) => {
+  if (/^data:/i.test(value.trim())) {
+    return value.trim();
+  }
   const marker = ',{';
   const index = value.lastIndexOf(marker);
   if (index >= 0 && value.endsWith('}')) {
@@ -727,6 +736,99 @@ export const createRuleContext = (
   json: json === undefined ? parseJson(raw) : json,
   vars,
 });
+
+type RuleStage = {kind: 'js' | 'rule'; value: string};
+const splitJsStages = (rule: string): RuleStage[] | undefined => {
+  if (!/<js>/i.test(rule)) {
+    return undefined;
+  }
+  const stages: RuleStage[] = [];
+  const pattern = /<js>([\s\S]*?)<\/js>/gi;
+  let offset = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(rule))) {
+    const before = rule.slice(offset, match.index).trim();
+    if (before) {
+      stages.push({kind: 'rule', value: before});
+    }
+    stages.push({kind: 'js', value: match[1]});
+    offset = pattern.lastIndex;
+  }
+  if (!offset) {
+    throw new Error('书源 JS 标签未闭合');
+  }
+  const tail = rule.slice(offset).trim();
+  if (tail) {
+    stages.push({kind: 'rule', value: tail});
+  }
+  return stages;
+};
+
+const evaluateStages = (
+  stages: RuleStage[],
+  context: RuleContext,
+  list: boolean,
+): unknown => {
+  let current = context;
+  let value: unknown = defaultRuleResult(current);
+  for (let index = 0; index < stages.length; index += 1) {
+    const stage = stages[index];
+    if (stage.kind === 'js') {
+      value = executeRuleJsValue(
+        stage.value,
+        defaultRuleResult(current),
+        current,
+      );
+    } else if (list && index === stages.length - 1) {
+      return evaluateList(stage.value, current);
+    } else {
+      value = evaluateString(
+        stage.value.startsWith('##') ? `all${stage.value}` : stage.value,
+        current,
+      );
+    }
+    current = createRuleContext(
+      stringifyRuleJsValue(value),
+      context.baseUrl,
+      undefined,
+      current.vars,
+    );
+  }
+  return list ? normalizeJsListResult(value) : stringifyRuleJsValue(value);
+};
+
+const evaluateStagesAsync = async (
+  stages: RuleStage[],
+  context: RuleContext,
+  list: boolean,
+): Promise<unknown> => {
+  let current = context;
+  let value: unknown = defaultRuleResult(current);
+  for (let index = 0; index < stages.length; index += 1) {
+    const stage = stages[index];
+    if (stage.kind === 'js') {
+      value = await executeRuleJsValueAsync(
+        stage.value,
+        defaultRuleResult(current),
+        current,
+      );
+    } else if (list && index === stages.length - 1) {
+      return evaluateListAsync(stage.value, current);
+    } else {
+      value = await evaluateStringAsync(
+        stage.value.startsWith('##') ? `all${stage.value}` : stage.value,
+        current,
+      );
+    }
+    current = createRuleContext(
+      stringifyRuleJsValue(value),
+      context.baseUrl,
+      undefined,
+      current.vars,
+    );
+  }
+  return list ? normalizeJsListResult(value) : stringifyRuleJsValue(value);
+};
 
 export const evaluateList = (
   rule: string | undefined,
@@ -755,6 +857,11 @@ export const evaluateList = (
   }
 
   let result: RuleItem[] = [];
+  const stages = splitJsStages(cleanRule);
+  if (stages) {
+    const values = evaluateStages(stages, context, true) as RuleItem[];
+    return shouldReverse ? values.reverse() : values;
+  }
   const legadoJs = cleanRule.match(/^<js>([\s\S]*)<\/js>$/i);
   if (legadoJs) {
     result = normalizeJsListResult(
@@ -783,8 +890,7 @@ export const evaluateList = (
     try {
       result = selectAllCompat(selector, getSearchRoots(context));
     } catch (error) {
-      console.warn('[bookSource] CSS 列表解析失败', cleanRule, error);
-      result = [];
+      throw new BookSourceRuleError('书源 CSS 列表规则无效');
     }
   }
 
@@ -820,6 +926,15 @@ export const evaluateListAsync = async (
   }
 
   let result: RuleItem[];
+  const stages = splitJsStages(cleanRule);
+  if (stages) {
+    const values = (await evaluateStagesAsync(
+      stages,
+      context,
+      true,
+    )) as RuleItem[];
+    return shouldReverse ? values.reverse() : values;
+  }
   const legadoJs = cleanRule.match(/^<js>([\s\S]*)<\/js>$/i);
   if (legadoJs) {
     result = normalizeJsListResult(
@@ -905,7 +1020,7 @@ const evaluatePutRule = (rule: string, context: RuleContext) => {
   const content =
     body.startsWith('{') && body.endsWith('}') ? body.slice(1, -1) : body;
 
-  const pairRegex = /([\w$]+)\s*:\s*("[^"]*"|'[^']*'|[^,}]+)/g;
+  const pairRegex = /["']?([\w$]+)["']?\s*:\s*("[^"]*"|'[^']*'|[^,}]+)/g;
   let match: RegExpExecArray | null;
   while ((match = pairRegex.exec(content))) {
     const key = match[1];
@@ -928,7 +1043,7 @@ const evaluatePutRuleAsync = async (rule: string, context: RuleContext) => {
   const content =
     body.startsWith('{') && body.endsWith('}') ? body.slice(1, -1) : body;
 
-  const pairRegex = /([\w$]+)\s*:\s*("[^"]*"|'[^']*'|[^,}]+)/g;
+  const pairRegex = /["']?([\w$]+)["']?\s*:\s*("[^"]*"|'[^']*'|[^,}]+)/g;
   let match: RegExpExecArray | null;
   while ((match = pairRegex.exec(content))) {
     const key = match[1];
@@ -1018,20 +1133,6 @@ const defaultRuleResult = (context: RuleContext): string => {
   }
   return context.raw;
 };
-
-type RuleJsFunction = (
-  result: string,
-  java: Record<string, unknown>,
-  baseUrl: string,
-  src: string,
-  chapter: unknown,
-  book: unknown,
-  vars: Record<string, unknown>,
-  source: unknown,
-) => unknown;
-
-const ruleExpressionJsCache = new Map<string, RuleJsFunction>();
-const ruleStatementJsCache = new Map<string, RuleJsFunction>();
 
 const stringifyRuleJsValue = (value: unknown): string =>
   value == null
@@ -1145,23 +1246,29 @@ const buildJava = (
       bookSourceName: '',
       bookSourceUrl: context.baseUrl,
     } as LegadoBookSource);
-  const requestTimeout = source?.respondTime || 20000;
   const buildRequest = (
     method: 'GET' | 'POST',
     url: string,
     body?: unknown,
     headers?: unknown,
   ) => {
+    const original = splitUrlOption(url);
     const option = {
-      method,
+      ...original.option,
+      method: original.option.method || method,
       ...(body == null ? {} : {body: String(body)}),
-      ...(headers ? {headers: normalizeHeaders(headers)} : {}),
+      headers: {
+        ...parseRequestHeaders(original.option.headers),
+        ...normalizeHeaders(headers),
+      },
     };
     return resolveRequest(
       requestSource,
-      `${url},${JSON.stringify(option)}`,
-      {},
-      context.baseUrl,
+      `${original.url},${JSON.stringify(option)}`,
+      vars,
+      /^data:/i.test(context.baseUrl)
+        ? requestSource.bookSourceUrl
+        : context.baseUrl,
     );
   };
   const request = (
@@ -1171,7 +1278,9 @@ const buildJava = (
     headers?: unknown,
   ) => {
     if (!asyncNetwork) {
-      return createResponseLike('');
+      throw new BookSourceRuleError(
+        '同步字段不支持网络请求，请使用异步规则入口',
+      );
     }
     const key = makeRequestCacheKey(method, url, body, headers);
     const state = getRuleNetworkState(context);
@@ -1187,9 +1296,7 @@ const buildJava = (
   };
 
   return {
-    ajax: asyncNetwork
-      ? (url: string) => request('GET', url).body()
-      : () => '',
+    ajax: asyncNetwork ? (url: string) => request('GET', url).body() : () => '',
     get: asyncNetwork
       ? (keyOrUrl: string, headers?: unknown) => {
           const text = String(keyOrUrl || '');
@@ -1207,10 +1314,17 @@ const buildJava = (
       ? (url: string, body?: unknown, headers?: unknown) =>
           request('POST', url, body, headers)
       : () => createResponseLike(''),
-    base64Encode: (value: string) =>
-      typeof btoa === 'function'
-        ? btoa(String(value))
-        : Buffer.from(String(value), 'utf8').toString('base64'),
+    base64Encode: (value: unknown) =>
+      Buffer.from(String(value ?? ''), 'utf8').toString('base64'),
+    base64Decode: (value: unknown) =>
+      Buffer.from(String(value ?? ''), 'base64').toString('utf8'),
+    hexDecodeToString: (value: unknown) =>
+      Buffer.from(String(value ?? ''), 'hex').toString('utf8'),
+    getCookie: () =>
+      Object.entries(vars)
+        .filter(([key]) => key === 'Authorization' || key === 'X-Device-ID')
+        .map(([key, value]) => `${key}=${String(value ?? '')}`)
+        .join('; '),
     encodeURI: (value: string) => encodeURIComponent(String(value)),
     md5Encode: (value: unknown) =>
       CryptoJS.MD5(String(value ?? '')).toString(CryptoJS.enc.Hex),
@@ -1223,294 +1337,123 @@ const buildJava = (
       evaluateString(rule, context, isUrl),
     getStringList: (rule: string, isUrl = false) =>
       evaluateList(rule, context).map(item =>
-        evaluateString('text', {...context, item}, isUrl),
+        isXPathContext(item)
+          ? stringifyXPathNode(item.__xpathNode)
+          : isNode(item)
+          ? evaluateString(
+              splitExtractor(rule).attr || 'text',
+              {...context, item},
+              isUrl,
+            )
+          : stringifyRuleJsValue(item),
       ),
   };
 };
 
-const createScriptWithLibrary = (script: string, context: RuleContext) => {
-  const jsLib = getRuleSource(context)?.jsLib || '';
-  return jsLib ? `${jsLib}\n${script}` : script;
-};
-
-const isRuleJsExpression = (script: string) => {
-  const trimmed = script.trim();
-  return (
-    /^[\[{]/.test(trimmed) ||
-    /^\(?\s*(function|\(\s*\)|[\w$]+\s*=>)/.test(trimmed) ||
-    !/[;\n]/.test(trimmed)
-  );
-};
-
-const tryEvaluateTrailingExpression = (
+const runRuleScript = (
   script: string,
   result: string,
   context: RuleContext,
-  java: Record<string, unknown>,
-  source: unknown,
-) => {
-  const trimmed = script.trim();
-  if (!trimmed.endsWith(';')) {
-    return undefined;
-  }
-
-  const expression = trimmed.slice(0, -1).trim();
-  if (
-    !expression ||
-    /[;\n{}]/.test(expression) ||
-    /\b(var|let|const|if|for|while|return|try|catch|function)\b/.test(
-      expression,
-    )
-  ) {
-    return undefined;
-  }
-
-  try {
-    const vars = context.vars || {};
-    const jsLib = getRuleSource(context)?.jsLib || '';
-    // eslint-disable-next-line no-new-func
-    const fn = new Function(
-      'result',
-      'java',
-      'baseUrl',
-      'src',
-      'chapter',
-      'book',
-      'vars',
-      'source',
-      `${jsLib}\nreturn (${expression});`,
-    ) as RuleJsFunction;
-    return fn(
-      result,
+  network: boolean,
+): unknown => {
+  const vars = context.vars || (context.vars = {});
+  const java = buildJava(context, network);
+  const cookieText = () =>
+    Object.entries(vars)
+      .filter(([key]) => key === 'Authorization' || key === 'X-Device-ID')
+      .map(([key, value]) => key + '=' + String(value ?? ''))
+      .join('; ');
+  const cacheValues = (vars.__scriptCache ||
+    (vars.__scriptCache = {})) as Record<string, unknown>;
+  return executeRuleScript(
+    script,
+    getRuleSource(context)?.jsLib || '',
+    result,
+    {
       java,
-      context.baseUrl,
-      context.raw,
-      vars.chapter || {},
-      vars.book || {},
+      baseUrl: context.baseUrl,
+      src: context.raw,
+      chapter: vars.chapter || {},
+      book: vars.book || {},
       vars,
-      source,
-    );
-  } catch (error) {
-    if (error instanceof PendingRuleNetworkRequest) {
-      throw error;
-    }
-    return undefined;
-  }
+      source: createSourceBridge(context),
+      cookie: {getCookie: cookieText},
+      getCookie: (name: string) => vars[name] ?? '',
+      cache: {
+        get: (key: string) => cacheValues[key],
+        put: (key: string, value: unknown) => {
+          cacheValues[key] = value;
+          return value;
+        },
+      },
+    },
+  );
 };
+
+export class BookSourceRuleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BookSourceRuleError';
+  }
+}
 
 const executeRuleJsValue = (
   script: string,
   result: string,
   context: RuleContext,
-): unknown => {
-  try {
-    const vars = context.vars || {};
-    context.vars = vars;
-    const java = buildJava(context, false);
-    const source = createSourceBridge(context);
-    const executableScript = createScriptWithLibrary(script, context);
-    const trailingExpression = tryEvaluateTrailingExpression(
-      script,
-      result,
-      context,
-      java,
-      source,
-    );
-    if (trailingExpression !== undefined) {
-      return trailingExpression;
-    }
-
-    const trimmed = script.trim();
-    if (isRuleJsExpression(trimmed)) {
-      let exprFn = ruleExpressionJsCache.get(executableScript);
-      try {
-        if (!exprFn) {
-          // eslint-disable-next-line no-new-func
-          exprFn = new Function(
-            'result',
-            'java',
-            'baseUrl',
-            'src',
-            'chapter',
-            'book',
-            'vars',
-            'source',
-            `${getRuleSource(context)?.jsLib || ''}\nreturn (${script});`,
-          ) as RuleJsFunction;
-          ruleExpressionJsCache.set(executableScript, exprFn);
-        }
-        return exprFn(
-          result,
-          java,
-          context.baseUrl,
-          context.raw,
-          vars.chapter || {},
-          vars.book || {},
-          vars,
-          source,
-        );
-      } catch (_error) {
-        // 不是所有以 { 开头的脚本都是表达式，失败后按语句规则继续执行。
-      }
-    }
-
-    // 书源 JS 只在内置或用户信任的规则中执行，并且只暴露本地白名单对象。
-    let fn = ruleStatementJsCache.get(executableScript);
-    if (!fn) {
-      // eslint-disable-next-line no-new-func
-      fn = new Function(
-        'result',
-        'java',
-        'baseUrl',
-        'src',
-        'chapter',
-        'book',
-        'vars',
-        'source',
-        `const __initialResult = result; ${executableScript}; if (typeof text !== 'undefined') return text; if (result !== __initialResult) return result; if (typeof html !== 'undefined' && html !== __initialResult) return html; return result;`,
-      ) as RuleJsFunction;
-      ruleStatementJsCache.set(executableScript, fn);
-    }
-    const value = fn(
-      result,
-      java,
-      context.baseUrl,
-      context.raw,
-      vars.chapter || {},
-      vars.book || {},
-      vars,
-      source,
-    );
-    return value;
-  } catch (error) {
-    console.warn('[bookSource] JS 规则执行失败', script, error);
-    return '';
-  }
-};
-
+): unknown => runRuleScript(script, result, context, false);
 const executeRuleJs = (
   script: string,
   result: string,
   context: RuleContext,
 ): string => stringifyRuleJsValue(executeRuleJsValue(script, result, context));
 
-const executeRuleJsValueWithNetwork = (
-  script: string,
-  result: string,
-  context: RuleContext,
-): unknown => {
-  const vars = context.vars || {};
-  context.vars = vars;
-  const java = buildJava(context, true);
-  const source = createSourceBridge(context);
-  const executableScript = createScriptWithLibrary(script, context);
-  const trailingExpression = tryEvaluateTrailingExpression(
-    script,
-    result,
-    context,
-    java,
-    source,
-  );
-  if (trailingExpression !== undefined) {
-    return trailingExpression;
-  }
-  const trimmed = script.trim();
-
-  if (isRuleJsExpression(trimmed)) {
-    try {
-      // eslint-disable-next-line no-new-func
-      const exprFn = new Function(
-        'result',
-        'java',
-        'baseUrl',
-        'src',
-        'chapter',
-        'book',
-        'vars',
-        'source',
-        `${getRuleSource(context)?.jsLib || ''}\nreturn (${script});`,
-      ) as RuleJsFunction;
-      return exprFn(
-        result,
-        java,
-        context.baseUrl,
-        context.raw,
-        vars.chapter || {},
-        vars.book || {},
-        vars,
-        source,
-      );
-    } catch (error) {
-      if (error instanceof PendingRuleNetworkRequest) {
-        throw error;
-      }
-      // 不是所有以表达式形态出现的脚本都能用 return 包装。
-    }
-  }
-
-  // eslint-disable-next-line no-new-func
-  const fn = new Function(
-    'result',
-    'java',
-    'baseUrl',
-    'src',
-    'chapter',
-    'book',
-    'vars',
-    'source',
-    `const __initialResult = result; ${executableScript}; if (typeof text !== 'undefined') return text; if (result !== __initialResult) return result; if (typeof html !== 'undefined' && html !== __initialResult) return html; return result;`,
-  ) as RuleJsFunction;
-  return fn(
-    result,
-    java,
-    context.baseUrl,
-    context.raw,
-    vars.chapter || {},
-    vars.book || {},
-    vars,
-    source,
-  );
-};
-
+/** 失败的重放不提交变量和脚本缓存，网络缓存仅属于本次脚本。 */
 const executeRuleJsValueAsync = async (
   script: string,
   result: string,
   context: RuleContext,
 ): Promise<unknown> => {
-  const state = getRuleNetworkState(context);
-
+  const original = context.vars || (context.vars = {});
+  const network: RuleNetworkState = {cache: {}};
   for (let round = 0; round < MAX_RULE_NETWORK_ROUNDS; round += 1) {
-    state.pending = undefined;
-    try {
-      const value = executeRuleJsValueWithNetwork(script, result, context);
-      const pending = state.pending as RuleNetworkState['pending'];
-      if (pending) {
-        const text = await requestText(
-          pending.request,
-          getRuleSource(context)?.respondTime || 20000,
-        );
-        state.cache[pending.key] = text;
-        continue;
+    const trial: Record<string, unknown> = {
+      ...original,
+      [RULE_NETWORK_STATE_KEY]: network,
+    };
+    ['__scriptCache', '__sourceVariables', 'book', 'chapter'].forEach(key => {
+      if (original[key] && typeof original[key] === 'object') {
+        trial[key] = {...(original[key] as object)};
       }
+    });
+    network.pending = undefined;
+    try {
+      const value = runRuleScript(
+        script,
+        result,
+        {...context, vars: trial},
+        true,
+      );
+      const pending = network.pending as RuleNetworkState['pending'];
+      if (pending) {
+        throw new PendingRuleNetworkRequest(pending.key, pending.request);
+      }
+      delete trial[RULE_NETWORK_STATE_KEY];
+      Object.assign(original, trial);
       return value;
     } catch (error) {
-      if (error instanceof PendingRuleNetworkRequest) {
-        const text = await requestText(
-          error.request,
-          getRuleSource(context)?.respondTime || 20000,
-        );
-        state.cache[error.key] = text;
-        continue;
+      if (!(error instanceof PendingRuleNetworkRequest)) {
+        throw error;
       }
-      console.warn('[bookSource] JS 规则执行失败', script, error);
-      return '';
+      network.cache[error.key] = await requestText(
+        error.request,
+        getRuleSource(context)?.respondTime || 20000,
+        original.cancelToken as BookSourceCancelToken | undefined,
+      );
     }
   }
-
-  console.warn('[bookSource] JS 规则网络请求轮次过多', script);
-  return '';
+  throw new BookSourceRuleError('书源脚本请求轮次超过限制');
 };
-
 const executeRuleJsAsync = async (
   script: string,
   result: string,
@@ -1561,6 +1504,11 @@ export const evaluateString = (
   if (!cleanRule) {
     return '';
   }
+  const stages = splitJsStages(cleanRule);
+  if (stages) {
+    const value = String(evaluateStages(stages, context, false));
+    return asUrl ? resolveUrlWithOption(value, context.baseUrl) : value;
+  }
 
   const combinator = parseCombinator(cleanRule);
   if (combinator) {
@@ -1598,7 +1546,12 @@ export const evaluateString = (
       value = evaluatePutRule(targetRule, context);
     } else if (targetRule.startsWith('@get:')) {
       value = String(
-        context.vars?.[targetRule.replace(/^@get:/i, '').trim()] ?? '',
+        context.vars?.[
+          targetRule
+            .replace(/^@get:/i, '')
+            .trim()
+            .replace(/^\{(.*)\}$/, '$1')
+        ] ?? '',
       );
     } else {
       const jsIndex = targetRule.indexOf('@js:');
@@ -1665,8 +1618,7 @@ export const evaluateString = (
       }
     }
   } catch (error) {
-    console.warn('[bookSource] 字符串规则解析失败', cleanRule, error);
-    value = '';
+    throw error;
   }
 
   const replaced = applyRegexTail(value, regex, replacement, onlyOne);
@@ -1683,6 +1635,11 @@ export const evaluateStringAsync = async (
   const cleanRule = String(rule || '').trim();
   if (!cleanRule) {
     return '';
+  }
+  const stages = splitJsStages(cleanRule);
+  if (stages) {
+    const value = String(await evaluateStagesAsync(stages, context, false));
+    return asUrl ? resolveUrlWithOption(value, context.baseUrl) : value;
   }
 
   const combinator = parseCombinator(cleanRule);
@@ -1727,7 +1684,12 @@ export const evaluateStringAsync = async (
       value = await evaluatePutRuleAsync(targetRule, context);
     } else if (targetRule.startsWith('@get:')) {
       value = String(
-        context.vars?.[targetRule.replace(/^@get:/i, '').trim()] ?? '',
+        context.vars?.[
+          targetRule
+            .replace(/^@get:/i, '')
+            .trim()
+            .replace(/^\{(.*)\}$/, '$1')
+        ] ?? '',
       );
     } else {
       const jsIndex = targetRule.indexOf('@js:');
@@ -1747,8 +1709,7 @@ export const evaluateStringAsync = async (
       }
     }
   } catch (error) {
-    console.warn('[bookSource] 字符串规则解析失败', cleanRule, error);
-    value = '';
+    throw error;
   }
 
   const replaced = applyRegexTail(value, regex, replacement, onlyOne);

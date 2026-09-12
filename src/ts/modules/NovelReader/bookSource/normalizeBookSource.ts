@@ -45,6 +45,10 @@ export const normalizeLegadoBookSource = (
     value.bookInfoRule,
     value.ruleBookInfo,
   );
+  if (ruleBookInfo) {
+    ruleBookInfo.init = ruleBookInfo.init || ruleBookInfo.bookInfoInit;
+    delete ruleBookInfo.bookInfoInit;
+  }
   const ruleToc = normalizeTocRule(
     mergeRule<LegadoRuleToc>(value.tocRule, value.ruleToc),
   );
@@ -69,8 +73,8 @@ export const getUnsupportedBookSourceFeatures = (
   source: LegadoBookSource,
 ): string[] => {
   const features: string[] = [];
-  if (cleanText(source.loginUrl) || cleanText(source.loginJs)) {
-    features.push('login');
+  if (cleanText(source.loginJs)) {
+    features.push('loginJs');
   }
   if (source.ruleContent?.webJs) {
     features.push('webJs');
@@ -80,6 +84,3 @@ export const getUnsupportedBookSourceFeatures = (
   }
   return features;
 };
-
-export const requiresUnsupportedLogin = (source: LegadoBookSource) =>
-  getUnsupportedBookSourceFeatures(source).includes('login');
