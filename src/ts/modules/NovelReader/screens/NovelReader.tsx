@@ -2,6 +2,7 @@ import React, {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -175,7 +176,12 @@ const SegmentRow = memo(
   },
   (prevProps, nextProps) =>
     prevProps.index === nextProps.index &&
-    prevProps.item === nextProps.item &&
+    // 轮询会创建新对象；只有显示内容或双击可播放状态改变才更新行。
+    prevProps.item.type === nextProps.item.type &&
+    prevProps.item.role === nextProps.item.role &&
+    prevProps.item.text === nextProps.item.text &&
+    prevProps.item.audioUrl === nextProps.item.audioUrl &&
+    prevProps.item.generationError === nextProps.item.generationError &&
     prevProps.onLongPress === nextProps.onLongPress &&
     prevProps.onPressIn === nextProps.onPressIn &&
     prevProps.onSingleTap === nextProps.onSingleTap &&
@@ -225,6 +231,30 @@ const ReaderContentList = memo(
     activeSegIdx,
     listenState,
   }: ReaderContentListProps) => {
+    // 播放回调随缓存窗口变化，使用稳定入口避免所有可见段落一起重新渲染。
+    const actionsRef = useRef({
+      onSegmentLongPress,
+      onSegmentPressIn,
+      onSegmentSingleTap,
+      onPlaySegment,
+    });
+    useLayoutEffect(() => {
+      actionsRef.current = {
+        onSegmentLongPress,
+        onSegmentPressIn,
+        onSegmentSingleTap,
+        onPlaySegment,
+      };
+    }, [onSegmentLongPress, onSegmentPressIn, onSegmentSingleTap, onPlaySegment]);
+    const rowActions = useMemo(
+      () => ({
+        onLongPress: (index: number) => actionsRef.current.onSegmentLongPress(index),
+        onPressIn: () => actionsRef.current.onSegmentPressIn(),
+        onSingleTap: () => actionsRef.current.onSegmentSingleTap(),
+        onDoubleTap: (index: number) => actionsRef.current.onPlaySegment(index),
+      }),
+      [],
+    );
     const canHighlight = listenState !== 'idle' && listenState !== 'error';
     const renderSegmentItem = useCallback(
       ({item, index}: {item: ListenSegment; index: number}) => {
@@ -232,10 +262,10 @@ const ReaderContentList = memo(
           <SegmentRow
             index={index}
             item={item}
-            onLongPress={onSegmentLongPress}
-            onPressIn={onSegmentPressIn}
-            onSingleTap={onSegmentSingleTap}
-            onDoubleTap={onPlaySegment}
+            onLongPress={rowActions.onLongPress}
+            onPressIn={rowActions.onPressIn}
+            onSingleTap={rowActions.onSingleTap}
+            onDoubleTap={rowActions.onDoubleTap}
             isActive={canHighlight && index === activeSegIdx}
           />
         );
@@ -243,10 +273,7 @@ const ReaderContentList = memo(
       [
         activeSegIdx,
         canHighlight,
-        onPlaySegment,
-        onSegmentPressIn,
-        onSegmentLongPress,
-        onSegmentSingleTap,
+        rowActions,
       ],
     );
 
