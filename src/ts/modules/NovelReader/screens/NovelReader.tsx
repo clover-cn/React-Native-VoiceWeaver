@@ -20,6 +20,7 @@ import {
   NativeScrollEvent,
   GestureResponderEvent,
   ViewToken,
+  useWindowDimensions,
 } from 'react-native';
 import {Chapter, ListenSegment} from '../types/reader';
 import ReaderHeader from '../components/ReaderHeader';
@@ -80,6 +81,19 @@ interface SegmentRowProps {
 
 const DOUBLE_TAP_DELAY_MS = 280;
 const AUTO_FOLLOW_SCROLL_DELAY_MS = 120;
+const READER_HORIZONTAL_PADDING = 24;
+const READER_TITLE_HEIGHT = 112;
+const READER_PAGE_BOTTOM_SPACE = 64;
+const READER_FONT_SIZE = 18;
+const READER_LINE_HEIGHT = 32;
+const READER_PARAGRAPH_GAP_LINES = 1;
+
+type ReadingPageJump = 'first' | 'last';
+
+type ReadingPagerItem =
+  | {type: 'previous-chapter'}
+  | {type: 'page'; text: string; pageIndex: number}
+  | {type: 'next-chapter'};
 
 const SegmentRow = memo(
   ({
@@ -167,9 +181,7 @@ const SegmentRow = memo(
           {item.text}
         </Text>
         {generationFailureHint ? (
-          <Text style={styles.segmentFailureHint}>
-            {generationFailureHint}
-          </Text>
+          <Text style={styles.segmentFailureHint}>{generationFailureHint}</Text>
         ) : null}
       </Pressable>
     );
@@ -189,13 +201,99 @@ const SegmentRow = memo(
     prevProps.isActive === nextProps.isActive,
 );
 
-const PlainParagraphRow = memo(({item}: {item: string}) => (
-  <View style={styles.segmentWrapper}>
-    <Text style={styles.paragraphText}>{item}</Text>
-  </View>
-));
+const countTextUnits = (text: string) => {
+  return Array.from(text).reduce((total, char) => {
+    return total + (char.charCodeAt(0) <= 0x7f ? 0.55 : 1);
+  }, 0);
+};
+
+const takeTextUnits = (text: string, maxUnits: number) => {
+  let usedUnits = 0;
+  let endIndex = 0;
+  for (const char of Array.from(text)) {
+    const units = char.charCodeAt(0) <= 0x7f ? 0.55 : 1;
+    if (endIndex > 0 && usedUnits + units > maxUnits) {
+      break;
+    }
+    usedUnits += units;
+    endIndex += char.length;
+  }
+  return text.slice(0, endIndex);
+};
+
+const paginateParagraphs = (
+  paragraphs: string[],
+  viewportWidth: number,
+  viewportHeight: number,
+) => {
+  const readableWidth = Math.max(
+    viewportWidth - READER_HORIZONTAL_PADDING * 2,
+    160,
+  );
+  const contentHeight = Math.max(
+    viewportHeight - READER_TITLE_HEIGHT - READER_PAGE_BOTTOM_SPACE,
+    240,
+  );
+  const charsPerLine = Math.max(
+    Math.floor(readableWidth / READER_FONT_SIZE),
+    8,
+  );
+  const linesPerPage = Math.max(
+    Math.floor(contentHeight / READER_LINE_HEIGHT),
+    6,
+  );
+  const unitsPerPage = Math.max(charsPerLine * linesPerPage, 48);
+  const pages: string[] = [];
+  let pageText = '';
+  let usedUnits = 0;
+
+  paragraphs
+    .map(paragraph => paragraph.trim())
+    .filter(Boolean)
+    .forEach(paragraph => {
+      let remaining = paragraph;
+      while (remaining.length > 0) {
+        const gapUnits = pageText
+          ? charsPerLine * READER_PARAGRAPH_GAP_LINES
+          : 0;
+        const capacity = unitsPerPage - usedUnits - gapUnits;
+        if (capacity <= Math.max(charsPerLine * 2, 16)) {
+          pages.push(pageText);
+          pageText = '';
+          usedUnits = 0;
+          continue;
+        }
+
+        const remainingUnits = countTextUnits(remaining);
+        const chunk =
+          remainingUnits <= capacity
+            ? remaining
+            : takeTextUnits(remaining, capacity);
+        pageText = pageText ? `${pageText}\n\n${chunk}` : chunk;
+        usedUnits += gapUnits + countTextUnits(chunk);
+        remaining = remaining.slice(chunk.length).trimStart();
+
+        if (remaining.length > 0) {
+          pages.push(pageText);
+          pageText = '';
+          usedUnits = 0;
+        }
+      }
+    });
+
+  if (pageText) {
+    pages.push(pageText);
+  }
+
+  return pages.length > 0 ? pages : [''];
+};
 
 interface ReaderContentListProps {
+  chapterIndex: number;
+  totalChapters: number;
+  initialReadingPage: ReadingPageJump;
+  onPreviousChapter: () => void;
+  onNextChapter: () => void;
   shouldRenderListenContent: boolean;
   segments: ListenSegment[];
   contentParagraphs: string[];
@@ -217,6 +315,11 @@ interface ReaderContentListProps {
 
 const ReaderContentList = memo(
   ({
+    chapterIndex,
+    totalChapters,
+    initialReadingPage,
+    onPreviousChapter,
+    onNextChapter,
     shouldRenderListenContent,
     segments,
     contentParagraphs,
@@ -231,6 +334,11 @@ const ReaderContentList = memo(
     activeSegIdx,
     listenState,
   }: ReaderContentListProps) => {
+    const {width: windowWidth} = useWindowDimensions();
+    const [readerHeight, setReaderHeight] = useState(0);
+    const [readingPageIndex, setReadingPageIndex] = useState(0);
+    const readingPagerRef = useRef<FlatList<ReadingPagerItem>>(null);
+    const chapterTurnLockRef = useRef(false);
     // 播放回调随缓存窗口变化，使用稳定入口避免所有可见段落一起重新渲染。
     const actionsRef = useRef({
       onSegmentLongPress,
@@ -245,10 +353,16 @@ const ReaderContentList = memo(
         onSegmentSingleTap,
         onPlaySegment,
       };
-    }, [onSegmentLongPress, onSegmentPressIn, onSegmentSingleTap, onPlaySegment]);
+    }, [
+      onSegmentLongPress,
+      onSegmentPressIn,
+      onSegmentSingleTap,
+      onPlaySegment,
+    ]);
     const rowActions = useMemo(
       () => ({
-        onLongPress: (index: number) => actionsRef.current.onSegmentLongPress(index),
+        onLongPress: (index: number) =>
+          actionsRef.current.onSegmentLongPress(index),
         onPressIn: () => actionsRef.current.onSegmentPressIn(),
         onSingleTap: () => actionsRef.current.onSegmentSingleTap(),
         onDoubleTap: (index: number) => actionsRef.current.onPlaySegment(index),
@@ -270,16 +384,7 @@ const ReaderContentList = memo(
           />
         );
       },
-      [
-        activeSegIdx,
-        canHighlight,
-        rowActions,
-      ],
-    );
-
-    const renderPlainParagraph = useCallback(
-      ({item}: {item: string}) => <PlainParagraphRow item={item} />,
-      [],
+      [activeSegIdx, canHighlight, rowActions],
     );
 
     const keyExtractor = useCallback(
@@ -287,8 +392,123 @@ const ReaderContentList = memo(
       [],
     );
     const plainKeyExtractor = useCallback(
-      (_: string, idx: number) => `para_${idx}`,
-      [],
+      (item: ReadingPagerItem, idx: number) => {
+        if (item.type !== 'page') {
+          return `${item.type}_${chapterIndex}`;
+        }
+        return `page_${chapterIndex}_${idx}`;
+      },
+      [chapterIndex],
+    );
+
+    const readingPages = useMemo(
+      () => paginateParagraphs(contentParagraphs, windowWidth, readerHeight),
+      [contentParagraphs, readerHeight, windowWidth],
+    );
+
+    const pageWidth = Math.max(windowWidth, 1);
+    const lastPageIndex = Math.max(readingPages.length - 1, 0);
+    const canTurnPreviousChapter = chapterIndex > 0;
+    const canTurnNextChapter = chapterIndex < totalChapters - 1;
+    const firstRealItemIndex = canTurnPreviousChapter ? 1 : 0;
+    const targetPageIndex = initialReadingPage === 'last' ? lastPageIndex : 0;
+    const targetItemIndex = firstRealItemIndex + targetPageIndex;
+    const readingPagerItems = useMemo<ReadingPagerItem[]>(() => {
+      const pageItems = readingPages.map((text, pageIndex) => ({
+        type: 'page' as const,
+        text,
+        pageIndex,
+      }));
+      return [
+        ...(canTurnPreviousChapter
+          ? [{type: 'previous-chapter' as const}]
+          : []),
+        ...pageItems,
+        ...(canTurnNextChapter ? [{type: 'next-chapter' as const}] : []),
+      ];
+    }, [canTurnNextChapter, canTurnPreviousChapter, readingPages]);
+
+    useEffect(() => {
+      chapterTurnLockRef.current = false;
+      setReadingPageIndex(targetPageIndex);
+      const timer = setTimeout(() => {
+        readingPagerRef.current?.scrollToIndex({
+          index: targetItemIndex,
+          animated: false,
+        });
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [chapterIndex, readingPages.length, targetItemIndex, targetPageIndex]);
+
+    const getReadingItemLayout = useCallback(
+      (
+        _data: ArrayLike<ReadingPagerItem> | null | undefined,
+        index: number,
+      ) => ({
+        length: pageWidth,
+        offset: pageWidth * index,
+        index,
+      }),
+      [pageWidth],
+    );
+
+    const renderReadingPage = useCallback(
+      ({item}: {item: ReadingPagerItem}) => (
+        <View style={[styles.readingPage, {width: pageWidth}]}>
+          {item.type === 'page' ? (
+            <Text style={styles.paragraphText}>{item.text}</Text>
+          ) : (
+            <View style={styles.chapterTurnPage}>
+              <ActivityIndicator size="small" color="#8E7D64" />
+              <Text style={styles.chapterTurnPageText}>
+                {item.type === 'next-chapter'
+                  ? '正在进入下一章'
+                  : '正在返回上一章'}
+              </Text>
+            </View>
+          )}
+        </View>
+      ),
+      [pageWidth],
+    );
+
+    const handleReadingScrollEnd = useCallback(
+      (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const itemIndex = Math.round(
+          event.nativeEvent.contentOffset.x / pageWidth,
+        );
+
+        if (chapterTurnLockRef.current) {
+          onScrollEnd(event);
+          return;
+        }
+
+        const item = readingPagerItems[itemIndex];
+        if (item?.type === 'previous-chapter') {
+          chapterTurnLockRef.current = true;
+          onPreviousChapter();
+          onScrollEnd(event);
+          return;
+        }
+        if (item?.type === 'next-chapter') {
+          chapterTurnLockRef.current = true;
+          onNextChapter();
+          onScrollEnd(event);
+          return;
+        }
+
+        if (item?.type === 'page') {
+          setReadingPageIndex(item.pageIndex);
+        }
+        onScrollEnd(event);
+      },
+      [
+        onNextChapter,
+        onPreviousChapter,
+        onScrollEnd,
+        pageWidth,
+        readingPagerItems,
+      ],
     );
 
     const handleScrollToIndexFailed = useCallback(
@@ -347,28 +567,45 @@ const ReaderContentList = memo(
     }
 
     return (
-      <FlatList
-        key="plain-content-list"
-        data={contentParagraphs}
-        keyExtractor={plainKeyExtractor}
-        renderItem={renderPlainParagraph}
-        contentContainerStyle={styles.listPadding}
-        showsVerticalScrollIndicator={false}
-        onScrollBeginDrag={onScrollBeginDrag}
-        onScrollEndDrag={onScrollEnd}
-        onMomentumScrollBegin={onScrollBeginDrag}
-        onMomentumScrollEnd={onScrollEnd}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        initialNumToRender={8}
-        maxToRenderPerBatch={6}
-        windowSize={6}
-        removeClippedSubviews
-        scrollEventThrottle={16}
-      />
+      <View
+        style={styles.readingPagerContainer}
+        onLayout={event => setReaderHeight(event.nativeEvent.layout.height)}>
+        <FlatList
+          key={`reading-pager-${chapterIndex}`}
+          ref={readingPagerRef}
+          data={readingPagerItems}
+          horizontal
+          pagingEnabled
+          initialScrollIndex={targetItemIndex}
+          getItemLayout={getReadingItemLayout}
+          keyExtractor={plainKeyExtractor}
+          renderItem={renderReadingPage}
+          showsHorizontalScrollIndicator={false}
+          onScrollBeginDrag={onScrollBeginDrag}
+          onScrollEndDrag={handleReadingScrollEnd}
+          onMomentumScrollBegin={onScrollBeginDrag}
+          onMomentumScrollEnd={handleReadingScrollEnd}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
+          windowSize={3}
+          removeClippedSubviews
+          scrollEventThrottle={16}
+        />
+        <View style={styles.readingPageIndicator} pointerEvents="none">
+          <Text style={styles.readingPageIndicatorText}>
+            本章第 {Math.min(readingPageIndex + 1, readingPages.length)} /{' '}
+            {readingPages.length} 页
+          </Text>
+        </View>
+      </View>
     );
   },
   (prevProps, nextProps) =>
+    prevProps.chapterIndex === nextProps.chapterIndex &&
+    prevProps.totalChapters === nextProps.totalChapters &&
+    prevProps.initialReadingPage === nextProps.initialReadingPage &&
+    prevProps.onPreviousChapter === nextProps.onPreviousChapter &&
+    prevProps.onNextChapter === nextProps.onNextChapter &&
     prevProps.shouldRenderListenContent ===
       nextProps.shouldRenderListenContent &&
     prevProps.segments === nextProps.segments &&
@@ -428,12 +665,12 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   const scrollUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const autoFollowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const autoFollowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingSegIndex, setEditingSegIndex] = useState(-1);
+  const [initialReadingPage, setInitialReadingPage] =
+    useState<ReadingPageJump>('first');
 
   const effectiveListenState = isListenMode ? listenState : 'idle';
   const shouldRenderListenContent =
@@ -533,6 +770,24 @@ const NovelReader: React.FC<NovelReaderProps> = ({
     onStopListen();
   }, [onStopListen]);
 
+  const handlePreviousReadingChapter = useCallback(() => {
+    setInitialReadingPage('last');
+    onPrevChapter();
+  }, [onPrevChapter]);
+
+  const handleNextReadingChapter = useCallback(() => {
+    setInitialReadingPage('first');
+    onNextChapter();
+  }, [onNextChapter]);
+
+  const handleSelectReadingChapter = useCallback(
+    (index: number) => {
+      setInitialReadingPage('first');
+      onSelectChapter(index);
+    },
+    [onSelectChapter],
+  );
+
   const handleTouchStart = (event: GestureResponderEvent) => {
     const {pageX, pageY} = event.nativeEvent;
     touchStartRef.current = {
@@ -610,6 +865,11 @@ const NovelReader: React.FC<NovelReaderProps> = ({
           {currentChapter?.title || readerLoading?.detail || '正在准备章节'}
         </Text>
         <ReaderContentList
+          chapterIndex={currentChapterIndex}
+          totalChapters={chapterList.length}
+          initialReadingPage={initialReadingPage}
+          onPreviousChapter={handlePreviousReadingChapter}
+          onNextChapter={handleNextReadingChapter}
           shouldRenderListenContent={shouldRenderListenContent}
           segments={segments}
           contentParagraphs={contentParagraphs}
@@ -659,6 +919,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
         </View>
         <View style={styles.footerWrapper}>
           <ReaderFooter
+            showChapterControls={isListenMode}
             currentChapter={currentChapterIndex}
             totalChapters={chapterList.length}
             listenState={effectiveListenState}
@@ -691,7 +952,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
         chapters={chapterList}
         currentIndex={currentChapterIndex}
         onClose={() => setCatalogVisible(false)}
-        onSelectChapter={onSelectChapter}
+        onSelectChapter={handleSelectReadingChapter}
       />
     </View>
   );
@@ -718,6 +979,31 @@ const styles = StyleSheet.create({
   listPadding: {
     paddingHorizontal: 24,
     paddingBottom: 160,
+  },
+  readingPagerContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  readingPage: {
+    paddingHorizontal: READER_HORIZONTAL_PADDING,
+    paddingBottom: READER_PAGE_BOTTOM_SPACE,
+  },
+  readingPageIndicator: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 22,
+    alignItems: 'center',
+  },
+  readingPageIndicatorText: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    color: '#6F675A',
+    fontSize: 12,
+    lineHeight: 16,
   },
   readerLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -85,6 +85,7 @@ const sleep = (ms: number) =>
   new Promise(resolve => {
     setTimeout(resolve, ms);
   });
+const MAX_READING_CONTENT_CACHE_SIZE = 4;
 
 // 配置型小对象（AudioReferenceConfig / 单个 ListenSegment 等）的深拷贝。
 // primitive 与 null 走快路径，避免无意义的 JSON 序列化；其余对象走 JSON 兜底。
@@ -155,6 +156,12 @@ interface ListenBookConfigResponse {
   success?: boolean;
   prefetchCount?: number;
   prescanCount?: number;
+}
+
+interface ChapterContentCacheEntry {
+  text: string;
+  paragraphs: string[];
+  requestUrl: string;
 }
 
 const requestJson = async <T,>(
@@ -457,6 +464,9 @@ const NovelReaderApp: React.FC = () => {
   const autoGeneratingSegmentIndexesRef = useRef<Set<number>>(new Set());
   const lastSegmentFailurePromptKeyRef = useRef<string>('');
   const prefetchedChapterKeyRef = useRef<string>('');
+  const chapterContentCacheRef = useRef<Map<string, ChapterContentCacheEntry>>(
+    new Map(),
+  );
   const listenContextLoadedProjectRef = useRef<string>('');
   const listenContextLoadingRef = useRef<Promise<void> | null>(null);
   const chapterLoadSeqRef = useRef(0);
@@ -740,6 +750,67 @@ const NovelReaderApp: React.FC = () => {
     [chapterList, currentChapterIndex, selectedBook],
   );
 
+  const buildChapterContentCacheKey = useCallback(
+    (book: Book | null, index: number) => {
+      if (!book || index < 0) {
+        return '';
+      }
+      return `${book.bookUrl || book.name}_${book.origin || ''}_${index}`;
+    },
+    [],
+  );
+
+  const readChapterContentData = useCallback(
+    async (
+      book: Book,
+      list: Chapter[],
+      index: number,
+      cancelToken?: BookSourceCancelToken,
+    ): Promise<ChapterContentCacheEntry> => {
+      const chap = list[index];
+      if (!chap) {
+        throw new Error('章节不存在');
+      }
+
+      if (isLocalTxtBook(book)) {
+        const localContent = await readLocalTxtBookContent(
+          book.localBookId || '',
+        );
+        const localChapter = getLocalChapterContent(
+          localContent,
+          `${book.name}.txt`,
+          index,
+        );
+        return {
+          ...localChapter,
+          requestUrl: chap.bookUrl,
+        };
+      }
+
+      return LocalBookSourceService.getBookContent(book, chap, cancelToken);
+    },
+    [],
+  );
+
+  const rememberChapterContentData = useCallback(
+    (key: string, data: ChapterContentCacheEntry) => {
+      if (!key) {
+        return;
+      }
+      const cache = chapterContentCacheRef.current;
+      cache.delete(key);
+      cache.set(key, data);
+      while (cache.size > MAX_READING_CONTENT_CACHE_SIZE) {
+        const firstKey = cache.keys().next().value;
+        if (!firstKey) {
+          break;
+        }
+        cache.delete(firstKey);
+      }
+    },
+    [],
+  );
+
   const showExitPrompt = useCallback(() => {
     // 使用全局半透明 Toast(类似 wx.showToast),替代 Alert/ToastAndroid 的弹窗式提示
     Toast.show('再次按下返回可退出', 1500, 'center');
@@ -881,30 +952,15 @@ const NovelReaderApp: React.FC = () => {
           }
           return null;
         }
-        let data: {
-          text: string;
-          paragraphs: string[];
-          requestUrl: string;
-        };
-        if (isLocalTxtBook(book)) {
-          const localContent = await readLocalTxtBookContent(
-            book.localBookId || '',
-          );
-          const localChapter = getLocalChapterContent(
-            localContent,
-            `${book.name}.txt`,
-            index,
-          );
-          data = {
-            ...localChapter,
-            requestUrl: chap.bookUrl,
-          };
-        } else {
-          data = await LocalBookSourceService.getBookContent(
-            book,
-            chap,
-            cancelToken,
-          );
+        const cacheKey = buildChapterContentCacheKey(book, index);
+        const cachedData = cacheKey
+          ? chapterContentCacheRef.current.get(cacheKey)
+          : null;
+        const data =
+          cachedData ||
+          (await readChapterContentData(book, list, index, cancelToken));
+        if (!cachedData) {
+          rememberChapterContentData(cacheKey, data);
         }
         if (!isChapterLoadActive(loadSeq, cancelToken)) {
           return null;
@@ -962,14 +1018,54 @@ const NovelReaderApp: React.FC = () => {
     },
     [
       beginChapterLoad,
+      buildChapterContentCacheKey,
       checkListenCache,
       isChapterLoadActive,
+      readChapterContentData,
       restoreListenCache,
       persistReadingProgress,
+      rememberChapterContentData,
       resetListen,
       selectedBook,
     ],
   );
+
+  useEffect(() => {
+    if (
+      isListenMode ||
+      !selectedBook ||
+      currentChapterIndex < 0 ||
+      currentChapterIndex >= chapterList.length - 1 ||
+      contentParagraphs.length === 0 ||
+      readerLoading
+    ) {
+      return;
+    }
+
+    const nextIndex = currentChapterIndex + 1;
+    const cacheKey = buildChapterContentCacheKey(selectedBook, nextIndex);
+    if (!cacheKey || chapterContentCacheRef.current.has(cacheKey)) {
+      return;
+    }
+
+    readChapterContentData(selectedBook, chapterList, nextIndex)
+      .then(data => {
+        rememberChapterContentData(cacheKey, data);
+      })
+      .catch(error => {
+        console.warn('[NovelReaderApp] 预加载下一章正文失败', error);
+      });
+  }, [
+    buildChapterContentCacheKey,
+    chapterList,
+    contentParagraphs.length,
+    currentChapterIndex,
+    isListenMode,
+    readChapterContentData,
+    rememberChapterContentData,
+    readerLoading,
+    selectedBook,
+  ]);
 
   const fetchListenBookConfig = useCallback(async () => {
     try {

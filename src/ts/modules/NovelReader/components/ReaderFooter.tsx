@@ -10,13 +10,14 @@ import {
 import {PlaybackProgressContext} from '../contexts/ActiveSegContext';
 
 interface ReaderFooterProps {
+  showChapterControls: boolean;
   currentChapter: number;
   totalChapters: number;
   listenState: string; // 'idle' | 'loading' | 'ready' | 'error'
   listenPhaseText?: string;
   isPlaying: boolean;
-  currentSegIdx?: number;      // 当前播放段落序号
-  totalSegments?: number;      // 总段落数
+  currentSegIdx?: number; // 当前播放段落序号
+  totalSegments?: number; // 总段落数
   onStartListen: () => void;
   onTogglePlayPause: () => void;
   onStopListen: () => void;
@@ -60,7 +61,9 @@ interface MiniProgressBarProps {
 
 const MiniProgressBar: React.FC<MiniProgressBarProps> = memo(
   ({currentSegIdx, totalSegments}) => {
-    const {currentProgress, totalDuration} = useContext(PlaybackProgressContext);
+    const {currentProgress, totalDuration} = useContext(
+      PlaybackProgressContext,
+    );
     const progressPercent =
       totalDuration > 0 ? Math.min(currentProgress / totalDuration, 1) : 0;
 
@@ -126,6 +129,7 @@ const FooterMenuItem: React.FC<FooterMenuItemProps> = memo(
 FooterMenuItem.displayName = 'FooterMenuItem';
 
 const ReaderFooter: React.FC<ReaderFooterProps> = ({
+  showChapterControls,
   currentChapter,
   totalChapters,
   listenState,
@@ -232,28 +236,31 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
         </View>
 
         {/* 底部换章操作 */}
-        <View style={styles.chapterControlRow}>
-          <TouchableOpacity
-            style={[
-              styles.chapterBtn,
-              currentChapter <= 0 && styles.chapterBtnDisabled,
-            ]}
-            onPress={onPrevChapter}
-            disabled={currentChapter <= 0}>
-            <Text style={styles.chapterBtnText}>上一章</Text>
-          </TouchableOpacity>
+        {showChapterControls && (
+          <View style={styles.chapterControlRow}>
+            <TouchableOpacity
+              style={[
+                styles.chapterBtn,
+                currentChapter <= 0 && styles.chapterBtnDisabled,
+              ]}
+              onPress={onPrevChapter}
+              disabled={currentChapter <= 0}>
+              <Text style={styles.chapterBtnText}>上一章</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.chapterBtn,
-              styles.chapterBtnPrimary,
-              currentChapter >= totalChapters - 1 && styles.chapterBtnDisabled,
-            ]}
-            onPress={onNextChapter}
-            disabled={currentChapter >= totalChapters - 1}>
-            <Text style={styles.chapterBtnPrimaryText}>下一章</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={[
+                styles.chapterBtn,
+                styles.chapterBtnPrimary,
+                currentChapter >= totalChapters - 1 &&
+                  styles.chapterBtnDisabled,
+              ]}
+              onPress={onNextChapter}
+              disabled={currentChapter >= totalChapters - 1}>
+              <Text style={styles.chapterBtnPrimaryText}>下一章</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
