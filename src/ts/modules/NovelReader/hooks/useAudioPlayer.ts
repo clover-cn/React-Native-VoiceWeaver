@@ -4,6 +4,7 @@ import VideoPlayerController from '../controllers/VideoPlayerController';
 import ListenAudioCacheController from '../controllers/ListenAudioCacheController';
 import {API_BASE} from './useListenBook';
 import {saveListenProgress} from '../utils/readerStorage';
+import {getSegmentPlaybackError} from '../utils/segmentPlaybackError';
 
 export interface AudioChapterMetadata {
   assetId: string;
@@ -34,6 +35,7 @@ interface SegmentCacheEntry {
   localUri?: string;
   localPath?: string;
   errorMessage?: string;
+  errorCode?: string;
 }
 
 interface CacheQueueTask {
@@ -371,7 +373,7 @@ export const useAudioPlayer = (
       priority: number,
     ): Promise<SegmentCacheEntry | null> => {
       const remoteUrl = buildAbsoluteAudioUrl(segment.audioUrl);
-      if (!remoteUrl) {
+      if (!remoteUrl || getSegmentPlaybackError(segment.text)) {
         return Promise.resolve(null);
       }
 
@@ -413,10 +415,7 @@ export const useAudioPlayer = (
         chapterAssetId,
         segmentIndex,
         remoteUrl,
-        state:
-          existingEntry?.state === 'failed'
-            ? existingEntry.state
-            : 'preloading',
+        state: 'preloading',
         localUri: existingEntry?.localUri,
         localPath: existingEntry?.localPath,
         errorMessage: existingEntry?.errorMessage,
@@ -451,6 +450,7 @@ export const useAudioPlayer = (
               localUri: result.localUri,
               localPath: result.localPath,
               errorMessage: result.errorMessage,
+              errorCode: result.errorCode,
             };
 
             if (result.success && result.localUri) {
@@ -579,9 +579,14 @@ export const useAudioPlayer = (
         return false;
       }
 
+      if (getSegmentPlaybackError(segments[index].text)) {
+        return true;
+      }
+
       const remoteUrl = buildAbsoluteAudioUrl(segments[index]?.audioUrl);
       if (!remoteUrl) {
-        return false;
+        // 保留播放意图，由原生队列区分“等待生成”和“失败后跳段”。
+        return true;
       }
 
       const cacheEntry = getSegmentCacheEntry(
@@ -647,6 +652,11 @@ export const useAudioPlayer = (
             : 'nocache'
         }`,
         url: resolveSegmentPlaybackUrl(chapterMeta.assetId, index, segment),
+        generationError: segment.generationError,
+        playbackError: getSegmentPlaybackError(
+          segment.text,
+          getSegmentCacheEntry(chapterMeta.assetId, index, segment)?.errorCode,
+        ),
         title: `${chapterMeta.title}_${index + 1}`,
       }));
 
@@ -667,7 +677,7 @@ export const useAudioPlayer = (
         isGenerationComplete,
       };
     },
-    [chapterMeta, isGenerationComplete, resolveSegmentPlaybackUrl, segments],
+    [chapterMeta, getSegmentCacheEntry, isGenerationComplete, resolveSegmentPlaybackUrl, segments],
   );
 
   const queueSyncKey = useMemo(() => {
@@ -677,8 +687,9 @@ export const useAudioPlayer = (
         const remoteUrl = buildAbsoluteAudioUrl(segment.audioUrl);
         const cacheIdentity =
           typeof segment.cacheKey === 'string' ? segment.cacheKey.trim() : '';
+        const contentIdentity = `${segment.text}:${segment.generationError || ''}`;
         if (!remoteUrl) {
-          return `${index}:pending:${cacheIdentity}`;
+          return `${index}:pending:${cacheIdentity}:${contentIdentity}`;
         }
 
         const cacheKey = buildSegmentCacheKey(
@@ -688,7 +699,7 @@ export const useAudioPlayer = (
           segment.cacheKey,
         );
         const cacheEntry = cacheEntries[cacheKey];
-        return `${index}:${cacheIdentity}:${cacheEntry?.state || 'idle'}:${
+        return `${index}:${cacheIdentity}:${contentIdentity}:${cacheEntry?.errorCode || ''}:${cacheEntry?.state || 'idle'}:${
           cacheEntry?.localUri || remoteUrl
         }`;
       })
@@ -826,7 +837,10 @@ export const useAudioPlayer = (
         }
       }
 
-      if (payload.currentIndex >= 0) {
+      if (
+        payload.currentIndex === pendingManualStartIndexRef.current &&
+        (payload.state === 'playing' || payload.state === 'loading')
+      ) {
         pendingManualStartIndexRef.current = -1;
       }
 

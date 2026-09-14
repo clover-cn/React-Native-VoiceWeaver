@@ -17,6 +17,8 @@ export interface NativeAudioSegment {
   url?: string | null;
   title?: string;
   duration?: number;
+  generationError?: string | null;
+  playbackError?: string;
 }
 
 export interface NativeAudioQueuePayload {

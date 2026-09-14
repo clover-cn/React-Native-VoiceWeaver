@@ -11,12 +11,15 @@ const TAG = 'NativeAudioPlayer';
 const PLAYBACK_EVENT_NAME = 'NovelAudioPlaybackState';
 const PLAYBACK_PROGRESS_EVENT_THROTTLE_MS = 1000;
 const SESSION_PROGRESS_SYNC_THROTTLE_MS = 1000;
+const MAX_CONSECUTIVE_PLAYBACK_FAILURES = 3;
 
 interface NativeAudioSegmentPayload {
   id: string;
   url?: string | null;
   title?: string;
   duration?: number;
+  generationError?: string | null;
+  playbackError?: string;
 }
 
 type WaitingReason = 'missing_current' | 'await_next' | null;
@@ -79,6 +82,9 @@ export class NativeAudioPlayerManager {
   private isLoadingSource: boolean = false;
   private stoppedExplicitly: boolean = false;
   private currentSourceUrl: string = '';
+  private consecutiveFailures: number = 0;
+  private failedRequestId: number = -1;
+  private sourceLoadQueue: Promise<void> = Promise.resolve();
   private currentLocalFile: fs.File | null = null;
   private lastPlaybackEventAt: number = 0;
   private lastPlaybackEventState: string = '';
@@ -97,7 +103,6 @@ export class NativeAudioPlayerManager {
     }
 
     this.player = await media.createAVPlayer();
-    this.registerPlayerListeners();
     this.initialized = true;
   }
 
@@ -121,6 +126,8 @@ export class NativeAudioPlayerManager {
     }
 
     this.desiredPlaying = true;
+    this.stoppedExplicitly = false;
+    this.consecutiveFailures = 0;
     this.resumeAfterInterrupt = false;
 
     if (this.currentIndex < 0 && this.queue.length > 0) {
@@ -133,7 +140,7 @@ export class NativeAudioPlayerManager {
       return;
     }
 
-    if (this.player.state === 'stopped' || this.player.state === 'idle') {
+    if (this.player.state === 'stopped' || this.player.state === 'idle' || this.player.state === 'error') {
       this.loadIndex(Math.max(0, this.currentIndex), true);
       return;
     }
@@ -143,11 +150,12 @@ export class NativeAudioPlayerManager {
       return;
     }
 
+    const requestId = this.loadRequestId;
     this.player.play().then(() => {
       Logger.info(TAG, 'play success');
     }).catch((error: BusinessError) => {
       Logger.error(TAG, `play failed: ${error.code}, ${error.message}`);
-      this.emitPlaybackEvent('error');
+      this.handleSegmentFailure(requestId, error.message);
     });
   }
 
@@ -187,11 +195,8 @@ export class NativeAudioPlayerManager {
   }
 
   stop(): void {
-    if (!this.player) {
-      return;
-    }
-
     this.stoppedExplicitly = true;
+    this.loadRequestId += 1;
     this.desiredPlaying = false;
     this.resumeAfterInterrupt = false;
     this.waitingForMoreSegments = false;
@@ -200,7 +205,7 @@ export class NativeAudioPlayerManager {
     this.loadingIndex = -1;
     this.currentPositionMs = 0;
     this.currentDurationMs = 0;
-    this.player.stop().then(() => {
+    this.player?.stop().then(() => {
       Logger.info(TAG, 'stop success');
     }).catch((error: BusinessError) => {
       Logger.warn(TAG, `stop failed: ${error.code}, ${error.message}`);
@@ -210,6 +215,7 @@ export class NativeAudioPlayerManager {
   }
 
   skipToNext(): void {
+    this.consecutiveFailures = 0;
     if (this.currentIndex + 1 < this.queue.length) {
       this.loadIndex(this.currentIndex + 1, this.desiredPlaying);
       return;
@@ -224,6 +230,7 @@ export class NativeAudioPlayerManager {
   }
 
   skipToPrevious(): void {
+    this.consecutiveFailures = 0;
     if (this.currentIndex <= 0) {
       this.seek(0);
       return;
@@ -233,6 +240,8 @@ export class NativeAudioPlayerManager {
   }
 
   release(): void {
+    this.loadRequestId += 1;
+    this.consecutiveFailures = 0;
     if (!this.player) {
       return;
     }
@@ -272,7 +281,8 @@ export class NativeAudioPlayerManager {
     const nextQueue = payload.segments;
     const isNewChapter = payload.chapterAssetId !== this.chapterAssetId;
     const hasQueueGrowth = nextQueue.length > this.queue.length;
-    const targetStartIndex = this.normalizePayloadStartIndex(payload.startIndex);
+    const targetStartIndex = nextQueue.length > 0
+      ? Math.min(nextQueue.length - 1, Math.max(0, payload.startIndex ?? 0)) : -1;
     const isExplicitStart = payload.isExplicitStart === true;
     const resumeIndex =
       this.currentIndex >= 0 ? this.normalizeIndex(this.currentIndex) : targetStartIndex;
@@ -291,6 +301,7 @@ export class NativeAudioPlayerManager {
     this.isGenerationComplete = payload.isGenerationComplete ?? false;
 
     if (isNewChapter) {
+      this.consecutiveFailures = 0;
       this.currentIndex = -1;
       this.currentDurationMs = 0;
       this.currentPositionMs = 0;
@@ -307,13 +318,33 @@ export class NativeAudioPlayerManager {
       return;
     }
 
+    // 用户选段必须优先于旧片段恢复；缓存刷新不能解除故障停止状态。
+    if (isExplicitStart && targetStartIndex >= 0) {
+      this.consecutiveFailures = 0;
+      this.stoppedExplicitly = false;
+      await this.loadIndex(targetStartIndex, payload.autoPlay ?? true);
+      return;
+    }
+    if (this.stoppedExplicitly) {
+      return;
+    }
     if (payload.autoPlay !== undefined) {
       this.desiredPlaying = payload.autoPlay;
+    }
+    // 空文件缓存结果可能先于播放器报错，加载中也要响应这个确定的失败。
+    const playbackError = this.queue[this.currentIndex]?.playbackError;
+    if (playbackError && !this.waitingForMoreSegments) {
+      this.handleSegmentFailure(this.loadRequestId, playbackError);
+      return;
+    }
+    if (this.isLoadingSource) {
+      return;
     }
 
     const playerState = this.player?.state ?? 'idle';
     const shouldReloadStoppedQueue =
       this.desiredPlaying &&
+      !this.waitingForMoreSegments &&
       this.queue.length > 0 &&
       (this.stoppedExplicitly ||
         playerState === 'stopped' ||
@@ -331,25 +362,15 @@ export class NativeAudioPlayerManager {
       return;
     }
 
-    if (
-      isExplicitStart &&
-      payload.startIndex !== undefined &&
-      targetStartIndex >= 0 &&
-      targetStartIndex !== this.currentIndex
-    ) {
-      this.waitingForMoreSegments = false;
-      this.waitingReason = null;
-      await this.loadIndex(targetStartIndex, payload.autoPlay ?? true);
-      return;
-    }
-
     this.updateSessionMetadata();
     if (this.waitingForMoreSegments) {
       if (
         this.waitingReason === 'missing_current' &&
         this.currentIndex >= 0 &&
         this.currentIndex < this.queue.length &&
-        this.hasUsableUrl(this.queue[this.currentIndex]?.url)
+        (this.hasUsableUrl(this.queue[this.currentIndex]?.url) ||
+          this.isGenerationComplete || Boolean(this.queue[this.currentIndex]?.generationError) ||
+          Boolean(this.queue[this.currentIndex]?.playbackError))
       ) {
         this.waitingForMoreSegments = false;
         this.waitingReason = null;
@@ -368,6 +389,11 @@ export class NativeAudioPlayerManager {
         return;
       }
 
+      if (this.waitingReason === 'await_next' && this.isGenerationComplete) {
+        if (this.consecutiveFailures > 0) this.stop();
+        else this.finishChapter();
+        return;
+      }
       this.emitPlaybackEvent('waiting');
       return;
     }
@@ -406,12 +432,13 @@ export class NativeAudioPlayerManager {
       this.player &&
       (playerState === 'prepared' || playerState === 'paused')
     ) {
+      const requestId = this.loadRequestId;
       try {
         await this.player.play();
         return;
       } catch (error) {
         Logger.error(TAG, `恢复排队播放失败: ${JSON.stringify(error)}`);
-        this.emitPlaybackEvent('error');
+        this.handleSegmentFailure(requestId, String(error));
         return;
       }
     }
@@ -441,9 +468,19 @@ export class NativeAudioPlayerManager {
     this.loadingIndex = normalizedIndex;
     this.isLoadingSource = true;
     this.updateSessionMetadata();
+    this.emitPlaybackEvent(autoPlay ? 'loading' : 'paused');
+
+    if (target.playbackError) {
+      this.handleSegmentFailure(requestId, target.playbackError);
+      return;
+    }
 
     if (!this.hasUsableUrl(target.url)) {
       this.markSourceLoadSettled();
+      if (this.isGenerationComplete || target.generationError) {
+        this.handleSegmentFailure(requestId, target.generationError || '片段音频为空');
+        return;
+      }
       this.enterWaitingState('missing_current');
       return;
     }
@@ -455,18 +492,23 @@ export class NativeAudioPlayerManager {
       }, url=${target.url ?? ''}`,
     );
 
-    try {
-      const player = await this.preparePlayerForLoad(requestId);
-      if (!player || requestId !== this.loadRequestId) {
-        return;
+    // 串行切换音源，避免旧请求的 reset/open 覆盖用户刚选择的片段。
+    this.sourceLoadQueue = this.sourceLoadQueue.then(async () => {
+      if (requestId !== this.loadRequestId) return;
+      try {
+        const player = await this.preparePlayerForLoad(requestId);
+        if (!player || requestId !== this.loadRequestId) {
+          return;
+        }
+        this.registerPlayerListeners(requestId);
+        this.currentSourceUrl = target.url as string;
+        await this.applyPlayerSource(player, target.url as string, requestId);
+      } catch (error) {
+        Logger.error(TAG, `loadIndex failed: ${JSON.stringify(error)}`);
+        this.handleSegmentFailure(requestId, String(error));
       }
-      await this.applyPlayerSource(player, target.url as string);
-      this.currentSourceUrl = target.url as string;
-    } catch (error) {
-      this.markSourceLoadSettled();
-      Logger.error(TAG, `loadIndex failed: ${JSON.stringify(error)}`);
-      this.emitPlaybackEvent('error');
-    }
+    });
+    await this.sourceLoadQueue;
   }
 
   private isLocalCacheUri(url: string): boolean {
@@ -520,7 +562,7 @@ export class NativeAudioPlayerManager {
     this.currentLocalFile = null;
   }
 
-  private async applyPlayerSource(player: media.AVPlayer, url: string): Promise<void> {
+  private async applyPlayerSource(player: media.AVPlayer, url: string, requestId: number): Promise<void> {
     this.closeLocalFileSource();
 
     if (!this.isLocalCacheUri(url)) {
@@ -531,6 +573,10 @@ export class NativeAudioPlayerManager {
 
     const localPath = this.resolveLocalCachePath(url);
     const localFile = await fs.open(localPath, fs.OpenMode.READ_ONLY);
+    if (requestId !== this.loadRequestId || player !== this.player) {
+      fs.closeSync(localFile);
+      return;
+    }
     this.currentLocalFile = localFile;
     Logger.info(
       TAG,
@@ -546,6 +592,11 @@ export class NativeAudioPlayerManager {
     }
 
     try {
+      player.off('stateChange');
+      player.off('timeUpdate');
+      player.off('durationUpdate');
+      player.off('audioInterrupt');
+      player.off('error');
       if (player.state !== 'idle') {
         await player.reset();
       }
@@ -579,18 +630,17 @@ export class NativeAudioPlayerManager {
     try {
       const nextPlayer = await media.createAVPlayer();
       this.player = nextPlayer;
-      this.registerPlayerListeners();
       this.initialized = true;
       return nextPlayer;
     } catch (error) {
       Logger.error(TAG, `rebuildPlayer create failed: ${JSON.stringify(error)}`);
       this.player = null;
       this.initialized = false;
-      return null;
+      throw new Error(`重建音频播放器失败: ${JSON.stringify(error)}`);
     }
   }
 
-  private registerPlayerListeners(): void {
+  private registerPlayerListeners(requestId: number): void {
     if (!this.player) {
       return;
     }
@@ -598,6 +648,7 @@ export class NativeAudioPlayerManager {
     const player = this.player;
 
     player.on('stateChange', async (state: string, _reason: media.StateChangeReason) => {
+      if (requestId !== this.loadRequestId || player !== this.player) return;
       Logger.info(TAG, `stateChange: ${state}, currentIndex=${this.currentIndex}, loadingIndex=${this.loadingIndex}, desiredPlaying=${this.desiredPlaying}`);
       switch (state) {
         case 'initialized':
@@ -608,9 +659,8 @@ export class NativeAudioPlayerManager {
           try {
             await player.prepare();
           } catch (error) {
-            this.markSourceLoadSettled();
             Logger.error(TAG, `prepare failed: ${JSON.stringify(error)}`);
-            this.emitPlaybackEvent('error');
+            this.handleSegmentFailure(requestId, String(error));
           }
           break;
         case 'prepared':
@@ -618,14 +668,14 @@ export class NativeAudioPlayerManager {
           this.markSourceLoadSettled();
           this.updateSessionMetadata();
           await AVSessionManager.getInstance().waitForMetadata();
+          if (requestId !== this.loadRequestId || player !== this.player) return;
           if (this.desiredPlaying) {
             this.emitPlaybackEvent('loading');
             try {
               await player.play();
             } catch (error) {
               Logger.error(TAG, `play after prepared failed: ${JSON.stringify(error)}`);
-              this.syncSessionState('paused', 0);
-              this.emitPlaybackEvent('error');
+              this.handleSegmentFailure(requestId, String(error));
             }
             break;
           }
@@ -664,6 +714,7 @@ export class NativeAudioPlayerManager {
     });
 
     player.on('timeUpdate', (time: number) => {
+      if (requestId !== this.loadRequestId || player !== this.player) return;
       this.currentPositionMs = time;
       const state = this.desiredPlaying ? 'playing' : 'paused';
       this.syncSessionState(state, undefined, undefined, true);
@@ -671,6 +722,7 @@ export class NativeAudioPlayerManager {
     });
 
     player.on('durationUpdate', (duration: number) => {
+      if (requestId !== this.loadRequestId || player !== this.player) return;
       const previousDuration = this.currentDurationMs;
       this.currentDurationMs = duration;
       if (Math.abs(duration - previousDuration) >= 500) {
@@ -680,19 +732,25 @@ export class NativeAudioPlayerManager {
     });
 
     player.on('audioInterrupt', (info: audio.InterruptEvent) => {
+      if (requestId !== this.loadRequestId || player !== this.player) return;
       Logger.warn(TAG, `audioInterrupt: ${JSON.stringify(info)}`);
       this.handleAudioInterrupt(info);
     });
 
     player.on('error', (error: BusinessError) => {
-      this.markSourceLoadSettled();
+      if (player !== this.player) return;
       Logger.error(TAG, `player error: ${error.code}, ${error.message}`);
-      this.syncSessionState('paused');
-      this.emitPlaybackEvent('error');
+      this.handleSegmentFailure(requestId, error.message);
     });
   }
 
   private handleSegmentCompleted(): void {
+    if (this.currentDurationMs <= 0 && this.currentPositionMs <= 0) {
+      this.handleSegmentFailure(this.loadRequestId, '音频未产生有效播放时长');
+      return;
+    }
+    // 完整播完才清零，避免损坏音频短暂进入 playing 后又失败导致无限跳段。
+    this.consecutiveFailures = 0;
     this.currentPositionMs = this.currentDurationMs;
 
     if (this.currentIndex + 1 < this.queue.length) {
@@ -706,6 +764,27 @@ export class NativeAudioPlayerManager {
     }
 
     this.finishChapter();
+  }
+
+  /** 同一加载请求只计一次失败；第三个连续坏片段停止，不自动跨章。 */
+  private handleSegmentFailure(requestId: number, message: string): void {
+    if (requestId !== this.loadRequestId || requestId === this.failedRequestId) return;
+    this.failedRequestId = requestId;
+    this.markSourceLoadSettled();
+    this.consecutiveFailures += 1;
+    Logger.warn(TAG, `片段播放失败: index=${this.currentIndex}, consecutive=${this.consecutiveFailures}, message=${message}`);
+    if (!this.player || !this.desiredPlaying || this.consecutiveFailures >= MAX_CONSECUTIVE_PLAYBACK_FAILURES ||
+      (this.isGenerationComplete && this.currentIndex + 1 >= this.queue.length)) {
+      this.stop();
+      return;
+    }
+    if (this.currentIndex + 1 < this.queue.length) {
+      this.loadIndex(this.currentIndex + 1, true);
+      return;
+    }
+    // 尾部尚在生成时保留失败计数，等待队列新增片段。
+    this.loadRequestId += 1;
+    this.enterWaitingState('await_next');
   }
 
   private handleAudioInterrupt(info: audio.InterruptEvent): void {
@@ -943,10 +1022,6 @@ export class NativeAudioPlayerManager {
     }
 
     return index;
-  }
-
-  private normalizePayloadStartIndex(index?: number): number {
-    return this.normalizeIndex(index ?? 0);
   }
 
   private hasUsableUrl(url?: string | null): boolean {
