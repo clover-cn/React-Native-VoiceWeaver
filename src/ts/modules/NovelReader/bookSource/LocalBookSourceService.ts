@@ -223,10 +223,16 @@ const readRuleField = async (
   vars?: Record<string, unknown>,
   json?: unknown,
 ) => {
-  return evaluateStringAsync(
-    rule,
-    createRuleContext(raw, baseUrl, item, vars, json),
-    key ? URL_RULE_KEYS.has(key) : false,
+  return bookSourceLogger.trace(
+    'field',
+    `解析字段 ${key || '未命名'}`,
+    {baseUrl, rule},
+    () =>
+      evaluateStringAsync(
+        rule,
+        createRuleContext(raw, baseUrl, item, vars, json),
+        key ? URL_RULE_KEYS.has(key) : false,
+      ),
   );
 };
 
@@ -834,84 +840,95 @@ export const LocalBookSourceService = {
     book: Book,
     cancelToken?: BookSourceCancelToken,
   ): Promise<ChapterListResult> {
-    const source = await sourceById(book.origin);
-    if (!source) {
-      throw new Error('未找到可用书源');
-    }
+    return bookSourceLogger.trace(
+      'toc',
+      '目录解析全流程',
+      {
+        sourceId: book.origin,
+        bookName: book.name,
+        bookUrl: book.bookUrl,
+      },
+      async () => {
+        const source = await sourceById(book.origin);
+        if (!source) {
+          throw new Error('未找到可用书源');
+        }
 
-    bookSourceLogger.log('toc', '开始解析目录', {
-      sourceName: source.bookSourceName,
-      bookName: book.name,
-      bookUrl: book.bookUrl,
-    });
-    const vars: Record<string, unknown> = await createSourceVars(source, {
-      cancelToken,
-    });
-    const detailedBook = await getBookInfo(source, book, vars, cancelToken);
-    throwIfCancelled(cancelToken);
-    const firstTocUrl = detailedBook.tocUrl || detailedBook.bookUrl;
-    const visited = new Set<string>();
-    const chapters: Chapter[] = [];
-    const diagnostics: BookSourceDiagnostic[] = [];
-    let nextUrl = firstTocUrl;
-
-    for (let page = 0; nextUrl && page < MAX_TOC_PAGES; page += 1) {
-      if (visited.has(nextUrl)) {
-        break;
-      }
-      visited.add(nextUrl);
-
-      const result = await loadTocPage(
-        source,
-        detailedBook,
-        nextUrl,
-        chapters.length,
-        vars,
-        cancelToken,
-      );
-      throwIfCancelled(cancelToken);
-      chapters.push(...result.chapters);
-      diagnostics.push(result.diagnostic);
-      if (!result.diagnostic.ok) {
-        bookSourceLogger.warn(
-          'toc',
-          result.diagnostic.message,
-          result.diagnostic,
-        );
-        break;
-      }
-      nextUrl = result.nextUrl;
-    }
-
-    bookSourceLogger.log('toc', '目录解析完成', {
-      sourceName: source.bookSourceName,
-      bookName: detailedBook.name,
-      chapterCount: chapters.length,
-    });
-
-    return {
-      book: detailedBook,
-      chapters: chapters.map((chapter, index) => ({
-        ...chapter,
-        index,
-      })),
-      diagnostic:
-        diagnostics[diagnostics.length - 1] ||
-        ({
+        bookSourceLogger.log('toc', '开始解析目录', {
           sourceName: source.bookSourceName,
-          sourceUrl: source.bookSourceUrl,
-          ok: chapters.length > 0,
-          stage: chapters.length > 0 ? 'done' : 'parse',
-          message:
-            chapters.length > 0
-              ? `目录解析成功，解析到 ${chapters.length} 章`
-              : '目录解析为空',
-          requestUrl: firstTocUrl,
-          rule: source.ruleToc?.chapterList,
-          unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
-          resultCount: chapters.length,
-        } as BookSourceDiagnostic),
-    };
+          bookName: book.name,
+          bookUrl: book.bookUrl,
+        });
+        const vars: Record<string, unknown> = await createSourceVars(source, {
+          cancelToken,
+        });
+        const detailedBook = await getBookInfo(source, book, vars, cancelToken);
+        throwIfCancelled(cancelToken);
+        const firstTocUrl = detailedBook.tocUrl || detailedBook.bookUrl;
+        const visited = new Set<string>();
+        const chapters: Chapter[] = [];
+        const diagnostics: BookSourceDiagnostic[] = [];
+        let nextUrl = firstTocUrl;
+
+        for (let page = 0; nextUrl && page < MAX_TOC_PAGES; page += 1) {
+          if (visited.has(nextUrl)) {
+            break;
+          }
+          visited.add(nextUrl);
+
+          const result = await loadTocPage(
+            source,
+            detailedBook,
+            nextUrl,
+            chapters.length,
+            vars,
+            cancelToken,
+          );
+          throwIfCancelled(cancelToken);
+          chapters.push(...result.chapters);
+          diagnostics.push(result.diagnostic);
+          if (!result.diagnostic.ok) {
+            bookSourceLogger.warn(
+              'toc',
+              result.diagnostic.message,
+              result.diagnostic,
+            );
+            break;
+          }
+          nextUrl = result.nextUrl;
+        }
+
+        bookSourceLogger.log('toc', '目录解析完成', {
+          sourceName: source.bookSourceName,
+          bookName: detailedBook.name,
+          chapterCount: chapters.length,
+        });
+
+        return {
+          book: detailedBook,
+          chapters: chapters.map((chapter, index) => ({
+            ...chapter,
+            index,
+          })),
+          diagnostic:
+            diagnostics[diagnostics.length - 1] ||
+            ({
+              sourceName: source.bookSourceName,
+              sourceUrl: source.bookSourceUrl,
+              ok: chapters.length > 0,
+              stage: chapters.length > 0 ? 'done' : 'parse',
+              message:
+                chapters.length > 0
+                  ? `目录解析成功，解析到 ${chapters.length} 章`
+                  : '目录解析为空',
+              requestUrl: firstTocUrl,
+              rule: source.ruleToc?.chapterList,
+              unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+              resultCount: chapters.length,
+            } as BookSourceDiagnostic),
+        };
+      },
+    );
   },
 
   async getBookContent(
@@ -919,149 +936,187 @@ export const LocalBookSourceService = {
     chapter: Chapter,
     cancelToken?: BookSourceCancelToken,
   ): Promise<ContentResult> {
-    const source = await sourceById(book.origin || chapter.sourceId);
-    if (!source) {
-      throw new Error('未找到可用书源');
-    }
+    return bookSourceLogger.trace(
+      'content',
+      '正文解析全流程',
+      {
+        sourceId: book.origin || chapter.sourceId,
+        bookName: book.name,
+        chapterTitle: chapter.title,
+        chapterUrl: chapter.bookUrl,
+      },
+      async () => {
+        const source = await sourceById(book.origin || chapter.sourceId);
+        if (!source) {
+          throw new Error('未找到可用书源');
+        }
 
-    const visited = new Set<string>();
-    const chunks: string[] = [];
-    const vars: Record<string, unknown> = await createSourceVars(source, {
-      book,
-      chapter,
-      title: chapter.title,
-      cancelToken,
-    });
-    let nextUrl = chapter.bookUrl;
-    let firstRequestUrl = chapter.bookUrl;
+        const visited = new Set<string>();
+        const chunks: string[] = [];
+        const vars: Record<string, unknown> = await createSourceVars(source, {
+          book,
+          chapter,
+          title: chapter.title,
+          cancelToken,
+        });
+        let nextUrl = chapter.bookUrl;
+        let firstRequestUrl = chapter.bookUrl;
 
-    bookSourceLogger.log('content', '开始解析正文', {
-      sourceName: source.bookSourceName,
-      bookName: book.name,
-      chapterTitle: chapter.title,
-      chapterUrl: chapter.bookUrl,
-    });
-
-    for (let page = 0; nextUrl && page < MAX_CONTENT_PAGES; page += 1) {
-      if (visited.has(nextUrl)) {
-        break;
-      }
-      visited.add(nextUrl);
-
-      const requestUrl = buildApibiTokenChapterUrl(
-        source,
-        book,
-        chapter,
-        nextUrl,
-      );
-      const request = await resolveRequestAsync(
-        source,
-        requestUrl,
-        vars,
-        chapter.baseUrl || nextUrl,
-      );
-      if (request.webView) {
-        const diagnostic = {
+        bookSourceLogger.log('content', '开始解析正文', {
           sourceName: source.bookSourceName,
-          sourceUrl: source.bookSourceUrl,
-          ok: false,
-          stage: 'unsupported',
-          message: '正文请求依赖 webView，本轮暂不支持动态页面',
-          requestUrl: request.url,
-          rule: source.ruleContent?.content,
-          unsupportedFeatures: [
-            ...new Set([
-              ...getUnsupportedBookSourceFeatures(source),
-              'webView',
-            ]),
-          ],
-        };
-        bookSourceLogger.warn('content', diagnostic.message, diagnostic);
-        return {
-          text: '',
-          paragraphs: [],
-          requestUrl: request.url,
-          diagnostic,
-        };
-      }
-      if (page === 0) {
-        firstRequestUrl = request.url;
-      }
-      const raw = await requestText(
-        request,
-        source.respondTime || 20000,
-        cancelToken,
-      );
-      throwIfCancelled(cancelToken);
-      const rules = source.ruleContent || {};
-      const content = await readRuleField(
-        rules.content,
-        raw,
-        request.url,
-        undefined,
-        'content',
-        vars,
-      );
-      if (content) {
-        chunks.push(content);
-      }
-      bookSourceLogger.log('content', '正文页规则解析完成', {
-        sourceName: source.bookSourceName,
-        requestUrl: request.url,
-        contentRule: rules.content,
-        contentLength: content.length,
-      });
-
-      nextUrl = await readRuleField(
-        rules.nextContentUrl,
-        raw,
-        request.url,
-        undefined,
-        'nextContentUrl',
-        vars,
-      );
-      if (nextUrl && !isSameContentPageGroup(chapter.bookUrl, nextUrl)) {
-        bookSourceLogger.log('content', '正文下一页指向其他章节，停止跟随', {
-          sourceName: source.bookSourceName,
+          bookName: book.name,
           chapterTitle: chapter.title,
           chapterUrl: chapter.bookUrl,
-          nextUrl,
         });
-        nextUrl = '';
-      }
-    }
 
-    const normalized = normalizeContentText(
-      applyReplaceRegex(chunks.join('\n'), source.ruleContent?.replaceRegex),
-    );
-    const paragraphs = splitParagraphs(normalized);
-    bookSourceLogger.log('content', '正文解析完成', {
-      sourceName: source.bookSourceName,
-      bookName: book.name,
-      chapterTitle: chapter.title,
-      textLength: normalized.length,
-      paragraphCount: paragraphs.length,
-    });
+        for (let page = 0; nextUrl && page < MAX_CONTENT_PAGES; page += 1) {
+          if (visited.has(nextUrl)) {
+            bookSourceLogger.warn('content', '分页地址重复，停止解析', {
+              nextUrl,
+              page: page + 1,
+            });
+            break;
+          }
+          visited.add(nextUrl);
+          bookSourceLogger.log('content', '开始解析正文分页', {
+            page: page + 1,
+            nextUrl,
+          });
 
-    return {
-      text: normalized,
-      paragraphs,
-      requestUrl: firstRequestUrl,
-      diagnostic: {
-        sourceName: source.bookSourceName,
-        sourceUrl: source.bookSourceUrl,
-        ok: paragraphs.length > 0,
-        stage: paragraphs.length > 0 ? 'done' : 'parse',
-        message:
-          paragraphs.length > 0
-            ? `正文解析成功，解析到 ${paragraphs.length} 段`
-            : '正文解析为空',
-        requestUrl: firstRequestUrl,
-        rule: source.ruleContent?.content,
-        unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
-        resultCount: paragraphs.length,
+          const requestUrl = buildApibiTokenChapterUrl(
+            source,
+            book,
+            chapter,
+            nextUrl,
+          );
+          const request = await resolveRequestAsync(
+            source,
+            requestUrl,
+            vars,
+            chapter.baseUrl || nextUrl,
+          );
+          if (request.webView) {
+            const diagnostic = {
+              sourceName: source.bookSourceName,
+              sourceUrl: source.bookSourceUrl,
+              ok: false,
+              stage: 'unsupported',
+              message: '正文请求依赖 webView，本轮暂不支持动态页面',
+              requestUrl: request.url,
+              rule: source.ruleContent?.content,
+              unsupportedFeatures: [
+                ...new Set([
+                  ...getUnsupportedBookSourceFeatures(source),
+                  'webView',
+                ]),
+              ],
+            };
+            bookSourceLogger.warn('content', diagnostic.message, diagnostic);
+            return {
+              text: '',
+              paragraphs: [],
+              requestUrl: request.url,
+              diagnostic,
+            };
+          }
+          if (page === 0) {
+            firstRequestUrl = request.url;
+          }
+          const raw = await requestText(
+            request,
+            source.respondTime || 20000,
+            cancelToken,
+          );
+          throwIfCancelled(cancelToken);
+          const rules = source.ruleContent || {};
+          const content = await readRuleField(
+            rules.content,
+            raw,
+            request.url,
+            undefined,
+            'content',
+            vars,
+          );
+          if (content) {
+            chunks.push(content);
+          }
+          bookSourceLogger.log('content', '正文页规则解析完成', {
+            sourceName: source.bookSourceName,
+            requestUrl: request.url,
+            contentRule: rules.content,
+            contentLength: content.length,
+          });
+
+          nextUrl = await readRuleField(
+            rules.nextContentUrl,
+            raw,
+            request.url,
+            undefined,
+            'nextContentUrl',
+            vars,
+          );
+          if (nextUrl && !isSameContentPageGroup(chapter.bookUrl, nextUrl)) {
+            bookSourceLogger.log(
+              'content',
+              '正文下一页指向其他章节，停止跟随',
+              {
+                sourceName: source.bookSourceName,
+                chapterTitle: chapter.title,
+                chapterUrl: chapter.bookUrl,
+                nextUrl,
+              },
+            );
+            nextUrl = '';
+          }
+        }
+
+        const normalized = normalizeContentText(
+          applyReplaceRegex(
+            chunks.join('\n'),
+            source.ruleContent?.replaceRegex,
+          ),
+        );
+        const paragraphs = splitParagraphs(normalized);
+        if (!paragraphs.length) {
+          bookSourceLogger.warn(
+            'content',
+            '正文为空，请检查正文规则或登录状态',
+            {
+              sourceName: source.bookSourceName,
+              rule: source.ruleContent?.content,
+              pageCount: visited.size,
+            },
+          );
+        }
+        bookSourceLogger.log('content', '正文解析完成', {
+          sourceName: source.bookSourceName,
+          bookName: book.name,
+          chapterTitle: chapter.title,
+          textLength: normalized.length,
+          paragraphCount: paragraphs.length,
+        });
+
+        return {
+          text: normalized,
+          paragraphs,
+          requestUrl: firstRequestUrl,
+          diagnostic: {
+            sourceName: source.bookSourceName,
+            sourceUrl: source.bookSourceUrl,
+            ok: paragraphs.length > 0,
+            stage: paragraphs.length > 0 ? 'done' : 'parse',
+            message:
+              paragraphs.length > 0
+                ? `正文解析成功，解析到 ${paragraphs.length} 段`
+                : '正文解析为空',
+            requestUrl: firstRequestUrl,
+            rule: source.ruleContent?.content,
+            unsupportedFeatures: getUnsupportedBookSourceFeatures(source),
+            resultCount: paragraphs.length,
+          },
+        };
       },
-    };
+    );
   },
 };
 

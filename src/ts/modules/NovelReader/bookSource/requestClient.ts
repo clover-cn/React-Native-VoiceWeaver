@@ -172,6 +172,23 @@ export const resolveRequestAsync = async (
   rawUrl: string,
   vars: Record<string, unknown> = {},
   baseUrl = source.bookSourceUrl,
+): Promise<ResolvedRequest> =>
+  bookSourceLogger.trace(
+    'request',
+    '解析请求地址',
+    {
+      sourceName: source.bookSourceName,
+      baseUrl,
+      rawUrl,
+    },
+    () => resolveRequestAsyncInternal(source, rawUrl, vars, baseUrl),
+  );
+
+const resolveRequestAsyncInternal = async (
+  source: LegadoBookSource,
+  rawUrl: string,
+  vars: Record<string, unknown> = {},
+  baseUrl = source.bookSourceUrl,
 ): Promise<ResolvedRequest> => {
   if (!/<js>|@js:/i.test(rawUrl)) {
     return resolveRequest(source, rawUrl, vars, baseUrl);
@@ -244,6 +261,22 @@ export const requestText = async (
   request: ResolvedRequest,
   timeoutMs = 20000,
   cancelToken?: BookSourceCancelToken,
+): Promise<string> =>
+  bookSourceLogger.trace(
+    'request',
+    '请求与响应解码',
+    {
+      url: request.url,
+      method: request.method,
+      timeoutMs,
+    },
+    () => requestTextInternal(request, timeoutMs, cancelToken),
+  );
+
+const requestTextInternal = async (
+  request: ResolvedRequest,
+  timeoutMs = 20000,
+  cancelToken?: BookSourceCancelToken,
 ): Promise<string> => {
   throwIfCancelled(cancelToken);
   if (/^data:/i.test(request.url)) {
@@ -294,7 +327,6 @@ export const requestText = async (
       bookSourceLogger.log('request', '响应解码完成', {
         url: request.url,
         textLength: text.length,
-        preview: text.slice(0, 120),
       });
       return text;
     } catch (error) {
