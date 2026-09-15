@@ -289,15 +289,14 @@ const styles = StyleSheet.create({
   },
   title: {fontSize: 22, fontWeight: '600', color: '#1C2940', marginBottom: 12},
   hint: {fontSize: 13, color: '#65758A', textAlign: 'center', lineHeight: 21},
-  steps: {alignSelf: 'stretch', marginTop: 22},
+  steps: {alignSelf: 'center', alignItems: 'flex-start', marginTop: 22},
   step: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 7,
-    justifyContent: 'center',
   },
   stepIcon: {color: '#A5AFBC', width: 28, fontSize: 16},
-  stepText: {color: '#8793A3', fontSize: 14, width: 140},
+  stepText: {color: '#8793A3', fontSize: 14},
   current: {color: '#356AB9', fontWeight: '600'},
   tip: {
     color: '#8793A3',
