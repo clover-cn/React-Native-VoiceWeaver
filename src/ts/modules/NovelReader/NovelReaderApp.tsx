@@ -1658,9 +1658,11 @@ const NovelReaderApp: React.FC = () => {
   const handleRemoveReadingRecord = useCallback(
     async (bookUrl: string) => {
       const record = readingRecords.find(item => item.book.bookUrl === bookUrl);
-      if (record && isLocalTxtBook(record.book)) {
+      if (record) {
         try {
-          await deleteLocalTxtBookFile(record.book.localBookId || '');
+          if (isLocalTxtBook(record.book)) {
+            await deleteLocalTxtBookFile(record.book.localBookId || '');
+          }
           for (let index = 0; index < record.chapterList.length; index += 1) {
             await clearListenChapterCache(
               buildListenProjectName(record.book),
@@ -1672,10 +1674,10 @@ const NovelReaderApp: React.FC = () => {
             );
           }
         } catch (error) {
-          console.warn('[NovelReaderApp] 删除本地 TXT 资源失败', error);
+          console.warn('[NovelReaderApp] 清理书籍及听书记录失败', error);
           Alert.alert(
             '删除失败',
-            error instanceof Error ? error.message : '删除本地书籍失败。',
+            error instanceof Error ? error.message : '清理书籍及听书记录失败。',
           );
           return;
         }
@@ -1766,28 +1768,7 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
-      const contentHash = createTextHash(chapterText);
-      const localListenCache = await loadListenChapterCache(
-        curProjectName,
-        currentChapterIndex,
-        contentHash,
-      );
-      if (localListenCache) {
-        if (areListenSegmentsFullyPlayable(localListenCache.segments)) {
-          restoreListenCache(localListenCache.segments);
-          updateListenRuntime('ready', true, '');
-          return;
-        }
-        clearListenChapterCache(curProjectName, currentChapterIndex).catch(
-          error => {
-            console.warn(
-              '[NovelReaderApp] 清理不可播放本地听书缓存失败',
-              error,
-            );
-          },
-        );
-      }
-
+      // 本地段落只保存音频地址，开始听书前必须确认服务端缓存仍有效。
       updateListenRuntime('loading', false, '正在准备听书环境…');
       await ensureListenGenerationContext();
 

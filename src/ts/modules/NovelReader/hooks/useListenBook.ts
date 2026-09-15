@@ -1,5 +1,6 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
 import {ListenBookGeneratePayload, ListenSegment} from '../types/reader';
+import {clearListenChapterCache} from '../utils/readerStorage';
 import {
   areListenSegmentsFullyPlayable,
   createTextHash,
@@ -307,12 +308,14 @@ export const useListenBook = (): UseListenBookReturn => {
           cachedListenStateRef.current = 'ready';
           return {cached: true, inProgress: false};
         }
-        if (Array.isArray(data.segments) && data.segments.length > 0) {
-          setSegments(data.segments);
-          setIsGenerationComplete(false);
-          setListenError('');
-          cachedListenStateRef.current = 'idle';
-        }
+        // 服务端明确未命中时，旧 URL 不能继续作为已完成缓存使用。
+        stopPolling();
+        setSegments(Array.isArray(data.segments) ? data.segments : []);
+        setIsGenerationComplete(false);
+        setListenError('');
+        cachedListenStateRef.current = 'idle';
+        listenTaskIdRef.current = null;
+        await clearListenChapterCache(projectName, chapterIndex);
         if (data.inProgress && data.taskId) {
           listenTaskIdRef.current = data.taskId;
           cachedListenStateRef.current = 'loading';
@@ -324,7 +327,7 @@ export const useListenBook = (): UseListenBookReturn => {
         return {cached: false, inProgress: false};
       }
     },
-    [],
+    [stopPolling],
   );
 
   const startListening = useCallback(
@@ -337,9 +340,9 @@ export const useListenBook = (): UseListenBookReturn => {
       const chapterText = normalizeChapterTextForRequest(payload.chapterText);
 
       if (!chapterText) {
-          setListenState('error');
-          setListenError('当前章节正文为空，无法生成语音。');
-          cachedListenStateRef.current = 'idle';
+        setListenState('error');
+        setListenError('当前章节正文为空，无法生成语音。');
+        cachedListenStateRef.current = 'idle';
         console.warn('Trigger listening skipped: empty chapter text');
         return;
       }
@@ -387,10 +390,7 @@ export const useListenBook = (): UseListenBookReturn => {
           throw new Error(data?.error || `启动听书失败(${res.status})`);
         }
 
-        if (
-          data.alreadyDone &&
-          areListenSegmentsFullyPlayable(data.segments)
-        ) {
+        if (data.alreadyDone && areListenSegmentsFullyPlayable(data.segments)) {
           listenTaskIdRef.current = data.taskId || null;
           setSegments(data.segments || []);
           setIsGenerationComplete(true);
