@@ -158,7 +158,7 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
       case 'idle':
         return (
           <TouchableOpacity style={styles.listenBtn} onPress={onStartListen}>
-            <Text style={styles.listenBtnText}>耳机 听书</Text>
+            <Text style={styles.listenBtnText}>听书</Text>
           </TouchableOpacity>
         );
       case 'loading':
