@@ -772,6 +772,8 @@ export class NativeAudioPlayerManager {
     this.failedRequestId = requestId;
     this.markSourceLoadSettled();
     this.consecutiveFailures += 1;
+    // 将实际播放失败传回准备页，避免只收到停止或跳段状态。
+    this.emitPlaybackEvent('error');
     Logger.warn(TAG, `片段播放失败: index=${this.currentIndex}, consecutive=${this.consecutiveFailures}, message=${message}`);
     if (!this.player || !this.desiredPlaying || this.consecutiveFailures >= MAX_CONSECUTIVE_PLAYBACK_FAILURES ||
       (this.isGenerationComplete && this.currentIndex + 1 >= this.queue.length)) {

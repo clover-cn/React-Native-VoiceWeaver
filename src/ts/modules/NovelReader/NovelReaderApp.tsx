@@ -19,6 +19,14 @@ import {
   PlaybackProgressCtx,
 } from './contexts/ActiveSegContext';
 import NovelSearch from './screens/NovelSearch';
+import ListenPreparationOverlay from './components/ListenPreparationOverlay';
+import {
+  ListenPreparation,
+  ListenPreparationStage,
+  advancePreparation,
+  collapsePreparation,
+  stageFromServer,
+} from './utils/listenPreparation';
 import {
   AudioReferenceConfig,
   Book,
@@ -482,7 +490,21 @@ const NovelReaderApp: React.FC = () => {
     selectedBookRef.current = selectedBook;
   }, [selectedBook]);
 
+  const [preparation, setPreparation] = useState<ListenPreparation | null>(
+    null,
+  );
+  const preparationIdRef = useRef(0);
+  const [playbackSession, setPlaybackSession] = useState(0);
+  useEffect(
+    () => () => {
+      preparationIdRef.current += 1;
+    },
+    [],
+  );
+
   const cancelActiveChapterLoad = useCallback(() => {
+    preparationIdRef.current += 1;
+    setPreparation(null);
     chapterLoadSeqRef.current += 1;
     const cancelToken = chapterLoadCancelRef.current;
     if (cancelToken) {
@@ -510,6 +532,7 @@ const NovelReaderApp: React.FC = () => {
 
   const {
     listenState,
+    serverPhase,
     listenPhase,
     listenError,
     segments,
@@ -530,7 +553,12 @@ const NovelReaderApp: React.FC = () => {
   }, [projectName]);
 
   useEffect(() => {
-    if (!isListenMode || listenState !== 'error' || !listenError) {
+    if (
+      preparation ||
+      !isListenMode ||
+      listenState !== 'error' ||
+      !listenError
+    ) {
       return;
     }
 
@@ -548,6 +576,7 @@ const NovelReaderApp: React.FC = () => {
     listenError,
     listenState,
     projectName,
+    preparation,
   ]);
 
   useEffect(() => {
@@ -1451,6 +1480,8 @@ const NovelReaderApp: React.FC = () => {
 
   const {
     isPlaying,
+    startupStatus,
+    suppressAutoPlay,
     currentSegIdx,
     currentProgress,
     totalDuration,
@@ -1464,6 +1495,7 @@ const NovelReaderApp: React.FC = () => {
     selectedBook && currentChapterIndex >= 0
       ? {
           assetId: `${projectName}_${currentChapterIndex}`,
+          playbackSessionId: playbackSession,
           title: chapterList[currentChapterIndex]?.title || '',
           author: selectedBook.author,
           album: selectedBook.name || '',
@@ -1472,9 +1504,50 @@ const NovelReaderApp: React.FC = () => {
       : undefined,
     projectName,
     currentChapterIndex,
-    handleChapterFinished,
+    preparation ? undefined : handleChapterFinished,
     handleAutoGenerateMissingSegment,
+    preparation ? preparation.autoPlay && !preparation.error : true,
   );
+
+  const completePreparation = useCallback(() => setPreparation(null), []);
+  useEffect(() => {
+    if (preparation?.error) {
+      suppressAutoPlay();
+    }
+  }, [preparation?.error, suppressAutoPlay]);
+  const collapseListenPreparation = useCallback(() => {
+    suppressAutoPlay();
+    setPreparation(current =>
+      current ? collapsePreparation(current) : current,
+    );
+  }, [suppressAutoPlay]);
+  useEffect(() => {
+    setPreparation(current => {
+      if (!current || current.error) {
+        return current;
+      }
+      const error =
+        listenState === 'error'
+          ? listenError || '听书生成失败，请重试'
+          : startupStatus === 'error'
+          ? '音频播放失败，请检查网络后重试'
+          : '';
+      if (error) {
+        return {
+          ...(startupStatus === 'error'
+            ? advancePreparation(current, 'play')
+            : current),
+          error,
+        };
+      }
+      const stage = segments[0]?.audioUrl
+        ? 'play'
+        : stageFromServer(serverPhase);
+      return stage && stage !== current.stage
+        ? advancePreparation(current, stage)
+        : current;
+    });
+  }, [listenState, listenError, startupStatus, serverPhase, segments]);
 
   // 定时关闭：到点 / 段落结束 / 章节结束时暂停。仅在 isPlaying=true 时触发，避免误暂停。
   // 用 ref 持有 isPlaying，使 onTrigger 引用不随播放状态变化（hook 内部已用
@@ -1698,6 +1771,11 @@ const NovelReaderApp: React.FC = () => {
       }
       lastBackFireAtRef.current = fireAt;
 
+      if (preparation?.expanded) {
+        collapseListenPreparation();
+        return true;
+      }
+
       if (viewState === 'reader') {
         requestExitReader();
         return true;
@@ -1736,7 +1814,13 @@ const NovelReaderApp: React.FC = () => {
       hardwareSubscription.remove();
       legacySubscription.remove();
     };
-  }, [requestExitReader, showExitPrompt, viewState]);
+  }, [
+    requestExitReader,
+    showExitPrompt,
+    viewState,
+    preparation?.expanded,
+    collapseListenPreparation,
+  ]);
 
   const handleStartListen = async () => {
     if (!selectedBook) {
@@ -1749,6 +1833,32 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
+    if (preparation && !preparation.error) {
+      return;
+    }
+    resetListen(true);
+    stopPlayback();
+    const id = ++preparationIdRef.current;
+    setPlaybackSession(id);
+    setPreparation({
+      id,
+      assetId: `${curProjectName}_${currentChapterIndex}`,
+      startedAt: Date.now(),
+      expanded: true,
+      autoPlay: true,
+      stage: 'read',
+      visited: ['read'],
+      error: '',
+    });
+    const active = () => preparationIdRef.current === id;
+    const setStage = (stage: ListenPreparationStage) => {
+      if (active()) {
+        setPreparation(current =>
+          current?.id === id ? advancePreparation(current, stage) : current,
+        );
+      }
+    };
+
     setIsListenMode(true);
     updateListenRuntime('loading', false, '正在读取当前章节…');
 
@@ -1759,18 +1869,21 @@ const NovelReaderApp: React.FC = () => {
         currentChapterIndex,
         currentChapterText,
       );
+      if (!active()) {
+        return;
+      }
       const chapterText = normalizeChapterTextForRequest(currentChapter?.text);
 
       if (!chapterText) {
-        updateListenRuntime('idle');
-        setIsListenMode(false);
-        Alert.alert('听书失败', '当前章节正文为空，无法生成语音。');
-        return;
+        throw new Error('当前章节正文为空，无法生成语音。');
       }
 
       // 本地段落只保存音频地址，开始听书前必须确认服务端缓存仍有效。
       updateListenRuntime('loading', false, '正在准备听书环境…');
       await ensureListenGenerationContext();
+      if (!active()) {
+        return;
+      }
 
       // 先检查后端是否已有该章缓存音频/在途任务,命中即跳过预扫描,
       // 避免每次点击听书都重复串行拉取多章正文。
@@ -1780,14 +1893,22 @@ const NovelReaderApp: React.FC = () => {
         currentChapterIndex,
         chapterText,
       );
+      if (!active()) {
+        return;
+      }
       if (cacheStatus.cached) {
+        setStage('play');
         updateListenRuntime('ready', true, '');
         return;
       }
 
       let prescanTexts: ListenBookPrescanText[] = [];
+      setStage('analyze');
       if (!cacheStatus.inProgress) {
         const config = await fetchListenBookConfig();
+        if (!active()) {
+          return;
+        }
         const prescanCount = Number.isFinite(config.prescanCount)
           ? Math.max(0, Number(config.prescanCount))
           : 10;
@@ -1805,6 +1926,9 @@ const NovelReaderApp: React.FC = () => {
           prescanCount,
           chapterText,
           (done, total) => {
+            if (!active()) {
+              return;
+            }
             updateListenRuntime(
               'loading',
               false,
@@ -1812,6 +1936,9 @@ const NovelReaderApp: React.FC = () => {
             );
           },
         );
+        if (!active()) {
+          return;
+        }
       }
 
       updateListenRuntime('loading', false, '正在提交 TTS 合成任务…');
@@ -1821,16 +1948,26 @@ const NovelReaderApp: React.FC = () => {
         prescanTexts,
       });
     } catch (error) {
+      if (!active()) {
+        return;
+      }
       updateListenRuntime('error');
       console.warn('[NovelReaderApp] 启动听书失败', error);
-      Alert.alert(
-        '听书失败',
-        error instanceof Error ? error.message : '无法获取章节正文。',
+      setPreparation(current =>
+        current?.id === id
+          ? {
+              ...current,
+              error:
+                error instanceof Error ? error.message : '无法获取章节正文。',
+            }
+          : current,
       );
     }
   };
 
   const handleStopListen = () => {
+    preparationIdRef.current += 1;
+    setPreparation(null);
     stopPlayback();
     resetListen();
     setIsListenMode(false);
@@ -2349,8 +2486,18 @@ const NovelReaderApp: React.FC = () => {
               audioOptions={audioOptions}
               isPlaying={isPlaying}
               currentSegIdx={currentSegIdx}
-              onTogglePlayPause={togglePlayPause}
-              onPlaySegment={playFromIndex}
+              onTogglePlayPause={() => {
+                setPreparation(current =>
+                  current ? {...current, autoPlay: true} : current,
+                );
+                togglePlayPause();
+              }}
+              onPlaySegment={index => {
+                setPreparation(current =>
+                  current ? {...current, autoPlay: true} : current,
+                );
+                playFromIndex(index);
+              }}
               onBack={requestExitReader}
               onPrevChapter={handlePrevChapter}
               onNextChapter={handleNextChapter}
@@ -2364,6 +2511,31 @@ const NovelReaderApp: React.FC = () => {
             />
           </PlaybackProgressContext.Provider>
         </ActiveSegContext.Provider>
+      )}
+
+      {viewState === 'reader' && preparation && (
+        <ListenPreparationOverlay
+          preparation={preparation}
+          bookName={selectedBook?.name || ''}
+          chapterTitle={chapterList[currentChapterIndex]?.title || ''}
+          ready={startupStatus === 'ready'}
+          playing={startupStatus === 'playing' && !preparation.error}
+          onCollapse={collapseListenPreparation}
+          onExpand={() =>
+            setPreparation(current =>
+              current ? {...current, expanded: true} : current,
+            )
+          }
+          onCancel={handleStopListen}
+          onRetry={handleStartListen}
+          onPlay={() => {
+            setPreparation(current =>
+              current ? {...current, autoPlay: true} : current,
+            );
+            playFromIndex(0);
+          }}
+          onComplete={completePreparation}
+        />
       )}
 
       <SourceSwitchModal

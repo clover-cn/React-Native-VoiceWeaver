@@ -8,6 +8,7 @@ import {getSegmentPlaybackError} from '../utils/segmentPlaybackError';
 
 export interface AudioChapterMetadata {
   assetId: string;
+  playbackSessionId?: number;
   title: string;
   author?: string;
   album?: string;
@@ -15,6 +16,8 @@ export interface AudioChapterMetadata {
 }
 
 export interface UseAudioPlayerReturn {
+  startupStatus: 'waiting' | 'buffering' | 'ready' | 'playing' | 'error';
+  suppressAutoPlay: () => void;
   isPlaying: boolean;
   currentSegIdx: number;
   currentProgress: number;
@@ -126,7 +129,26 @@ export const useAudioPlayer = (
   chapterIndex?: number,
   onChapterFinished?: () => void,
   onMissingSegmentAudio?: (segmentIndex: number) => void,
+  allowAutoStart = true,
 ): UseAudioPlayerReturn => {
+  const nativeAssetId = chapterMeta
+    ? `${chapterMeta.assetId}__session_${chapterMeta.playbackSessionId || 0}`
+    : '';
+  const [nativeState, setNativeState] = useState('idle');
+  const [startupFailed, setStartupFailed] = useState(false);
+  const hasStartedRef = useRef(false);
+  const autoStartRef = useRef(allowAutoStart);
+  autoStartRef.current = allowAutoStart;
+  useEffect(() => {
+    setNativeState('idle');
+    setStartupFailed(false);
+    hasStartedRef.current = false;
+  }, [nativeAssetId]);
+  const suppressAutoPlay = useCallback(() => {
+    autoStartRef.current = false;
+    pendingManualStartIndexRef.current = -1;
+    VideoPlayerController.pause();
+  }, []);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentSegIdx, setCurrentSegIdx] = useState<number>(-1);
   const [currentProgress, setCurrentProgress] = useState<number>(0);
@@ -254,7 +276,8 @@ export const useAudioPlayer = (
     (segIdx: number, time: number) => {
       const now = Date.now();
       if (
-        now - lastSaveTimeRef.current < LISTEN_TUNING.PROGRESS_SAVE_THROTTLE_MS ||
+        now - lastSaveTimeRef.current <
+          LISTEN_TUNING.PROGRESS_SAVE_THROTTLE_MS ||
         !projectName ||
         chapterIndex === undefined ||
         segIdx < 0
@@ -331,39 +354,36 @@ export const useAudioPlayer = (
    * 拉起；待下载任务的 promise 不会被触发 resolve（仅做静默丢弃),其
    * 占位会在新一轮 prefetchWindow 中被覆盖。
    */
-  const cancelStaleCacheRequests = useCallback(
-    (currentIdx: number) => {
-      if (cacheQueueRef.current.length === 0) {
-        return;
+  const cancelStaleCacheRequests = useCallback((currentIdx: number) => {
+    if (cacheQueueRef.current.length === 0) {
+      return;
+    }
+    const activeChapterAssetId = currentChapterAssetIdRef.current;
+    const before = cacheQueueRef.current.length;
+    cacheQueueRef.current = cacheQueueRef.current.filter(task => {
+      if (
+        activeChapterAssetId &&
+        task.chapterAssetId !== activeChapterAssetId
+      ) {
+        return false;
       }
-      const activeChapterAssetId = currentChapterAssetIdRef.current;
-      const before = cacheQueueRef.current.length;
-      cacheQueueRef.current = cacheQueueRef.current.filter(task => {
-        if (
-          activeChapterAssetId &&
-          task.chapterAssetId !== activeChapterAssetId
-        ) {
-          return false;
-        }
-        if (currentIdx < 0) {
-          return true;
-        }
-        return (
-          Math.abs(task.segmentIndex - currentIdx) <=
-          LISTEN_TUNING.PREFETCH_WINDOW_SIZE
-        );
+      if (currentIdx < 0) {
+        return true;
+      }
+      return (
+        Math.abs(task.segmentIndex - currentIdx) <=
+        LISTEN_TUNING.PREFETCH_WINDOW_SIZE
+      );
+    });
+    const removed = before - cacheQueueRef.current.length;
+    if (removed > 0) {
+      console.log('[useAudioPlayer] 取消陈旧缓存请求', {
+        removed,
+        currentIdx,
+        activeChapterAssetId,
       });
-      const removed = before - cacheQueueRef.current.length;
-      if (removed > 0) {
-        console.log('[useAudioPlayer] 取消陈旧缓存请求', {
-          removed,
-          currentIdx,
-          activeChapterAssetId,
-        });
-      }
-    },
-    [],
-  );
+    }
+  }, []);
 
   const requestSegmentCache = useCallback(
     (
@@ -665,7 +685,7 @@ export const useAudioPlayer = (
       }
 
       return {
-        chapterAssetId: chapterMeta.assetId,
+        chapterAssetId: nativeAssetId,
         title: chapterMeta.title,
         author: chapterMeta.author,
         album: chapterMeta.album,
@@ -677,7 +697,14 @@ export const useAudioPlayer = (
         isGenerationComplete,
       };
     },
-    [chapterMeta, getSegmentCacheEntry, isGenerationComplete, resolveSegmentPlaybackUrl, segments],
+    [
+      nativeAssetId,
+      chapterMeta,
+      getSegmentCacheEntry,
+      isGenerationComplete,
+      resolveSegmentPlaybackUrl,
+      segments,
+    ],
   );
 
   const queueSyncKey = useMemo(() => {
@@ -687,7 +714,9 @@ export const useAudioPlayer = (
         const remoteUrl = buildAbsoluteAudioUrl(segment.audioUrl);
         const cacheIdentity =
           typeof segment.cacheKey === 'string' ? segment.cacheKey.trim() : '';
-        const contentIdentity = `${segment.text}:${segment.generationError || ''}`;
+        const contentIdentity = `${segment.text}:${
+          segment.generationError || ''
+        }`;
         if (!remoteUrl) {
           return `${index}:pending:${cacheIdentity}:${contentIdentity}`;
         }
@@ -699,9 +728,9 @@ export const useAudioPlayer = (
           segment.cacheKey,
         );
         const cacheEntry = cacheEntries[cacheKey];
-        return `${index}:${cacheIdentity}:${contentIdentity}:${cacheEntry?.errorCode || ''}:${cacheEntry?.state || 'idle'}:${
-          cacheEntry?.localUri || remoteUrl
-        }`;
+        return `${index}:${cacheIdentity}:${contentIdentity}:${
+          cacheEntry?.errorCode || ''
+        }:${cacheEntry?.state || 'idle'}:${cacheEntry?.localUri || remoteUrl}`;
       })
       .join('|');
     const generationState = isGenerationComplete ? 'done' : 'pending';
@@ -709,6 +738,9 @@ export const useAudioPlayer = (
   }, [cacheEntries, chapterMeta?.assetId, isGenerationComplete, segments]);
 
   const stopPlayback = useCallback(() => {
+    setNativeState('idle');
+    setStartupFailed(false);
+    hasStartedRef.current = false;
     setIsPlaying(false);
     setCurrentSegIdx(-1);
     setCurrentProgress(0);
@@ -787,6 +819,20 @@ export const useAudioPlayer = (
 
   useEffect(() => {
     const unsubscribe = VideoPlayerController.onPlaybackState(payload => {
+      if (
+        listenState !== 'ready' ||
+        !payload.chapterAssetId ||
+        payload.chapterAssetId !== nativeAssetId
+      ) {
+        return;
+      }
+      setNativeState(payload.state);
+      if (payload.state === 'playing') {
+        hasStartedRef.current = true;
+      }
+      if (payload.state === 'error') {
+        setStartupFailed(true);
+      }
       const nextSegIdx =
         payload.currentIndex >= 0 && payload.currentIndex < segments.length
           ? payload.currentIndex
@@ -877,7 +923,7 @@ export const useAudioPlayer = (
       if (
         payload.chapterFinished &&
         payload.chapterAssetId &&
-        payload.chapterAssetId === currentChapterAssetIdRef.current
+        payload.chapterAssetId === nativeAssetId
       ) {
         onChapterFinished?.();
       }
@@ -886,6 +932,7 @@ export const useAudioPlayer = (
     return unsubscribe;
   }, [
     onChapterFinished,
+    nativeAssetId,
     cancelStaleCacheRequests,
     chapterMeta,
     getSegmentPlaybackSource,
@@ -893,6 +940,7 @@ export const useAudioPlayer = (
     persistProgress,
     prefetchWindow,
     segments,
+    listenState,
   ]);
 
   useEffect(() => {
@@ -942,7 +990,7 @@ export const useAudioPlayer = (
 
     const hasManualStart = pendingManualStartIndexRef.current >= 0;
     const shouldAutoStart =
-      currentSegIdxRef.current === -1 && !isPlayingRef.current;
+      autoStartRef.current && !hasStartedRef.current && !isPlayingRef.current;
     const startIndex = hasManualStart
       ? pendingManualStartIndexRef.current
       : shouldAutoStart
@@ -951,19 +999,22 @@ export const useAudioPlayer = (
     const autoPlay =
       startIndex !== undefined && (hasManualStart || shouldAutoStart)
         ? canStartPlaybackAtIndex(startIndex)
-        : undefined;
+        : allowAutoStart
+        ? undefined
+        : false;
     const payload = buildQueuePayload(startIndex, autoPlay, hasManualStart);
 
     if (!payload) {
       return;
     }
 
-    if (lastQueueSyncKeyRef.current === queueSyncKey) {
+    const syncKey = `${nativeAssetId}|${queueSyncKey}|${allowAutoStart}`;
+    if (lastQueueSyncKeyRef.current === syncKey) {
       return;
     }
 
-    lastQueueSyncKeyRef.current = queueSyncKey;
-    currentChapterAssetIdRef.current = payload.chapterAssetId;
+    lastQueueSyncKeyRef.current = syncKey;
+    currentChapterAssetIdRef.current = chapterMeta?.assetId || '';
     VideoPlayerController.loadQueue(payload);
   }, [
     buildQueuePayload,
@@ -973,9 +1024,28 @@ export const useAudioPlayer = (
     queueSyncKey,
     requestSegmentCache,
     segments,
+    allowAutoStart,
+    nativeAssetId,
   ]);
 
   return {
+    suppressAutoPlay,
+    startupStatus:
+      startupFailed ||
+      nativeState === 'error' ||
+      (segments[0] &&
+        (segments[0].generationError ||
+          getSegmentPlaybackError(segments[0].text)))
+        ? 'error'
+        : nativeState === 'playing'
+        ? 'playing'
+        : nativeState === 'loading'
+        ? 'buffering'
+        : segments[0]?.audioUrl && canStartPlaybackAtIndex(0)
+        ? 'ready'
+        : segments[0]?.audioUrl
+        ? 'buffering'
+        : 'waiting',
     isPlaying,
     currentSegIdx,
     currentProgress,

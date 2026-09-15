@@ -96,6 +96,7 @@ const mergePolledSegments = (
 };
 
 export interface UseListenBookReturn {
+  serverPhase: string;
   listenState: 'idle' | 'loading' | 'ready' | 'error';
   listenPhase: string;
   listenError: string;
@@ -123,6 +124,8 @@ export interface UseListenBookReturn {
 }
 
 export const useListenBook = (): UseListenBookReturn => {
+  const [serverPhase, setServerPhase] = useState('');
+  const epochRef = useRef(0);
   const [listenState, setListenState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
@@ -146,6 +149,7 @@ export const useListenBook = (): UseListenBookReturn => {
 
   const cancelListenTask = useCallback(
     async (projectName?: string) => {
+      epochRef.current += 1;
       const targetProject = projectName || curProjectRef.current;
       stopPolling();
       listenTaskIdRef.current = null;
@@ -169,6 +173,8 @@ export const useListenBook = (): UseListenBookReturn => {
 
   const resetListen = useCallback(
     (skipCancel = false) => {
+      epochRef.current += 1;
+      setServerPhase('');
       stopPolling();
       if (!skipCancel && curProjectRef.current) {
         fetchWithTimeout(`${API_BASE}/api/listen-book/cancel`, {
@@ -228,15 +234,29 @@ export const useListenBook = (): UseListenBookReturn => {
   const startPolling = useCallback(
     (taskId: string) => {
       stopPolling();
+      const epoch = epochRef.current;
+      let polling = false;
 
       pollTimerRef.current = setInterval(async () => {
+        if (polling || epoch !== epochRef.current) {
+          return;
+        }
+        polling = true;
         try {
           const res = await fetchWithTimeout(
             `${API_BASE}/api/listen-book/status/${taskId}`,
           );
           const data = await res.json();
 
+          if (epoch !== epochRef.current) {
+            return;
+          }
+          if (!res.ok) {
+            throw new Error(data?.error || `查询生成状态失败(${res.status})`);
+          }
+
           const {phase, segments: segs, error} = data;
+          setServerPhase(phase || '');
           setListenPhase(translateListenPhase(phase));
 
           if (Array.isArray(segs) && segs.length > 0) {
@@ -253,6 +273,12 @@ export const useListenBook = (): UseListenBookReturn => {
 
           if (phase === 'done') {
             stopPolling();
+            if (!hasPlayableSegment) {
+              setListenState('error');
+              setListenError('生成已结束，但没有可播放的音频，请重试');
+              cachedListenStateRef.current = 'idle';
+              return;
+            }
             if (Array.isArray(segs)) {
               setSegments(segs);
             }
@@ -269,7 +295,17 @@ export const useListenBook = (): UseListenBookReturn => {
             console.error('生成报错:', error);
           }
         } catch (err) {
+          if (epoch !== epochRef.current) {
+            return;
+          }
+          stopPolling();
+          setListenState('error');
+          setListenError(
+            err instanceof Error ? err.message : '查询生成状态失败，请重试',
+          );
           console.warn('Status poll exception', err);
+        } finally {
+          polling = false;
         }
       }, 2000);
     },
@@ -278,6 +314,7 @@ export const useListenBook = (): UseListenBookReturn => {
 
   const checkListenCache = useCallback(
     async (projectName: string, chapterIndex: number, chapterText?: string) => {
+      const epoch = epochRef.current;
       curProjectRef.current = projectName;
       try {
         const normalizedText = normalizeChapterTextForRequest(chapterText);
@@ -296,6 +333,10 @@ export const useListenBook = (): UseListenBookReturn => {
           },
         );
         const data = await res.json();
+
+        if (epoch !== epochRef.current) {
+          return {cached: false, inProgress: false};
+        }
 
         if (!res.ok) {
           throw new Error(data?.error || `缓存检查失败(${res.status})`);
@@ -316,6 +357,9 @@ export const useListenBook = (): UseListenBookReturn => {
         cachedListenStateRef.current = 'idle';
         listenTaskIdRef.current = null;
         await clearListenChapterCache(projectName, chapterIndex);
+        if (epoch !== epochRef.current) {
+          return {cached: false, inProgress: false};
+        }
         if (data.inProgress && data.taskId) {
           listenTaskIdRef.current = data.taskId;
           cachedListenStateRef.current = 'loading';
@@ -336,6 +380,7 @@ export const useListenBook = (): UseListenBookReturn => {
       chapterIndex: number,
       payload: ListenBookGeneratePayload,
     ) => {
+      const epoch = epochRef.current;
       curProjectRef.current = projectName;
       const chapterText = normalizeChapterTextForRequest(payload.chapterText);
 
@@ -386,6 +431,16 @@ export const useListenBook = (): UseListenBookReturn => {
         );
         const data = await res.json();
 
+        if (epoch !== epochRef.current) {
+          if (data.taskId) {
+            fetchWithTimeout(
+              `${API_BASE}/api/listen-book/cancel/${data.taskId}`,
+              {method: 'POST'},
+            ).catch(() => {});
+          }
+          return;
+        }
+
         if (!res.ok) {
           throw new Error(data?.error || `启动听书失败(${res.status})`);
         }
@@ -408,6 +463,9 @@ export const useListenBook = (): UseListenBookReturn => {
         listenTaskIdRef.current = data.taskId;
         startPolling(data.taskId);
       } catch (e) {
+        if (epoch !== epochRef.current) {
+          return;
+        }
         console.error('Trigger listening failed', e);
         setListenState('error');
         setListenError(e instanceof Error ? e.message : '启动听书失败');
@@ -418,11 +476,13 @@ export const useListenBook = (): UseListenBookReturn => {
 
   useEffect(() => {
     return () => {
+      epochRef.current += 1;
       stopPolling();
     };
   }, [stopPolling]);
 
   return {
+    serverPhase,
     listenState,
     listenPhase,
     listenError,

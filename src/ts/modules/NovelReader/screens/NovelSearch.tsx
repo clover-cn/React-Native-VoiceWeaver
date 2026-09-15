@@ -96,7 +96,8 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
   };
 
   const handleSearch = async (customKeyword?: string) => {
-    const term = (customKeyword ?? keyword).trim();
+    // const term = (customKeyword ?? keyword).trim();
+    const term = "我的";
     if (!term) {
       return;
     }
