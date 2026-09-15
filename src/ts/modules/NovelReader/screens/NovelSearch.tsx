@@ -11,6 +11,7 @@ import {
   Platform,
   Image,
   ScrollView,
+  Keyboard,
 } from 'react-native';
 import {Book} from '../types/reader';
 import {
@@ -26,16 +27,31 @@ import {SearchResultsFooter} from '../components/SearchResultsFooter';
 import {BookSourceSearchGroup, LegadoBookSource} from '../bookSource/types';
 
 interface NovelSearchProps {
+  isActive: boolean;
   onBack: () => void;
   onBookSelect: (book: Book) => void;
   sourceRefreshVersion?: number;
 }
 
 const NovelSearch: React.FC<NovelSearchProps> = ({
+  isActive,
   onBack,
   onBookSelect,
   sourceRefreshVersion = 0,
 }) => {
+  const inputRef = useRef<TextInput>(null);
+  const dismissSearchKeyboard = useCallback(() => {
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+  }, []);
+
+  useEffect(() => {
+    // 搜索页会保留挂载，隐藏时必须释放输入焦点。
+    if (!isActive) {
+      dismissSearchKeyboard();
+    }
+  }, [isActive, dismissSearchKeyboard]);
+
   const [keyword, setKeyword] = useState('');
   const searchState = useBookSourceSearch();
   const {loading: isSearching, hasSearched, reset} = searchState;
@@ -162,7 +178,10 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
   const renderItem = ({item}: {item: BookSourceSearchGroup}) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => onBookSelect(item.primary)}
+      onPress={() => {
+        dismissSearchKeyboard();
+        onBookSelect(item.primary);
+      }}
       activeOpacity={0.8}>
       {item.coverUrl ? (
         <Image
@@ -210,11 +229,19 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            dismissSearchKeyboard();
+            onBack();
+          }}>
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
         <View style={styles.searchBox}>
           <TextInput
+            ref={inputRef}
+            editable={isActive}
+            showSoftInputOnFocus={isActive}
             style={styles.input}
             placeholder="搜索你想阅读的小说..."
             placeholderTextColor="#8E8E93"
@@ -224,7 +251,6 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
               handleSearch();
             }}
             returnKeyType="search"
-            autoFocus
           />
           {isSearching ? (
             <ActivityIndicator
@@ -278,6 +304,8 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
       )}
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         data={results}
         keyExtractor={item => JSON.stringify([item.sourceId, item.bookUrl])}
         renderItem={renderItem}

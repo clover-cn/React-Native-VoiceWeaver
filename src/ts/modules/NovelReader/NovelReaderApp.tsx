@@ -2323,6 +2323,7 @@ const NovelReaderApp: React.FC = () => {
           ]}
           pointerEvents={viewState === 'search' ? 'auto' : 'none'}>
           <NovelSearch
+            isActive={viewState === 'search'}
             onBack={() => setViewState('home')}
             onBookSelect={handleBookSelect}
             sourceRefreshVersion={bookSourceRefreshVersion}
