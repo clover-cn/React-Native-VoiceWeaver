@@ -25,6 +25,7 @@ interface NativeAudioSegmentPayload {
 type WaitingReason = 'missing_current' | 'await_next' | null;
 
 interface NativeAudioQueuePayload {
+  playbackRate?: number;
   chapterAssetId: string;
   title: string;
   author?: string;
@@ -62,6 +63,20 @@ interface NativeMetadataPayload {
 export class NativeAudioPlayerManager {
   private static instance: NativeAudioPlayerManager = new NativeAudioPlayerManager();
   private player: media.AVPlayer | null = null;
+  private playbackRate: number = 1;
+
+  /** 切段会重新创建或准备播放器，因此每次 prepared 都应用用户倍速。 */
+  private applyPlaybackRate(): void {
+    const player = this.player;
+    if (!player || !['prepared', 'playing', 'paused', 'completed'].includes(player.state)) {
+      return;
+    }
+    try {
+      player.setPlaybackRate(this.playbackRate);
+    } catch (error) {
+      Logger.error(TAG, `设置听书倍速失败: ${JSON.stringify(error)}`);
+    }
+  }
   private queue: NativeAudioSegmentPayload[] = [];
   private chapterAssetId: string = '';
   private chapterTitle: string = '';
@@ -279,6 +294,11 @@ export class NativeAudioPlayerManager {
 
   private async applyQueuePayload(payload: NativeAudioQueuePayload): Promise<void> {
     const nextQueue = payload.segments;
+    if (payload.playbackRate !== undefined && Number.isFinite(payload.playbackRate) &&
+      payload.playbackRate >= 0.8 && payload.playbackRate <= 2) {
+      this.playbackRate = payload.playbackRate;
+      this.applyPlaybackRate();
+    }
     const isNewChapter = payload.chapterAssetId !== this.chapterAssetId;
     const hasQueueGrowth = nextQueue.length > this.queue.length;
     const targetStartIndex = nextQueue.length > 0
@@ -664,6 +684,7 @@ export class NativeAudioPlayerManager {
           }
           break;
         case 'prepared':
+          this.applyPlaybackRate();
           this.currentDurationMs = player.duration;
           this.markSourceLoadSettled();
           this.updateSessionMetadata();
@@ -905,7 +926,7 @@ export class NativeAudioPlayerManager {
       state: state,
       elapsedTime: elapsedTime ?? this.currentPositionMs,
       duration: duration ?? this.currentDurationMs,
-      speed: state === 'playing' ? 1 : 0,
+      speed: state === 'playing' ? this.playbackRate : 0,
     });
   }
 

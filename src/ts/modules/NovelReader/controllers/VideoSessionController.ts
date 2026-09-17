@@ -22,6 +22,7 @@ export interface NativeAudioSegment {
 }
 
 export interface NativeAudioQueuePayload {
+  playbackRate?: number;
   chapterAssetId: string;
   title: string;
   author?: string;

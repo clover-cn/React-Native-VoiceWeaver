@@ -1,5 +1,24 @@
 import {Book, Chapter, ListenSegment} from '../types/reader';
 import bridge from '../../base/utils/bridge';
+import {normalizePlaybackRate} from './playbackRate';
+
+const PLAYBACK_RATE_KEY = 'novel_reader_playback_rate';
+
+export const loadPlaybackRate = async (): Promise<number> =>
+  normalizePlaybackRate(
+    isHarmonyBridgeAvailable()
+      ? await readPrefJson<unknown>(PLAYBACK_RATE_KEY, 1)
+      : readJson<unknown>(PLAYBACK_RATE_KEY, 1),
+  );
+
+export const savePlaybackRate = async (rate: number): Promise<void> => {
+  const value = normalizePlaybackRate(rate);
+  if (isHarmonyBridgeAvailable()) {
+    await writePrefJson(PLAYBACK_RATE_KEY, value);
+  } else {
+    writeJson(PLAYBACK_RATE_KEY, value);
+  }
+};
 
 const SEARCH_HISTORY_KEY = 'novel_reader_search_history';
 const READING_RECORD_KEY = 'novel_reader_reading_record';

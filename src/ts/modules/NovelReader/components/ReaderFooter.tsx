@@ -8,6 +8,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import {PlaybackProgressContext} from '../contexts/ActiveSegContext';
+import PlaybackRateControl from './PlaybackRateControl';
 
 interface ReaderFooterProps {
   showChapterControls: boolean;
@@ -188,13 +189,6 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
                 </Text>
               </TouchableOpacity>
             </View>
-            {/* 迷你进度条：仅在播放/暂停时显示。订阅高频进度被隔离到子组件 */}
-            {currentSegIdx >= 0 && (
-              <MiniProgressBar
-                currentSegIdx={currentSegIdx}
-                totalSegments={totalSegments}
-              />
-            )}
           </View>
         );
       case 'error':
@@ -214,12 +208,23 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
     <SafeAreaView style={styles.container}>
       <View style={styles.innerBox}>
         {/* 阅读进度与听书控制 */}
+        <View style={styles.playbackControls}>{renderListenControl()}</View>
         <View style={styles.progressRow}>
           <Text style={styles.progressText}>第 {currentChapter + 1} 章</Text>
-          <View style={styles.listenWrapper}>{renderListenControl()}</View>
+          <View style={styles.listenWrapper}>
+            {listenState === 'ready' && currentSegIdx >= 0 && (
+              <MiniProgressBar
+                currentSegIdx={currentSegIdx}
+                totalSegments={totalSegments}
+              />
+            )}
+          </View>
           <Text style={styles.progressText}>
             {currentChapter + 1} / {totalChapters}
           </Text>
+        </View>
+        <View style={styles.rateRow}>
+          <PlaybackRateControl />
         </View>
 
         {/* 快捷功能网格 */}
@@ -281,15 +286,17 @@ const styles = StyleSheet.create({
   },
   innerBox: {
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 32,
     paddingBottom: 32,
   },
   progressRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 8,
   },
+  playbackControls: {alignItems: 'center', marginBottom: 14},
+  rateRow: {marginBottom: 20},
   progressText: {
     fontSize: 12,
     fontWeight: '600',
@@ -297,6 +304,8 @@ const styles = StyleSheet.create({
   },
   listenWrapper: {
     flex: 1,
+    minWidth: 0,
+    marginHorizontal: 8,
     alignItems: 'center',
   },
   listenReadyActions: {
