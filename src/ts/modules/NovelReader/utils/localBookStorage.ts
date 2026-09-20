@@ -1,4 +1,4 @@
-import {Platform} from 'react-native';
+import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import iconv from 'iconv-lite';
 import {Buffer} from 'buffer';
 import bridge from '../../base/utils/bridge';
@@ -458,8 +458,8 @@ export const buildLocalTxtBook = (
 
 export const importLocalTxtBook =
   async (): Promise<LocalTxtBookImport | null> => {
-    if ((Platform.OS as string) !== 'harmony') {
-      throw new Error('当前仅支持鸿蒙端导入 TXT 文件');
+    if (!hasNativeCapability('selectTxtDocument')) {
+      throw new Error('当前平台暂不支持导入 TXT 文件');
     }
 
     console.info('[localBookStorage] import phase=select-start');

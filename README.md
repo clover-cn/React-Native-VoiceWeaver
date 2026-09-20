@@ -1,5 +1,42 @@
 # React Native VoiceWeaver
 
+## Android
+
+已新增 Android 原生工程，共享现有阅读与听书界面。构建与验证状态见 [Android 实施记录](docs/Android实施记录.md)，设计依据见 [适配方案](docs/Android适配方案.md)。
+
+Windows 本机准备 JDK 17、Android SDK 34、Build Tools 34.0.0、NDK 26.3.11579264，配置 `ANDROID_HOME`，并将 JDK 17 的 `java` 加入 PATH。安装依赖后，通常只需运行一条构建命令：
+
+```powershell
+npm ci
+npm run android:preview
+```
+
+Preview 使用测试签名并内置 JS bundle，输出 `android/app/build/outputs/apk/preview/app-preview.apk`，可脱离 Metro 安装测试。应用 ID 为 `webpv.voice.weaver.preview`。正式发布使用 `npm run android:release`，通过 `VOICEWEAVER_KEYSTORE`、`VOICEWEAVER_STORE_PASSWORD`、`VOICEWEAVER_KEY_ALIAS`、`VOICEWEAVER_KEY_PASSWORD` 环境变量提供自己的签名；未配置时只生成未签名 APK。
+
+### Android 真机调试
+
+连接 Android 手机，开启 USB 调试，并在手机上允许电脑调试。在项目根目录运行：
+
+```powershell
+adb devices
+adb reverse tcp:8081 tcp:8081
+npm run start:android
+```
+
+确认 `adb devices` 中设备状态为 `device`。保持 Metro 终端运行，另开一个终端，在项目根目录执行：
+
+```powershell
+npm run android -- --no-packager
+```
+
+该命令会构建、安装并启动 Android 调试版，支持 Metro 热更新。Android 不需要运行鸿蒙的 `codegen`、`dev:all` 或 `hdc` 命令；Preview APK 用于独立安装测试，热更新调试请使用上述调试版。
+
+官方 Maven 仓库访问受限时，可使用 `npm run android:preview -- -UseMirror`；该选项切换 Maven 镜像，不会替换 Gradle Wrapper 的官方下载地址与 SHA-256 校验。
+
+## 鸿蒙
+
+以下为原有鸿蒙环境与运行说明。鸿蒙视频 HAR 路径已跟随平台依赖拆分更新，安装 npm 依赖后需要重新同步 ohpm 依赖。
+
 
 ### 环境
 
@@ -42,7 +79,7 @@
 
    b. 申请华为账号一键登录所需的权限，详细参考：[申请账号权限](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/account-config-permissions)。
 
-### 运行调试工程
+### 鸿蒙真机调试
 
 1. 使用终端打开并进入RN工程
 2. 执行命令: npm i，安装RN依赖三方库
@@ -51,8 +88,8 @@
 5. 执行命令：cd ..，返回RN项目目录
 6. 执行命令：npm run codegen，生成胶水代码，主要是RnBridge相关接口
 7. 执行命令：npm run dev:all，生成RN代码bundle包（若未修改RN代码可不用重复生成bundle包）
-8. 执行命令：npm start打开npm服务
-9. 连接设备: hdc rporthdc rport tcp:8081 tcp:8081
+8. 连接鸿蒙真机，执行命令：`hdc rport tcp:8081 tcp:8081`，设置端口转发
+9. 执行命令：`npm start`，启动 Metro 服务并保持终端运行
 10. （首次安装运行App）使用DevEco Studio打开根目录下的harmony项目，运行安装并启动APP。安装完成，在浏览器打开http://localhost:8081/index.bundle?platform=harmony 即可。后续如果没有修改鸿蒙端侧代码，则不需要重新运行安装App。
 
 **【说明】**

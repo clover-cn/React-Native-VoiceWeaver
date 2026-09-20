@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import {Dropdown} from 'react-native-element-dropdown';
 import Video from 'react-native-video';
+import VideoSessionController from '../controllers/VideoSessionController';
 import {ListenSegment} from '../types/reader';
 import {API_BASE} from '../hooks/useListenBook';
 import {AudioOption} from '../types/audio';
@@ -178,6 +179,7 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
       setPreviewCurrentTime(0);
     }
 
+    VideoSessionController.pauseNative();
     setIsPreviewPlayerMounted(true);
     setIsPreviewPlaying(true);
   };
@@ -347,6 +349,12 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
                       playInBackground={false}
                       playWhenInactive={false}
                       ignoreSilentSwitch="ignore"
+                      onAudioFocusChanged={({hasAudioFocus}) => {
+                        if (!hasAudioFocus) {
+                          setIsPreviewPlaying(false);
+                          setIsPreviewPlayerMounted(false);
+                        }
+                      }}
                       onLoad={event => {
                         setPreviewDuration(event.duration || 0);
                         setPreviewCurrentTime(0);

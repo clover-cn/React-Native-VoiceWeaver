@@ -1,10 +1,10 @@
+import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
-  Platform,
   SafeAreaView,
   StyleSheet,
   Switch,
@@ -298,8 +298,8 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
   }, []);
 
   const handleImportPress = useCallback(async () => {
-    if ((Platform.OS as string) !== 'harmony') {
-      Alert.alert('暂未实现', '当前仅支持鸿蒙端导入 JSON 文件。');
+    if (!hasNativeCapability('selectJsonDocument')) {
+      Alert.alert('暂未实现', '当前平台暂不支持导入 JSON 文件。');
       return;
     }
 
@@ -335,8 +335,8 @@ const BookSourceManagerModal: React.FC<BookSourceManagerModalProps> = ({
   }, [importing, notifySourcesChanged, pickJsonDocument]);
 
   const handleExportPress = useCallback(async (source: LegadoBookSource) => {
-    if ((Platform.OS as string) !== 'harmony') {
-      Alert.alert('暂未实现', '当前仅支持鸿蒙端导出 JSON 文件。');
+    if (!hasNativeCapability('exportJsonDocument')) {
+      Alert.alert('暂未实现', '当前平台暂不支持导出 JSON 文件。');
       return;
     }
 

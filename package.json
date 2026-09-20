@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "android": "react-native run-android",
+    "start:android": "react-native start --config metro.android.config.js",
+    "android:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -Variant Debug",
+    "android:preview": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -Variant Preview",
+    "android:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -Variant Release",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
@@ -21,6 +25,7 @@
     "@react-native-oh/react-native-harmony": "0.72.82",
     "@react-native-ohos/checkbox": "0.5.17-rc.4",
     "@react-native-ohos/react-native-linear-gradient": "3.0.1-rc.1",
+    "@react-native-ohos/react-native-video": "6.13.2",
     "@xmldom/xmldom": "^0.9.10",
     "acorn": "8.16.0",
     "buffer": "^6.0.3",
@@ -38,8 +43,9 @@
     "react-native": "0.72.5",
     "react-native-bouncy-checkbox": "4.1.2",
     "react-native-element-dropdown": "^2.12.1",
-    "react-native-video": "npm:@react-native-ohos/react-native-video@6.13.2",
+    "react-native-video": "6.13.0",
     "react-native-waterfall-flow": "1.1.5",
+    "react-native-webview": "13.10.2",
     "xpath": "^0.0.34"
   },
   "devDependencies": {
@@ -50,6 +56,7 @@
     "@react-native/metro-config": "0.72.12",
     "@tsconfig/react-native": "3.0.6",
     "@types/d3-scale-chromatic": "3.1.0",
+    "@types/jest": "29.5.14",
     "@types/react": "18.3.23",
     "@types/react-test-renderer": "18.3.1",
     "babel-jest": "29.7.0",

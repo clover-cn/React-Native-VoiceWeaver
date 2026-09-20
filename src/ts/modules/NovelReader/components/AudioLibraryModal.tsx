@@ -1,10 +1,10 @@
+import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import React, {memo, useCallback, useEffect, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
-  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import Video from 'react-native-video';
+import VideoSessionController from '../controllers/VideoSessionController';
 import bridge from '../../base/utils/bridge';
 import {fetchWithTimeout, TimeoutRequestInit} from '../hooks/useListenBook';
 import {AudioOption, VoicePool} from '../types/audio';
@@ -359,6 +360,7 @@ const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
       setCurrentTime(0);
     }
 
+    VideoSessionController.pauseNative();
     setIsPlayerMounted(true);
     setIsPlaying(true);
   };
@@ -373,6 +375,12 @@ const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
           playInBackground={false}
           playWhenInactive={false}
           ignoreSilentSwitch="ignore"
+          onAudioFocusChanged={({hasAudioFocus}) => {
+            if (!hasAudioFocus) {
+              setIsPlaying(false);
+              setIsPlayerMounted(false);
+            }
+          }}
           onLoad={event => {
             setDuration(event.duration || 0);
             setCurrentTime(0);
@@ -744,8 +752,8 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   );
 
   const handleUploadPress = useCallback(async () => {
-    if ((Platform.OS as string) !== 'harmony') {
-      Alert.alert('暂未实现', '当前仅支持鸿蒙端上传音频。');
+    if (!hasNativeCapability('selectAudio')) {
+      Alert.alert('暂未实现', '当前平台暂不支持上传音频。');
       return;
     }
 

@@ -54,7 +54,7 @@ class Bridge2Native {
   }
 
   getOhPrefData(
-    callback: (res: Object | null) => void,
+    callback: (res: Object | null, error?: string) => void,
     key: string,
     defaultVal?: null | Object,
     prefName?: string,
@@ -66,12 +66,12 @@ class Bridge2Native {
     key: string,
     val: null | Object,
     prefName?: string,
-    callback?: () => void,
+    callback?: (error?: string) => void,
   ) {
     BridgeTurboModule.setOhPrefData(key, val, prefName, callback);
   }
 
-  delOhPrefData(key: string, prefName?: string, callback?: () => void) {
+  delOhPrefData(key: string, prefName?: string, callback?: (error?: string) => void) {
     BridgeTurboModule.delOhPrefData(key, prefName, callback);
   }
 

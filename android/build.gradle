@@ -1,0 +1,56 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    ext {
+        buildToolsVersion = "34.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+        kotlinVersion = "1.9.10"
+        media3Version = "1.4.1"
+
+        // 固定 NDK 版本，避免自动下载旧模板中的版本。
+        ndkVersion = "26.3.11579264"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.1.4")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+    }
+}
+
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android.buildToolsVersion rootProject.ext.buildToolsVersion
+            project.android.buildFeatures.buildConfig = true
+            project.android.compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+            if (project.android.hasProperty('kotlinOptions')) {
+                project.android.kotlinOptions.jvmTarget = '17'
+            }
+            project.tasks.withType(JavaCompile).configureEach {
+                options.encoding = 'UTF-8'
+            }
+        }
+    }
+}
+
+// 部分第三方插件在创建任务时覆盖 compileOptions，因此在所有项目配置后统一目标。
+gradle.projectsEvaluated {
+    subprojects {
+        tasks.withType(JavaCompile).configureEach {
+            sourceCompatibility = '17'
+            targetCompatibility = '17'
+            options.encoding = 'UTF-8'
+        }
+        tasks.matching { it.name.startsWith('compile') && it.name.endsWith('Kotlin') }.configureEach {
+            kotlinOptions.jvmTarget = '17'
+        }
+    }
+}

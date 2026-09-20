@@ -64,7 +64,10 @@ yarn-error.log
 /coverage
 
 # Real-time file generation
-/package-lock.json
+/android/app/build/
+/android/build/
+/.cache/
+/android/signing.properties
 /oh-package-lock.json5
 /harmony/node_modules
 /harmony/oh_modules

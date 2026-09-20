@@ -1,3 +1,4 @@
+import {hasNativeStorage} from '../../base/utils/nativeCapabilities';
 import {Book, Chapter, ListenSegment} from '../types/reader';
 import bridge from '../../base/utils/bridge';
 import {normalizePlaybackRate} from './playbackRate';
@@ -6,14 +7,14 @@ const PLAYBACK_RATE_KEY = 'novel_reader_playback_rate';
 
 export const loadPlaybackRate = async (): Promise<number> =>
   normalizePlaybackRate(
-    isHarmonyBridgeAvailable()
+    isNativeStorageAvailable()
       ? await readPrefJson<unknown>(PLAYBACK_RATE_KEY, 1)
       : readJson<unknown>(PLAYBACK_RATE_KEY, 1),
   );
 
 export const savePlaybackRate = async (rate: number): Promise<void> => {
   const value = normalizePlaybackRate(rate);
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(PLAYBACK_RATE_KEY, value);
   } else {
     writeJson(PLAYBACK_RATE_KEY, value);
@@ -97,10 +98,14 @@ const writeJson = (key: string, value: unknown) => {
 };
 
 const readPrefJson = <T>(key: string, fallback: T): Promise<T> => {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     try {
       bridge.getOhPrefData(
-        res => {
+        (res, nativeError) => {
+          if (nativeError) {
+            reject(new Error(nativeError));
+            return;
+          }
           if (typeof res === 'string') {
             try {
               resolve(JSON.parse(res) as T);
@@ -123,37 +128,43 @@ const readPrefJson = <T>(key: string, fallback: T): Promise<T> => {
 };
 
 const writePrefJson = (key: string, value: unknown): Promise<void> => {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     try {
-      bridge.setOhPrefData(key, JSON.stringify(value), PREF_NAME, resolve);
+      bridge.setOhPrefData(key, JSON.stringify(value), PREF_NAME, error => {
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve();
+        }
+      });
     } catch (error) {
       console.warn(`[readerStorage] 写入偏好 ${key} 失败`, error);
-      resolve();
+      reject(error);
     }
   });
 };
 
 const removePrefData = (key: string): Promise<void> => {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     try {
-      bridge.delOhPrefData(key, PREF_NAME, resolve);
+      bridge.delOhPrefData(key, PREF_NAME, error => {
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve();
+        }
+      });
     } catch (error) {
       console.warn(`[readerStorage] 删除偏好 ${key} 失败`, error);
-      resolve();
+      reject(error);
     }
   });
 };
 
-const isHarmonyBridgeAvailable = () => {
-  return (
-    typeof bridge?.getOhPrefData === 'function' &&
-    typeof bridge?.setOhPrefData === 'function' &&
-    typeof bridge?.delOhPrefData === 'function'
-  );
-};
+const isNativeStorageAvailable = hasNativeStorage;
 
 export const loadSearchHistory = async (): Promise<string[]> => {
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     return readPrefJson<string[]>(SEARCH_HISTORY_KEY, []);
   }
   return readJson<string[]>(SEARCH_HISTORY_KEY, []);
@@ -171,7 +182,7 @@ export const addSearchHistory = async (keyword: string): Promise<string[]> => {
     ...currentHistory.filter(item => item !== normalizedKeyword),
   ].slice(0, MAX_SEARCH_HISTORY);
 
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(SEARCH_HISTORY_KEY, nextHistory);
   } else {
     writeJson(SEARCH_HISTORY_KEY, nextHistory);
@@ -181,7 +192,7 @@ export const addSearchHistory = async (keyword: string): Promise<string[]> => {
 
 export const clearSearchHistory = async (): Promise<void> => {
   try {
-    if (isHarmonyBridgeAvailable()) {
+    if (isNativeStorageAvailable()) {
       await removePrefData(SEARCH_HISTORY_KEY);
       return;
     }
@@ -192,7 +203,7 @@ export const clearSearchHistory = async (): Promise<void> => {
 };
 
 export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
-  const raw = isHarmonyBridgeAvailable()
+  const raw = isNativeStorageAvailable()
     ? await readPrefJson<unknown>(READING_RECORD_KEY, null)
     : readJson<unknown>(READING_RECORD_KEY, null);
 
@@ -206,7 +217,7 @@ export const saveReadingRecords = async (
 
   if (trimmed.length === 0) {
     try {
-      if (isHarmonyBridgeAvailable()) {
+      if (isNativeStorageAvailable()) {
         await removePrefData(READING_RECORD_KEY);
         return;
       }
@@ -217,7 +228,7 @@ export const saveReadingRecords = async (
     return;
   }
 
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(READING_RECORD_KEY, trimmed);
   } else {
     writeJson(READING_RECORD_KEY, trimmed);
@@ -305,7 +316,7 @@ export const saveListenProgress = async (
 ): Promise<void> => {
   // 使用复合 key，区分不同书的不同章节
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${progress.projectName}_${progress.chapterIndex}`;
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(compositeKey, progress);
   } else {
     writeJson(compositeKey, progress);
@@ -317,7 +328,7 @@ export const loadListenProgress = async (
   chapterIndex: number,
 ): Promise<ListenProgress | null> => {
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${projectName}_${chapterIndex}`;
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     return readPrefJson<ListenProgress | null>(compositeKey, null);
   }
   return readJson<ListenProgress | null>(compositeKey, null);
@@ -329,7 +340,7 @@ export const clearListenProgress = async (
 ): Promise<void> => {
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${projectName}_${chapterIndex}`;
   try {
-    if (isHarmonyBridgeAvailable()) {
+    if (isNativeStorageAvailable()) {
       await removePrefData(compositeKey);
     } else {
       getStorage().removeItem(compositeKey);
@@ -346,7 +357,7 @@ export const saveListenChapterCache = async (
   cache: ListenChapterCache,
 ): Promise<void> => {
   const key = getListenChapterCacheKey(cache.projectName, cache.chapterIndex);
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(key, cache);
   } else {
     writeJson(key, cache);
@@ -359,7 +370,7 @@ export const loadListenChapterCache = async (
   contentHash: string,
 ): Promise<ListenChapterCache | null> => {
   const key = getListenChapterCacheKey(projectName, chapterIndex);
-  const cache = isHarmonyBridgeAvailable()
+  const cache = isNativeStorageAvailable()
     ? await readPrefJson<ListenChapterCache | null>(key, null)
     : readJson<ListenChapterCache | null>(key, null);
 
@@ -379,7 +390,7 @@ export const clearListenChapterCache = async (
   chapterIndex: number,
 ): Promise<void> => {
   const key = getListenChapterCacheKey(projectName, chapterIndex);
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await removePrefData(key);
   } else {
     getStorage().removeItem(key);

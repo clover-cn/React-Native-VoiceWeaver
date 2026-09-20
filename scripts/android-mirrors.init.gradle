@@ -1,0 +1,18 @@
+// 官方仓库访问受限时使用的可选镜像，不包含账号或凭据。
+settingsEvaluated { settings ->
+    settings.pluginManagement.repositories {
+        clear()
+        maven { url 'https://repo.huaweicloud.com/repository/maven/' }
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+allprojects {
+    buildscript.repositories {
+        maven { url 'https://repo.huaweicloud.com/repository/maven/' }
+    }
+    repositories {
+        maven { url 'https://repo.huaweicloud.com/repository/maven/' }
+    }
+}

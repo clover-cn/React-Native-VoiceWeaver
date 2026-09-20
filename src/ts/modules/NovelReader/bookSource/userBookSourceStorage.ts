@@ -1,4 +1,4 @@
-import {Platform} from 'react-native';
+import {hasNativeStorage} from '../../base/utils/nativeCapabilities';
 import {
   BookSourceValidationResult,
   BookSourceValidationStatus,
@@ -90,11 +90,15 @@ const getBridge = () => {
 };
 
 const readPrefJson = <T>(key: string, fallback: T): Promise<T> => {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     try {
       const bridge = getBridge();
       bridge.getOhPrefData(
-        res => {
+        (res, nativeError) => {
+          if (nativeError) {
+            reject(new Error(nativeError));
+            return;
+          }
           if (typeof res === 'string') {
             try {
               resolve(JSON.parse(res) as T);
@@ -116,31 +120,23 @@ const readPrefJson = <T>(key: string, fallback: T): Promise<T> => {
 };
 
 const writePrefJson = (key: string, value: unknown): Promise<void> => {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     try {
       const bridge = getBridge();
-      bridge.setOhPrefData(key, JSON.stringify(value), PREF_NAME, resolve);
+      bridge.setOhPrefData(key, JSON.stringify(value), PREF_NAME, error => {
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve();
+        }
+      });
     } catch (error) {
-      resolve();
+      reject(error);
     }
   });
 };
 
-const isHarmonyBridgeAvailable = () => {
-  if ((Platform.OS as string) !== 'harmony') {
-    return false;
-  }
-
-  try {
-    const bridge = getBridge();
-    return (
-      typeof bridge?.getOhPrefData === 'function' &&
-      typeof bridge?.setOhPrefData === 'function'
-    );
-  } catch (_error) {
-    return false;
-  }
-};
+const isNativeStorageAvailable = hasNativeStorage;
 
 const normalizeSource = (value: unknown): LegadoBookSource | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -243,7 +239,7 @@ export const loadUserBookSourceRecords = async (): Promise<
   UserBookSourceRecord[]
 > => {
   const fallback: UserBookSourceRecord[] = [];
-  const records = isHarmonyBridgeAvailable()
+  const records = isNativeStorageAvailable()
     ? await readPrefJson<UserBookSourceRecord[]>(
         USER_BOOK_SOURCES_KEY,
         fallback,
@@ -266,7 +262,7 @@ export const saveUserBookSourceRecords = async (
     .map(record => normalizeRecord(record))
     .filter(Boolean) as UserBookSourceRecord[];
 
-  if (isHarmonyBridgeAvailable()) {
+  if (isNativeStorageAvailable()) {
     await writePrefJson(USER_BOOK_SOURCES_KEY, normalizedRecords);
     return;
   }

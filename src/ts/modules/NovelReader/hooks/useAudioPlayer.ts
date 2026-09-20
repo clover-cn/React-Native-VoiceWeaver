@@ -415,13 +415,6 @@ export const useAudioPlayer = (
       }
 
       if (existingEntry?.state === 'failed') {
-        console.log('[useAudioPlayer] 片段缓存已失败，回退远端播放', {
-          chapterAssetId,
-          segmentIndex,
-          cacheKey,
-          remoteUrl,
-          errorMessage: existingEntry.errorMessage,
-        });
         return Promise.resolve(existingEntry);
       }
 

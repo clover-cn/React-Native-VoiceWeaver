@@ -653,9 +653,10 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   onMenuItemClick,
   loadingMenuItemId,
 }) => {
+  const {height: windowHeight} = useWindowDimensions();
   const [showOverlay, setShowOverlay] = useState(false);
   const [catalogVisible, setCatalogVisible] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const overlayAnim = useRef(new Animated.Value(0)).current;
   const flatListRef = useRef<FlatList>(null);
   const touchStartRef = useRef({x: 0, y: 0, time: 0});
   const isScrollGestureRef = useRef(false);
@@ -740,12 +741,21 @@ const NovelReader: React.FC<NovelReaderProps> = ({
     const nextShowOverlay = !showOverlay;
     const toValue = nextShowOverlay ? 1 : 0;
     setShowOverlay(nextShowOverlay);
-    Animated.timing(fadeAnim, {
+    Animated.timing(overlayAnim, {
       toValue,
-      duration: 200,
+      duration: 180,
       useNativeDriver: true,
     }).start();
-  }, [fadeAnim, showOverlay]);
+  }, [overlayAnim, showOverlay]);
+
+  const headerTranslateY = overlayAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-120, 0],
+  });
+  const footerTranslateY = overlayAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [windowHeight, 0],
+  });
 
   const handleSegmentLongPress = useCallback(
     async (index: number) => {
@@ -903,9 +913,13 @@ const NovelReader: React.FC<NovelReaderProps> = ({
 
       {/* 动画弹出的控制器 UI 层 */}
       <Animated.View
-        style={[styles.overlayContainer, {opacity: fadeAnim}]}
+        style={styles.overlayContainer}
         pointerEvents={showOverlay ? 'box-none' : 'none'}>
-        <View style={styles.headerWrapper}>
+        <Animated.View
+          style={[
+            styles.headerWrapper,
+            {transform: [{translateY: headerTranslateY}]},
+          ]}>
           <ReaderHeader
             onBack={onBack}
             title={currentChapter?.title}
@@ -916,8 +930,12 @@ const NovelReader: React.FC<NovelReaderProps> = ({
               }
             }}
           />
-        </View>
-        <View style={styles.footerWrapper}>
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.footerWrapper,
+            {transform: [{translateY: footerTranslateY}]},
+          ]}>
           <ReaderFooter
             showChapterControls={isListenMode}
             currentChapter={currentChapterIndex}
@@ -935,7 +953,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
             onMenuItemClick={onMenuItemClick}
             loadingMenuItemId={loadingMenuItemId}
           />
-        </View>
+        </Animated.View>
       </Animated.View>
 
       <SegmentEditorModal
