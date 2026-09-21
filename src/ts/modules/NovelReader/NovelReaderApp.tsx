@@ -1,5 +1,12 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Alert, BackHandler, StyleSheet, View} from 'react-native';
+import {
+  Alert,
+  BackHandler,
+  Platform,
+  StatusBar,
+  StyleSheet,
+  View,
+} from 'react-native';
 import {Toast, GlobalToast} from '../base/utils/ToastManager';
 import {SegmentEditPayload} from './components/SegmentEditorModal';
 import VideoPlayerController from './controllers/VideoPlayerController';
@@ -2440,6 +2447,14 @@ const NovelReaderApp: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      {/* 安卓状态栏跟随当前页面底色，保留系统占位以避免遮挡顶部内容。 */}
+      {Platform.OS === 'android' && (
+        <StatusBar
+          backgroundColor={viewState === 'reader' ? '#F4F1E8' : '#F2F2F7'}
+          barStyle="dark-content"
+          translucent={false}
+        />
+      )}
       {viewState === 'home' && (
         <NovelHome
           onNavigateSearch={() => setViewState('search')}

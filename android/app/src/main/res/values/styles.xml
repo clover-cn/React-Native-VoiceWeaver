@@ -4,6 +4,9 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <!-- 首屏加载前也使用首页底色和深色状态栏图标，避免黑色横条。 -->
+        <item name="android:statusBarColor">#F2F2F7</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 
 </resources>
