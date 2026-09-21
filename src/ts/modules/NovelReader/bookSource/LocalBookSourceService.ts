@@ -223,16 +223,10 @@ const readRuleField = async (
   vars?: Record<string, unknown>,
   json?: unknown,
 ) => {
-  return bookSourceLogger.trace(
-    'field',
-    `解析字段 ${key || '未命名'}`,
-    {baseUrl, rule},
-    () =>
-      evaluateStringAsync(
-        rule,
-        createRuleContext(raw, baseUrl, item, vars, json),
-        key ? URL_RULE_KEYS.has(key) : false,
-      ),
+  return evaluateStringAsync(
+    rule,
+    createRuleContext(raw, baseUrl, item, vars, json),
+    key ? URL_RULE_KEYS.has(key) : false,
   );
 };
 
@@ -352,12 +346,7 @@ const searchWithSource = async (
     bookSourceLogger.warn('search', diagnostic.message, diagnostic);
     return {books: [], diagnostic};
   }
-  bookSourceLogger.log('search', '搜索 URL 已解析', {
-    sourceName: source.bookSourceName,
-    requestUrl: request.url,
-    method: request.method,
-    body: request.body,
-  });
+
   const raw = await requestText(
     request,
     source.respondTime || 20000,
@@ -367,13 +356,6 @@ const searchWithSource = async (
   checkBookSourceAuthentication(raw);
   const context = createRuleContext(raw, request.url, undefined, vars);
   const list = await evaluateListAsync(source.ruleSearch.bookList, context);
-  bookSourceLogger.log('search', '搜索列表规则匹配完成', {
-    sourceName: source.bookSourceName,
-    requestUrl: request.url,
-    htmlLength: raw.length,
-    bookListRule: source.ruleSearch.bookList,
-    listCount: list.length,
-  });
 
   const parsedItems = await Promise.allSettled(
     list.map(async item => {
@@ -388,10 +370,6 @@ const searchWithSource = async (
         itemVars,
       );
       if (!bookUrl) {
-        bookSourceLogger.warn('search', '搜索项被丢弃：bookUrl 为空', {
-          sourceName: source.bookSourceName,
-          rules,
-        });
         return null;
       }
 
@@ -442,13 +420,6 @@ const searchWithSource = async (
           itemVars,
         ),
         bookUrl,
-      });
-
-      bookSourceLogger.log('search', '搜索项解析完成', {
-        sourceName: source.bookSourceName,
-        name: book.name,
-        author: book.author,
-        bookUrl: book.bookUrl,
       });
 
       return book;
@@ -586,14 +557,6 @@ const getBookInfo = async (
       book.bookUrl,
   };
 
-  bookSourceLogger.log('toc', '详情页信息解析完成', {
-    sourceName: source.bookSourceName,
-    bookName: nextBook.name,
-    bookUrl: nextBook.bookUrl,
-    tocUrl: nextBook.tocUrl,
-    coverUrl: nextBook.coverUrl,
-  });
-
   return nextBook;
 };
 
@@ -643,14 +606,10 @@ const loadTocPage = async (
   throwIfCancelled(cancelToken);
   const list = await evaluateListAsync(rules.chapterList, context);
   const seen = new Set<string>();
-  bookSourceLogger.log('toc', '目录列表规则匹配完成', {
-    sourceName: source.bookSourceName,
-    requestUrl: request.url,
-    chapterListRule: rules.chapterList,
-    listCount: list.length,
-  });
 
   const chapters: Chapter[] = [];
+  let missingFieldCount = 0;
+  let duplicateCount = 0;
   for (let offset = 0; offset < list.length; offset += 1) {
     if (offset > 0 && offset % TOC_PARSE_BATCH_SIZE === 0) {
       await sleepFrame();
@@ -684,12 +643,11 @@ const loadTocPage = async (
     );
 
     if (!title || !chapterUrl || seen.has(chapterUrl)) {
-      bookSourceLogger.warn('toc', '目录项被丢弃', {
-        sourceName: source.bookSourceName,
-        title,
-        chapterUrl,
-        duplicated: chapterUrl ? seen.has(chapterUrl) : false,
-      });
+      if (!title || !chapterUrl) {
+        missingFieldCount += 1;
+      } else {
+        duplicateCount += 1;
+      }
       continue;
     }
     seen.add(chapterUrl);
@@ -704,6 +662,15 @@ const loadTocPage = async (
   }
 
   throwIfCancelled(cancelToken);
+  if (missingFieldCount || duplicateCount) {
+    bookSourceLogger.warn('toc', '目录无效项汇总', {
+      sourceName: source.bookSourceName,
+      requestUrl: request.url,
+      missingFieldCount,
+      duplicateCount,
+      resultCount: chapters.length,
+    });
+  }
   const nextUrl = await readRuleField(
     rules.nextTocUrl,
     raw,
@@ -854,11 +821,6 @@ export const LocalBookSourceService = {
           throw new Error('未找到可用书源');
         }
 
-        bookSourceLogger.log('toc', '开始解析目录', {
-          sourceName: source.bookSourceName,
-          bookName: book.name,
-          bookUrl: book.bookUrl,
-        });
         const vars: Record<string, unknown> = await createSourceVars(source, {
           cancelToken,
         });
@@ -962,13 +924,6 @@ export const LocalBookSourceService = {
         let nextUrl = chapter.bookUrl;
         let firstRequestUrl = chapter.bookUrl;
 
-        bookSourceLogger.log('content', '开始解析正文', {
-          sourceName: source.bookSourceName,
-          bookName: book.name,
-          chapterTitle: chapter.title,
-          chapterUrl: chapter.bookUrl,
-        });
-
         for (let page = 0; nextUrl && page < MAX_CONTENT_PAGES; page += 1) {
           if (visited.has(nextUrl)) {
             bookSourceLogger.warn('content', '分页地址重复，停止解析', {
@@ -978,10 +933,6 @@ export const LocalBookSourceService = {
             break;
           }
           visited.add(nextUrl);
-          bookSourceLogger.log('content', '开始解析正文分页', {
-            page: page + 1,
-            nextUrl,
-          });
 
           const requestUrl = buildApibiTokenChapterUrl(
             source,
@@ -1040,12 +991,6 @@ export const LocalBookSourceService = {
           if (content) {
             chunks.push(content);
           }
-          bookSourceLogger.log('content', '正文页规则解析完成', {
-            sourceName: source.bookSourceName,
-            requestUrl: request.url,
-            contentRule: rules.content,
-            contentLength: content.length,
-          });
 
           nextUrl = await readRuleField(
             rules.nextContentUrl,

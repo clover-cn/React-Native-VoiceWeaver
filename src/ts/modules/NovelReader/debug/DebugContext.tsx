@@ -47,18 +47,33 @@ export const DebugProvider: React.FC<{children: React.ReactNode}> = ({
   const tapCountRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 挂载时订阅日志捕获，卸载时取消订阅
+  // 仅调试模式订阅，突发日志合并刷新；退出或卸载时取消待执行更新。
   useEffect(() => {
+    if (!isDebugMode) {
+      setLogs([]);
+      return;
+    }
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = logCapture.subscribe(() => {
-      // 同步缓冲区快照到 React 状态
-      setLogs([...logCapture.getBuffer()]);
+      if (refreshTimer !== null) {
+        return;
+      }
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        setLogs([...logCapture.getBuffer()]);
+      }, DEBUG_CONFIG.LOG_REFRESH_INTERVAL_MS);
     });
 
     // 初始化时加载已有日志
     setLogs([...logCapture.getBuffer()]);
 
-    return unsubscribe;
-  }, []);
+    return () => {
+      unsubscribe();
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+      }
+    };
+  }, [isDebugMode]);
 
   /** 注册一次点击，累计到阈值后弹出密码弹窗 */
   const registerTap = useCallback(() => {

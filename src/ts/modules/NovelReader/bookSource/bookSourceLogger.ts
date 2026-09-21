@@ -61,7 +61,7 @@ const emit = (
 
 export const bookSourceLogger = {
   async trace<T>(
-    tag: string,
+    tag: 'request' | 'toc' | 'content',
     message: string,
     detail: unknown,
     action: () => Promise<T>,

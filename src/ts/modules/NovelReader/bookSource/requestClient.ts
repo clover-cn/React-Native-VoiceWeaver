@@ -172,23 +172,6 @@ export const resolveRequestAsync = async (
   rawUrl: string,
   vars: Record<string, unknown> = {},
   baseUrl = source.bookSourceUrl,
-): Promise<ResolvedRequest> =>
-  bookSourceLogger.trace(
-    'request',
-    '解析请求地址',
-    {
-      sourceName: source.bookSourceName,
-      baseUrl,
-      rawUrl,
-    },
-    () => resolveRequestAsyncInternal(source, rawUrl, vars, baseUrl),
-  );
-
-const resolveRequestAsyncInternal = async (
-  source: LegadoBookSource,
-  rawUrl: string,
-  vars: Record<string, unknown> = {},
-  baseUrl = source.bookSourceUrl,
 ): Promise<ResolvedRequest> => {
   if (!/<js>|@js:/i.test(rawUrl)) {
     return resolveRequest(source, rawUrl, vars, baseUrl);
@@ -297,12 +280,7 @@ const requestTextInternal = async (
   while (attempt < maxAttempt) {
     try {
       throwIfCancelled(cancelToken);
-      bookSourceLogger.log('request', `开始请求 ${request.method}`, {
-        url: request.url,
-        charset: request.charset,
-        attempt: attempt + 1,
-        maxAttempt,
-      });
+
       const response = await fetchWithTimeout(
         request.url,
         {
@@ -315,19 +293,13 @@ const requestTextInternal = async (
       );
       const buffer = await response.arrayBuffer();
       throwIfCancelled(cancelToken);
-      bookSourceLogger.log('request', `收到响应 HTTP ${response.status}`, {
-        url: request.url,
-        bytes: buffer.byteLength,
-      });
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       const text = decodeArrayBuffer(buffer, request.charset);
       checkBookSourceAuthentication(text);
-      bookSourceLogger.log('request', '响应解码完成', {
-        url: request.url,
-        textLength: text.length,
-      });
+
       return text;
     } catch (error) {
       if (isCancelled(cancelToken)) {

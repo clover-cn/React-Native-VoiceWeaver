@@ -22,7 +22,6 @@ import {
   parseRequestHeaders,
 } from './requestClient';
 import {executeRuleScript} from './ruleJsRuntime';
-import {bookSourceLogger} from './bookSourceLogger';
 import {BookSourceCancelToken, LegadoBookSource} from './types';
 
 const CryptoJS = require('crypto-js');
@@ -901,20 +900,6 @@ export const evaluateList = (
 export const evaluateListAsync = async (
   rule: string | undefined,
   context: RuleContext,
-): Promise<RuleItem[]> =>
-  bookSourceLogger.trace(
-    'rule',
-    '列表规则解析',
-    {
-      rule,
-      baseUrl: context.baseUrl,
-    },
-    () => evaluateListAsyncInternal(rule, context),
-  );
-
-const evaluateListAsyncInternal = async (
-  rule: string | undefined,
-  context: RuleContext,
 ): Promise<RuleItem[]> => {
   let cleanRule = String(rule || '').trim();
   if (!cleanRule) {
@@ -1343,7 +1328,8 @@ const buildJava = (
     encodeURI: (value: string) => encodeURIComponent(String(value)),
     md5Encode: (value: unknown) =>
       CryptoJS.MD5(String(value ?? '')).toString(CryptoJS.enc.Hex),
-    log: (value: unknown) => console.log('[bookSource:js]', value),
+    // 书源脚本日志不输出，避免逐章节执行时刷屏；异常由业务阶段汇总。
+    log: (_value: unknown) => undefined,
     put: (key: string, value: unknown) => {
       vars[key] = value;
       return value;
@@ -1643,22 +1629,6 @@ export const evaluateString = (
 };
 
 export const evaluateStringAsync = async (
-  rule: string | undefined,
-  context: RuleContext,
-  asUrl = false,
-): Promise<string> =>
-  bookSourceLogger.trace(
-    'rule',
-    '字段规则解析',
-    {
-      rule,
-      baseUrl: context.baseUrl,
-      asUrl,
-    },
-    () => evaluateStringAsyncInternal(rule, context, asUrl),
-  );
-
-const evaluateStringAsyncInternal = async (
   rule: string | undefined,
   context: RuleContext,
   asUrl = false,

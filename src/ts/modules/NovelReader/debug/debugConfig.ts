@@ -10,7 +10,9 @@ export const DEBUG_CONFIG = {
   /** 调试模式访问密码（可修改） */
   PASSWORD: 'admin',
   /** 日志缓冲区最大条目数，超出后自动丢弃最旧记录 */
-  MAX_LOG_ENTRIES: 500,
+  MAX_LOG_ENTRIES: 100,
+  /** 合并日志面板刷新，避免每条日志触发 React 状态更新 */
+  LOG_REFRESH_INTERVAL_MS: 250,
   /** 单条日志消息最大字符数，超出部分截断 */
   MAX_MESSAGE_LENGTH: 2000,
 } as const;
