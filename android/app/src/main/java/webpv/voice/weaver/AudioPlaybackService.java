@@ -1,5 +1,6 @@
 package webpv.voice.weaver;
 
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Handler;
@@ -179,7 +180,18 @@ public final class AudioPlaybackService extends MediaSessionService {
         return getAvailableCommands().contains(command);
       }
     };
-    session = new MediaSession.Builder(this, controls).build();
+    PendingIntent sessionActivity = PendingIntent.getActivity(
+      this,
+      0,
+      new Intent(this, MainActivity.class)
+        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP),
+      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+    );
+    session = new MediaSession.Builder(this, controls)
+      .setSessionActivity(sessionActivity)
+      .build();
+    // 播放由桥接直接驱动，没有控制器绑定；必须主动注册才能生成媒体通知。
+    addSession(session);
     handler.post(progress);
   }
 
@@ -388,6 +400,7 @@ public final class AudioPlaybackService extends MediaSessionService {
   @Override
   public void onDestroy() {
     handler.removeCallbacksAndMessages(null);
+    removeSession(session);
     session.release();
     player.release();
     player = null;
