@@ -31,6 +31,7 @@ local.properties
 .cxx/
 *.keystore
 !debug.keystore
+!/android/voiceweaver-release.keystore
 
 # node.js
 #
@@ -67,7 +68,6 @@ yarn-error.log
 /android/app/build/
 /android/build/
 /.cache/
-/android/signing.properties
 /oh-package-lock.json5
 /harmony/node_modules
 /harmony/oh_modules

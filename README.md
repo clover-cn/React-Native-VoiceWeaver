@@ -13,6 +13,8 @@ npm run android:preview
 
 Preview 使用测试签名并内置 JS bundle，输出 `android/app/build/outputs/apk/preview/app-preview.apk`，可脱离 Metro 安装测试。应用 ID 为 `webpv.voice.weaver.preview`。正式发布使用 `npm run android:release`，通过 `VOICEWEAVER_KEYSTORE`、`VOICEWEAVER_STORE_PASSWORD`、`VOICEWEAVER_KEY_ALIAS`、`VOICEWEAVER_KEY_PASSWORD` 环境变量提供自己的签名；未配置时只生成未签名 APK。
 
+正式签名配置保存在 `android/signing.properties`，使用上述四个环境变量名作为属性名；环境变量优先。`VOICEWEAVER_KEYSTORE` 的相对路径以 `android` 目录为基准。直接运行 `npm run android:release` 即可。按项目所有者的决定，`android/voiceweaver-release.keystore` 与密码配置一起纳入 Git，拥有仓库读取权限的人可取得签名私钥和密码；后续更新必须使用同一签名。此变更无需迁移现有使用绝对路径的环境变量配置。
+
 ### Android 真机调试
 
 连接 Android 手机，开启 USB 调试，并在手机上允许电脑调试。在项目根目录运行：

@@ -72,6 +72,14 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'org.webkit:android-jsc:+'
 
+// 从本机签名配置读取凭据；环境变量可覆盖，便于 CI 使用。
+def localSigning = new Properties()
+def localSigningFile = rootProject.file('signing.properties')
+if (localSigningFile.exists()) {
+    localSigningFile.withInputStream { localSigning.load(it) }
+}
+def signingValue = { String name -> System.getenv(name) ?: localSigning.getProperty(name) }
+
 android {
     ndkVersion rootProject.ext.ndkVersion
 
@@ -93,11 +101,11 @@ android {
             keyPassword 'android'
         }
         release {
-            if (System.getenv('VOICEWEAVER_KEYSTORE')) {
-                storeFile file(System.getenv('VOICEWEAVER_KEYSTORE'))
-                storePassword System.getenv('VOICEWEAVER_STORE_PASSWORD')
-                keyAlias System.getenv('VOICEWEAVER_KEY_ALIAS')
-                keyPassword System.getenv('VOICEWEAVER_KEY_PASSWORD')
+            if (signingValue('VOICEWEAVER_KEYSTORE')) {
+                storeFile rootProject.file(signingValue('VOICEWEAVER_KEYSTORE'))
+                storePassword signingValue('VOICEWEAVER_STORE_PASSWORD')
+                keyAlias signingValue('VOICEWEAVER_KEY_ALIAS')
+                keyPassword signingValue('VOICEWEAVER_KEY_PASSWORD')
             }
         }
     }
@@ -108,7 +116,7 @@ android {
         release {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
-            if (System.getenv('VOICEWEAVER_KEYSTORE')) {
+            if (signingValue('VOICEWEAVER_KEYSTORE')) {
                 signingConfig signingConfigs.release
             }
             minifyEnabled enableProguardInReleaseBuilds
