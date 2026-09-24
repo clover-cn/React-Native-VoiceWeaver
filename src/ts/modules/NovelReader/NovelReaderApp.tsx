@@ -2505,6 +2505,8 @@ const NovelReaderApp: React.FC = () => {
         <ActiveSegContext.Provider value={activeSegCtxValue}>
           <PlaybackProgressContext.Provider value={progressCtxValue}>
             <NovelReader
+              bookName={selectedBook?.name}
+              coverUrl={selectedBook?.coverUrl}
               currentChapter={chapterList[currentChapterIndex]}
               chapterList={chapterList}
               currentChapterIndex={currentChapterIndex}

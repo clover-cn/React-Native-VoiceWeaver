@@ -25,6 +25,7 @@ import {
 import {Chapter, ListenSegment} from '../types/reader';
 import ReaderHeader from '../components/ReaderHeader';
 import ReaderFooter from '../components/ReaderFooter';
+import ListenPlaybackBar from '../components/ListenPlaybackBar';
 import SegmentEditorModal, {
   SegmentEditPayload,
 } from '../components/SegmentEditorModal';
@@ -41,6 +42,8 @@ export interface ReaderLoadingState {
 }
 
 interface NovelReaderProps {
+  bookName?: string;
+  coverUrl?: string;
   currentChapter?: Chapter;
   chapterList: Chapter[];
   currentChapterIndex: number;
@@ -458,9 +461,9 @@ const ReaderContentList = memo(
           {item.type === 'page' ? (
             <Text style={styles.paragraphText}>{item.text}</Text>
           ) : (
-            <View style={styles.chapterTurnPage}>
+            <View>
               <ActivityIndicator size="small" color="#8E7D64" />
-              <Text style={styles.chapterTurnPageText}>
+              <Text>
                 {item.type === 'next-chapter'
                   ? '正在进入下一章'
                   : '正在返回上一章'}
@@ -626,6 +629,8 @@ const viewabilityConfig = {
 };
 
 const NovelReader: React.FC<NovelReaderProps> = ({
+  bookName = '听书',
+  coverUrl,
   currentChapter,
   chapterList,
   currentChapterIndex,
@@ -674,6 +679,16 @@ const NovelReader: React.FC<NovelReaderProps> = ({
     useState<ReadingPageJump>('first');
 
   const effectiveListenState = isListenMode ? listenState : 'idle';
+  const canGoNextSegment =
+    !readerLoading &&
+    effectiveListenState === 'ready' &&
+    currentSegIdx >= 0 &&
+    currentSegIdx < segments.length - 1;
+  const handleNextSegment = useCallback(() => {
+    if (canGoNextSegment) {
+      onPlaySegment(currentSegIdx + 1);
+    }
+  }, [canGoNextSegment, currentSegIdx, onPlaySegment]);
   const shouldRenderListenContent =
     isListenMode && (segments.length > 0 || listenState === 'loading');
   const availableRoles = useMemo(
@@ -910,6 +925,23 @@ const NovelReader: React.FC<NovelReaderProps> = ({
           </View>
         ) : null}
       </View>
+
+      {isListenMode && (
+        <ListenPlaybackBar
+          bookName={bookName}
+          coverUrl={coverUrl}
+          chapterTitle={currentChapter?.title || '正在准备章节'}
+          listenState={effectiveListenState}
+          listenPhase={listenPhase}
+          isPlaying={isPlaying}
+          canGoNextSegment={canGoNextSegment}
+          onTogglePlayPause={onTogglePlayPause}
+          onRetry={onStartListen}
+          onNextSegment={handleNextSegment}
+          onOpenControls={toggleOverlay}
+          onOpenCatalog={() => setCatalogVisible(true)}
+        />
+      )}
 
       {/* 动画弹出的控制器 UI 层 */}
       <Animated.View
