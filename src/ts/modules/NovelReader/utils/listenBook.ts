@@ -2,6 +2,16 @@ import {Book, ListenSegment} from '../types/reader';
 
 const CryptoJS = require('crypto-js');
 
+let listenerSequence = 0;
+/** 页面会话标识用于订阅去重，不作为身份认证；兼容没有 Web Crypto 的原生运行时。 */
+export const createListenSessionId = (): string => {
+  listenerSequence += 1;
+  const random = Array.from({length: 4}, () =>
+    Math.random().toString(36).slice(2).padEnd(11, '0'),
+  ).join('');
+  return `rn_${Date.now().toString(36)}_${listenerSequence.toString(36)}_${random}`;
+};
+
 export const createTextHash = (text: string): string => {
   return CryptoJS.SHA256(String(text || '')).toString(CryptoJS.enc.Hex);
 };

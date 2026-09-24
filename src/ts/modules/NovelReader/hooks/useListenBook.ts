@@ -4,6 +4,7 @@ import {clearListenChapterCache} from '../utils/readerStorage';
 import {
   areListenSegmentsFullyPlayable,
   createTextHash,
+  createListenSessionId,
   hasPlayableListenAudio,
   normalizeChapterTextForRequest,
   translateListenPhase,
@@ -96,6 +97,7 @@ const mergePolledSegments = (
 };
 
 export interface UseListenBookReturn {
+  getListenerId: (projectName?: string) => string;
   serverPhase: string;
   listenState: 'idle' | 'loading' | 'ready' | 'error';
   listenPhase: string;
@@ -126,6 +128,10 @@ export interface UseListenBookReturn {
 export const useListenBook = (): UseListenBookReturn => {
   const [serverPhase, setServerPhase] = useState('');
   const epochRef = useRef(0);
+  const listenerIdRef = useRef('');
+  if (!listenerIdRef.current) {
+    listenerIdRef.current = createListenSessionId();
+  }
   const [listenState, setListenState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
@@ -140,6 +146,14 @@ export const useListenBook = (): UseListenBookReturn => {
   const curProjectRef = useRef<string>('');
   const cachedListenStateRef = useRef<'idle' | 'loading' | 'ready'>('idle');
 
+  // 页面直接发起的预生成和编辑后重生成也必须登记同一个会话。
+  const getListenerId = useCallback((projectName?: string) => {
+    if (projectName) {
+      curProjectRef.current = projectName;
+    }
+    return listenerIdRef.current;
+  }, []);
+
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -151,6 +165,8 @@ export const useListenBook = (): UseListenBookReturn => {
     async (projectName?: string) => {
       epochRef.current += 1;
       const targetProject = projectName || curProjectRef.current;
+      const listenerId = listenerIdRef.current;
+      listenerIdRef.current = createListenSessionId();
       stopPolling();
       listenTaskIdRef.current = null;
 
@@ -162,7 +178,7 @@ export const useListenBook = (): UseListenBookReturn => {
         await fetchWithTimeout(`${API_BASE}/api/listen-book/cancel`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({projectName: targetProject}),
+          body: JSON.stringify({projectName: targetProject, listenerId}),
         });
       } catch (e) {
         console.warn('Cancel req failed', e);
@@ -176,12 +192,8 @@ export const useListenBook = (): UseListenBookReturn => {
       epochRef.current += 1;
       setServerPhase('');
       stopPolling();
-      if (!skipCancel && curProjectRef.current) {
-        fetchWithTimeout(`${API_BASE}/api/listen-book/cancel`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({projectName: curProjectRef.current}),
-        }).catch(e => console.warn('Cancel req failed', e));
+      if (!skipCancel) {
+        void cancelListenTask();
       }
 
       setListenState('idle');
@@ -190,10 +202,12 @@ export const useListenBook = (): UseListenBookReturn => {
       setSegments([]);
       setIsGenerationComplete(false);
       listenTaskIdRef.current = null;
-      curProjectRef.current = '';
+      if (!skipCancel) {
+        curProjectRef.current = '';
+      }
       cachedListenStateRef.current = 'idle';
     },
-    [stopPolling],
+    [stopPolling, cancelListenTask],
   );
 
   const replaceSegments = useCallback((nextSegments: ListenSegment[]) => {
@@ -287,11 +301,16 @@ export const useListenBook = (): UseListenBookReturn => {
             setIsGenerationComplete(fullyPlayable);
             cachedListenStateRef.current = 'ready';
             setListenState('ready'); // 确保能触发播放
-          } else if (phase === 'error') {
+          } else if (phase === 'error' || phase === 'cancelled') {
             stopPolling();
             cachedListenStateRef.current = 'idle';
             setListenState('error');
-            setListenError(error || '听书音频生成失败');
+            setListenError(
+              error ||
+                (phase === 'cancelled'
+                  ? '听书任务已取消，请重试'
+                  : '听书音频生成失败'),
+            );
             console.error('生成报错:', error);
           }
         } catch (err) {
@@ -316,6 +335,7 @@ export const useListenBook = (): UseListenBookReturn => {
     async (projectName: string, chapterIndex: number, chapterText?: string) => {
       const epoch = epochRef.current;
       curProjectRef.current = projectName;
+      const listenerId = listenerIdRef.current;
       try {
         const normalizedText = normalizeChapterTextForRequest(chapterText);
         const res = await fetchWithTimeout(
@@ -325,6 +345,7 @@ export const useListenBook = (): UseListenBookReturn => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               projectName,
+              listenerId,
               chapterIndex,
               ...(normalizedText
                 ? {contentHash: createTextHash(normalizedText)}
@@ -382,6 +403,7 @@ export const useListenBook = (): UseListenBookReturn => {
     ) => {
       const epoch = epochRef.current;
       curProjectRef.current = projectName;
+      const listenerId = listenerIdRef.current;
       const chapterText = normalizeChapterTextForRequest(payload.chapterText);
 
       if (!chapterText) {
@@ -422,6 +444,7 @@ export const useListenBook = (): UseListenBookReturn => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               projectName,
+              listenerId,
               chapterIndex,
               chapterTitle: payload.chapterTitle || '',
               chapterText,
@@ -432,10 +455,14 @@ export const useListenBook = (): UseListenBookReturn => {
         const data = await res.json();
 
         if (epoch !== epochRef.current) {
-          if (data.taskId) {
+          if (data.taskId && listenerId !== listenerIdRef.current) {
             fetchWithTimeout(
               `${API_BASE}/api/listen-book/cancel/${data.taskId}`,
-              {method: 'POST'},
+              {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({listenerId}),
+              },
             ).catch(() => {});
           }
           return;
@@ -476,12 +503,12 @@ export const useListenBook = (): UseListenBookReturn => {
 
   useEffect(() => {
     return () => {
-      epochRef.current += 1;
-      stopPolling();
+      void cancelListenTask();
     };
-  }, [stopPolling]);
+  }, [cancelListenTask]);
 
   return {
+    getListenerId,
     serverPhase,
     listenState,
     listenPhase,

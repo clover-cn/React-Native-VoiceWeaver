@@ -551,6 +551,7 @@ const NovelReaderApp: React.FC = () => {
     restoreListenCache,
     updateListenRuntime,
     cancelListenTask,
+    getListenerId,
   } = useListenBook();
 
   const projectName = selectedBook ? buildListenProjectName(selectedBook) : '';
@@ -1222,7 +1223,11 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
+    const listenerId = getListenerId(requestProjectName);
     const config = await fetchListenBookConfig();
+    if (listenerId !== getListenerId()) {
+      return;
+    }
     const prefetchCount = Number.isFinite(config.prefetchCount)
       ? Math.max(0, Number(config.prefetchCount))
       : 1;
@@ -1239,7 +1244,7 @@ const NovelReaderApp: React.FC = () => {
 
       loadChapterTextForTts(book, list, chapterIndex)
         .then(item => {
-          if (!item) {
+          if (!item || listenerId !== getListenerId()) {
             return null;
           }
 
@@ -1248,6 +1253,7 @@ const NovelReaderApp: React.FC = () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               projectName: requestProjectName,
+              listenerId,
               chapterIndex,
               chapterTitle: item.chapterTitle,
               chapterText: item.text,
@@ -1262,7 +1268,7 @@ const NovelReaderApp: React.FC = () => {
           });
         });
     }
-  }, [fetchListenBookConfig, loadChapterTextForTts]);
+  }, [fetchListenBookConfig, loadChapterTextForTts, getListenerId]);
 
   const startListenForChapter = useCallback(
     async (index: number) => {
@@ -2072,6 +2078,7 @@ const NovelReaderApp: React.FC = () => {
     ) => {
       const requestProjectName = projectName;
       const requestChapterIndex = currentChapterIndex;
+      const listenerId = getListenerId(requestProjectName);
       const data = await requestJson<AutoRegenerateAfterEditResponse>(
         `${API_BASE}/api/listen-book/auto-regenerate-after-edit`,
         {
@@ -2080,12 +2087,16 @@ const NovelReaderApp: React.FC = () => {
           body: JSON.stringify({
             projectName,
             currentChapterIndex,
+            listenerId,
             invalidatedSegmentIndexes: invalidatedIndexes,
             futureRoleUpdate,
           }),
         },
       );
 
+      if (listenerId !== getListenerId()) {
+        return;
+      }
       if (Array.isArray(data.segments)) {
         replaceSegments(markSegmentsCacheDirty(data.segments));
         updateListenRuntime('ready', true, '');
@@ -2133,13 +2144,14 @@ const NovelReaderApp: React.FC = () => {
             ? buildListenProjectName(selectedBookRef.current)
             : '';
           if (
+            listenerId !== getListenerId() ||
             latestProjectName !== requestProjectName ||
             currentChapterIndexRef.current !== requestChapterIndex
           ) {
             return;
           }
 
-          if (status.phase === 'error') {
+          if (status.phase === 'error' || status.phase === 'cancelled') {
             throw new Error(status.error || '编辑后自动重生成失败');
           }
 
@@ -2201,7 +2213,13 @@ const NovelReaderApp: React.FC = () => {
         }
       }
     },
-    [currentChapterIndex, projectName, replaceSegments, updateListenRuntime],
+    [
+      currentChapterIndex,
+      projectName,
+      replaceSegments,
+      updateListenRuntime,
+      getListenerId,
+    ],
   );
 
   const handleSegmentEditSubmit = useCallback(
