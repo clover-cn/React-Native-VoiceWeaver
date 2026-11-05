@@ -36,28 +36,35 @@ const ReaderHeader: React.FC<ReaderHeaderProps> = ({
     <HeaderContainer
       style={[styles.safeArea, topInset > 0 && {paddingTop: topInset}]}>
       <View style={styles.container}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-          <Text style={styles.backText}>← 返回</Text>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={onBack}
+          activeOpacity={0.75}
+          accessibilityLabel="返回书架">
+          <Text style={styles.backText}>‹ 返回</Text>
         </TouchableOpacity>
 
         <View style={styles.centerGroup}>
-          {/* <TouchableOpacity style={styles.navItem} onPress={() => onMenuClick?.('home')}>
-            <Text style={styles.navText}>详情</Text>
-          </TouchableOpacity> */}
           <TouchableOpacity
             style={styles.navItem}
-            onPress={() => onMenuClick?.('reading')}>
-            <Text style={[styles.navText, styles.activeNavText]}>阅读</Text>
+            onPress={() => onMenuClick?.('reading')}
+            activeOpacity={0.8}>
+            <Text style={[styles.navText, styles.activeNavText]}>正文阅读</Text>
+            <View style={styles.activeIndicator} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.navItem}
-            onPress={() => onMenuClick?.('catalog')}>
+            onPress={() => onMenuClick?.('catalog')}
+            activeOpacity={0.8}>
             <Text style={styles.navText}>目录</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.settingBtn} onPress={onSettingClick}>
-          {/* <Text style={styles.settingText}>设置</Text> */}
+        <TouchableOpacity
+          style={styles.settingBtn}
+          onPress={onSettingClick}
+          activeOpacity={0.75}
+          accessibilityLabel="阅读设置">
           <Text style={styles.settingText}>设置</Text>
         </TouchableOpacity>
       </View>
@@ -67,55 +74,70 @@ const ReaderHeader: React.FC<ReaderHeaderProps> = ({
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: 'rgba(244, 241, 232, 0.95)', // 模仿纸张底层
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+    backgroundColor: '#F8F6F0', // 实底温润宣纸色，彻底消除透字重叠 Bug
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFECE6',
+    shadowColor: '#1C1917',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 4,
   },
   container: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    height: Platform.OS === 'ios' ? 44 : 56,
+    height: Platform.OS === 'ios' ? 44 : 52,
   },
   backBtn: {
     flex: 1,
     alignItems: 'flex-start',
+    paddingVertical: 6,
   },
   backText: {
-    color: '#007AFF', // iOS 蓝
+    color: '#1C1917',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   centerGroup: {
     flex: 2,
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 16,
+    alignItems: 'center',
+    gap: 20,
   },
   navItem: {
     alignItems: 'center',
     paddingHorizontal: 8,
+    paddingVertical: 4,
+    position: 'relative',
   },
   navText: {
-    fontSize: 14,
-    color: '#8A8A8E',
-    marginTop: 2,
+    fontSize: 15,
+    color: '#78716C',
+    fontWeight: '500',
   },
   activeNavText: {
-    color: '#007AFF',
-    fontWeight: 'bold',
+    color: '#B45309',
+    fontWeight: '700',
+  },
+  activeIndicator: {
+    width: 16,
+    height: 2.5,
+    backgroundColor: '#D97706',
+    borderRadius: 1.5,
+    marginTop: 3,
   },
   settingBtn: {
     flex: 1,
     alignItems: 'flex-end',
+    paddingVertical: 6,
   },
   settingText: {
-    color: '#48484A',
-    fontSize: 16,
+    color: '#78716C',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
 

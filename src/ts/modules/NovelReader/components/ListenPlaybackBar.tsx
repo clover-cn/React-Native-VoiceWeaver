@@ -68,8 +68,8 @@ const ListenPlaybackBar = memo((props: Props) => {
   const actionLabel = failed
     ? '重试生成'
     : props.isPlaying
-    ? '暂停播放'
-    : '继续播放';
+    ? '暂停演播'
+    : '继续演播';
   return (
     <View
       style={[
@@ -84,14 +84,19 @@ const ListenPlaybackBar = memo((props: Props) => {
             accessibilityRole="button"
             accessibilityLabel={`${props.bookName}，展开听书设置`}>
             {props.coverUrl && !coverFailed ? (
-              <Image
-                source={{uri: props.coverUrl}}
-                style={styles.cover}
-                onError={() => setCoverFailed(true)}
-              />
+              <View style={styles.coverWrapper}>
+                <Image
+                  source={{uri: props.coverUrl}}
+                  style={styles.cover}
+                  onError={() => setCoverFailed(true)}
+                  resizeMode="cover"
+                />
+                <View style={styles.coverSpine} />
+              </View>
             ) : (
-              <View style={[styles.cover, styles.placeholder]}>
+              <View style={[styles.coverWrapper, styles.placeholder]}>
                 <Text style={styles.coverText}>听</Text>
+                <View style={styles.coverSpine} />
               </View>
             )}
             <View style={styles.info}>
@@ -107,25 +112,29 @@ const ListenPlaybackBar = memo((props: Props) => {
               </Text>
             </View>
           </TouchableOpacity>
+
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="下一段音频"
             accessibilityState={{disabled: nextDisabled}}
             disabled={nextDisabled}
             onPress={props.onNextSegment}
-            style={[styles.action, nextDisabled && styles.disabled]}>
+            style={[styles.action, nextDisabled && styles.disabled]}
+            activeOpacity={0.75}>
             <View style={styles.nextIcon}>
               <View style={styles.nextTriangle} />
               <View style={styles.nextEndBar} />
             </View>
           </TouchableOpacity>
+
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={loading ? '正在准备音频' : actionLabel}
             accessibilityState={{disabled: loading, busy: loading}}
             disabled={loading}
             onPress={failed ? props.onRetry : props.onTogglePlayPause}
-            style={styles.play}>
+            style={styles.play}
+            activeOpacity={0.85}>
             {loading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : failed ? (
@@ -134,11 +143,13 @@ const ListenPlaybackBar = memo((props: Props) => {
               <PlaybackGlyph isPlaying={props.isPlaying} />
             )}
           </TouchableOpacity>
+
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="打开章节目录"
             onPress={props.onOpenCatalog}
-            style={styles.action}>
+            style={styles.action}
+            activeOpacity={0.75}>
             <Text style={styles.actionIcon}>☷</Text>
           </TouchableOpacity>
         </View>
@@ -149,37 +160,55 @@ const ListenPlaybackBar = memo((props: Props) => {
 });
 
 const styles = StyleSheet.create({
-  safeArea: {paddingHorizontal: 12, paddingBottom: 8},
+  safeArea: {paddingHorizontal: 14, paddingBottom: 10},
   nonAndroidBottomInset: {paddingBottom: 28},
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 10,
-    shadowColor: '#314B7A',
-    shadowOffset: {width: 0, height: 3},
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#EFECE6',
+    shadowColor: '#1C1917',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    elevation: 8,
   },
   row: {flexDirection: 'row', alignItems: 'center'},
   book: {flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center'},
-  cover: {width: 42, height: 54, borderRadius: 8},
-  placeholder: {
-    backgroundColor: '#EAF1FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coverText: {fontSize: 22, fontWeight: '700', color: '#2872FF'},
-  info: {flex: 1, minWidth: 0, marginLeft: 10},
-  title: {fontSize: 15, fontWeight: '600', color: '#172746'},
-  subtitle: {fontSize: 12, color: '#8390AA', marginTop: 5},
-  action: {
+  coverWrapper: {
     width: 44,
-    height: 48,
+    height: 56,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#4B3F35',
+  },
+  cover: {width: '100%', height: '100%'},
+  placeholder: {
+    backgroundColor: '#4B3F35',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionIcon: {fontSize: 24, color: '#8495B5'},
+  coverSpine: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  coverText: {fontSize: 20, fontWeight: '800', color: '#F59E0B'},
+  info: {flex: 1, minWidth: 0, marginLeft: 10},
+  title: {fontSize: 15, fontWeight: '700', color: '#1C1917'},
+  subtitle: {fontSize: 12, color: '#78716C', marginTop: 4},
+  action: {
+    width: 42,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionIcon: {fontSize: 22, color: '#78716C'},
   nextIcon: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -190,51 +219,62 @@ const styles = StyleSheet.create({
   nextTriangle: {
     width: 0,
     height: 0,
-    borderTopWidth: 8,
-    borderBottomWidth: 8,
-    borderLeftWidth: 12,
+    borderTopWidth: 7,
+    borderBottomWidth: 7,
+    borderLeftWidth: 10,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
-    borderLeftColor: '#8495B5',
+    borderLeftColor: '#78716C',
   },
   nextEndBar: {
-    width: 3,
-    height: 16,
+    width: 2.5,
+    height: 14,
     marginLeft: 3,
     borderRadius: 1.5,
-    backgroundColor: '#8495B5',
+    backgroundColor: '#78716C',
   },
   disabled: {opacity: 0.3},
   play: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#286CFF',
+    backgroundColor: '#D97706', // 琥珀暖金
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#D97706',
+    shadowOffset: {width: 0, height: 3},
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+    marginHorizontal: 4,
   },
-  retryIcon: {color: '#FFFFFF', fontSize: 21, fontWeight: '700'},
+  retryIcon: {color: '#FFFFFF', fontSize: 20, fontWeight: '700'},
   playTriangle: {
     width: 0,
     height: 0,
     marginLeft: 3,
-    borderTopWidth: 9,
-    borderBottomWidth: 9,
-    borderLeftWidth: 14,
+    borderTopWidth: 8,
+    borderBottomWidth: 8,
+    borderLeftWidth: 13,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: '#FFFFFF',
   },
-  pauseIcon: {flexDirection: 'row', gap: 5, alignItems: 'center'},
-  pauseBar: {width: 4, height: 18, borderRadius: 2, backgroundColor: '#FFFFFF'},
+  pauseIcon: {flexDirection: 'row', gap: 4, alignItems: 'center'},
+  pauseBar: {
+    width: 3.5,
+    height: 16,
+    borderRadius: 2,
+    backgroundColor: '#FFFFFF',
+  },
   track: {
     height: 3,
-    backgroundColor: '#E7ECF5',
+    backgroundColor: '#EFECE6',
     borderRadius: 2,
     overflow: 'hidden',
-    marginTop: 9,
+    marginTop: 8,
   },
-  fill: {height: 3, backgroundColor: '#387CFF', borderRadius: 2},
+  fill: {height: 3, backgroundColor: '#D97706', borderRadius: 2},
 });
 
 export default ListenPlaybackBar;

@@ -90,7 +90,7 @@ export default function PlaybackRateControl() {
 
 const styles = StyleSheet.create({
   trigger: {alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 12},
-  triggerText: {fontSize: 13, color: '#7c6ff7', fontWeight: '600'},
+  triggerText: {fontSize: 13, color: '#B45309', fontWeight: '700'},
   backdrop: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -104,13 +104,13 @@ const styles = StyleSheet.create({
   sheetContent: {paddingTop: 28},
   title: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#242138',
+    fontWeight: '700',
+    color: '#1C1917',
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 13,
-    color: '#777487',
+    color: '#78716C',
     textAlign: 'center',
     marginTop: 10,
   },
@@ -125,11 +125,11 @@ const styles = StyleSheet.create({
     margin: '2%',
     borderRadius: 12,
     paddingVertical: 14,
-    backgroundColor: '#f3f2f8',
+    backgroundColor: '#FAF5ED',
     alignItems: 'center',
   },
-  selected: {backgroundColor: '#7c6ff7'},
-  optionText: {color: '#514c67', fontSize: 16, fontWeight: '500'},
-  selectedText: {color: '#fff'},
+  selected: {backgroundColor: '#D97706'},
+  optionText: {color: '#44403C', fontSize: 16, fontWeight: '500'},
+  selectedText: {color: '#fff', fontWeight: '700'},
   close: {paddingBottom: 24, paddingTop: 2},
 });

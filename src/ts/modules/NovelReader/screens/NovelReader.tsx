@@ -1098,14 +1098,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   segmentWrapperActive: {
-    backgroundColor: 'rgba(0,122,255,0.1)',
+    backgroundColor: 'rgba(217, 119, 6, 0.08)',
     borderLeftWidth: 3,
-    borderLeftColor: '#007AFF',
+    borderLeftColor: '#D97706',
+    borderRadius: 8,
     paddingLeft: 9,
   },
   roleTagWrap: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(124,111,247,0.1)',
+    backgroundColor: 'rgba(217, 119, 6, 0.1)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -1113,13 +1114,13 @@ const styles = StyleSheet.create({
   },
   roleTag: {
     fontSize: 12,
-    color: '#7c6ff7',
+    color: '#B45309',
     fontWeight: '600',
   },
   roleTagInline: {
-    color: '#7c6ff7',
+    color: '#B45309',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   paragraphText: {
     fontSize: 18,
