@@ -69,7 +69,7 @@ export class AVSessionCommandHandler {
 
 const APP_BUNDLE_NAME = 'webpv.voice.weaver';
 const ENTRY_ABILITY_NAME = 'EntryAbility';
-const DEFAULT_COVER_RAWFILE = 'assets/src/ts/rawfile/dev/media/icon/default_avatar.png';
+const DEFAULT_COVER_RAWFILE = 'assets/src/ts/rawfile/dev/media/icon/startIcon.png';
 
 export class AVSessionManager {
   private static instance: AVSessionManager = new AVSessionManager();
