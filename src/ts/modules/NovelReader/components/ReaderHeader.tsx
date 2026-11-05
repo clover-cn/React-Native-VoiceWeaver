@@ -1,5 +1,14 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  Platform,
+  useWindowDimensions,
+} from 'react-native';
+import bridge from '../../base/utils/bridge';
 
 interface ReaderHeaderProps {
   title?: string;
@@ -8,9 +17,24 @@ interface ReaderHeaderProps {
   onMenuClick?: (menuName: string) => void;
 }
 
-const ReaderHeader: React.FC<ReaderHeaderProps> = ({ title, onBack, onSettingClick, onMenuClick }) => {
+const ReaderHeader: React.FC<ReaderHeaderProps> = ({
+  onBack,
+  onSettingClick,
+  onMenuClick,
+}) => {
+  // 窗口尺寸变化时重新读取原生避让高度，适配旋转和折叠屏。
+  useWindowDimensions();
+  // 安卓窗口已由非透明状态栏避让，iOS 由 SafeAreaView 负责。
+  const nativeTop =
+    Platform.OS !== 'android' && Platform.OS !== 'ios'
+      ? Number(bridge.getOhASData('topRectHeight', 0))
+      : 0;
+  const topInset = Number.isFinite(nativeTop) ? Math.max(0, nativeTop) : 0;
+  // 鸿蒙 SafeAreaView 会覆盖显式顶部 padding，使用普通容器承载原生避让高度。
+  const HeaderContainer = Platform.OS === 'ios' ? SafeAreaView : View;
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <HeaderContainer
+      style={[styles.safeArea, topInset > 0 && {paddingTop: topInset}]}>
       <View style={styles.container}>
         <TouchableOpacity style={styles.backBtn} onPress={onBack}>
           <Text style={styles.backText}>← 返回</Text>
@@ -20,10 +44,14 @@ const ReaderHeader: React.FC<ReaderHeaderProps> = ({ title, onBack, onSettingCli
           {/* <TouchableOpacity style={styles.navItem} onPress={() => onMenuClick?.('home')}>
             <Text style={styles.navText}>详情</Text>
           </TouchableOpacity> */}
-          <TouchableOpacity style={styles.navItem} onPress={() => onMenuClick?.('reading')}>
+          <TouchableOpacity
+            style={styles.navItem}
+            onPress={() => onMenuClick?.('reading')}>
             <Text style={[styles.navText, styles.activeNavText]}>阅读</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onMenuClick?.('catalog')}>
+          <TouchableOpacity
+            style={styles.navItem}
+            onPress={() => onMenuClick?.('catalog')}>
             <Text style={styles.navText}>目录</Text>
           </TouchableOpacity>
         </View>
@@ -33,7 +61,7 @@ const ReaderHeader: React.FC<ReaderHeaderProps> = ({ title, onBack, onSettingCli
           <Text style={styles.settingText}>设置</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </HeaderContainer>
   );
 };
 
@@ -41,7 +69,7 @@ const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: 'rgba(244, 241, 232, 0.95)', // 模仿纸张底层
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 3,

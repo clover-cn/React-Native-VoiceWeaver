@@ -60,29 +60,36 @@ export const SearchResultsFooter = (props: Props) => {
             </Text>
             {item.stage === 'auth' && (
               <TouchableOpacity
+                style={styles.loginBtn}
                 disabled={loggingIn || props.loading}
                 onPress={() => login(item.sourceUrl)}>
-                <Text style={styles.action}>登录书源</Text>
+                <Text style={styles.loginBtnText}>登录书源</Text>
               </TouchableOpacity>
             )}
           </View>
         ))}
       {props.loading || loggingIn ? (
-        <ActivityIndicator color="#007AFF" />
+        <ActivityIndicator color="#D97706" style={styles.loader} />
       ) : (
         <View style={styles.actions}>
           {props.hasMore && (
-            <TouchableOpacity style={styles.button} onPress={props.onMore}>
-              <Text style={styles.action}>加载更多</Text>
+            <TouchableOpacity
+              style={styles.moreButton}
+              onPress={props.onMore}
+              activeOpacity={0.8}>
+              <Text style={styles.moreButtonText}>加载更多章节</Text>
             </TouchableOpacity>
           )}
           {props.hasFailures && (
-            <TouchableOpacity style={styles.button} onPress={props.onRetry}>
-              <Text style={styles.action}>重试失败书源</Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={props.onRetry}
+              activeOpacity={0.8}>
+              <Text style={styles.retryButtonText}>重试异常书源</Text>
             </TouchableOpacity>
           )}
           {props.hasSearched && !props.hasMore && !props.hasFailures && (
-            <Text style={styles.message}>没有更多结果了</Text>
+            <Text style={styles.endMessage}>—— 已经到底啦 ——</Text>
           )}
         </View>
       )}
@@ -91,10 +98,82 @@ export const SearchResultsFooter = (props: Props) => {
 };
 
 const styles = StyleSheet.create({
-  footer: {padding: 16, alignItems: 'center'},
-  failure: {width: '100%', marginBottom: 10},
-  message: {fontSize: 13, color: '#636366', lineHeight: 20},
-  actions: {flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap'},
-  action: {fontSize: 14, color: '#007AFF', paddingVertical: 6},
-  button: {paddingHorizontal: 12},
+  footer: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  loader: {
+    marginVertical: 10,
+  },
+  failure: {
+    width: '100%',
+    marginBottom: 10,
+    backgroundColor: '#FFF7ED',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+  },
+  message: {
+    fontSize: 12,
+    color: '#9A3412',
+    lineHeight: 18,
+  },
+  loginBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#D97706',
+    borderRadius: 6,
+  },
+  loginBtnText: {
+    fontSize: 11,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  actions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  moreButton: {
+    backgroundColor: '#FAF5ED',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    shadowColor: '#1C1917',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  moreButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  retryButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EFECE6',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  retryButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#78716C',
+  },
+  endMessage: {
+    fontSize: 12,
+    color: '#A8A29E',
+    paddingVertical: 8,
+  },
 });

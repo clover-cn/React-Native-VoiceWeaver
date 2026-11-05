@@ -68,6 +68,11 @@ export default class EntryAbility extends RNAbility {
     }
     emEvent(display.getFoldStatus(), display.isFoldable());
     windowClass.on('avoidAreaChange', () => {
+      // 窗口旋转或折叠后同步避让高度，供阅读菜单等原生桥接调用读取。
+      const systemArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      const navigationArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      AppStorage.setOrCreate('topRectHeight', px2vp(systemArea.topRect.height));
+      AppStorage.setOrCreate('bottomRectHeight', px2vp(navigationArea.bottomRect.height));
       emEvent(display.getFoldStatus(), display.isFoldable());
     })
   }
