@@ -299,7 +299,9 @@ export default function SettingsScreen({
           <TouchableOpacity onPress={leave} disabled={busy}>
             <Text style={styles.link}>‹ 返回</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>{group ? titles[group] : '设置'}</Text>
+          <Text style={styles.title}>
+            {group ? titles[group] : '听书与 API 设置'}
+          </Text>
           <TouchableOpacity onPress={save} disabled={busy || loading || !saved}>
             <Text style={styles.link}>{busy ? '处理中' : '保存'}</Text>
           </TouchableOpacity>
@@ -339,7 +341,7 @@ export default function SettingsScreen({
                 </TouchableOpacity>
                 <Text style={styles.hint}>
                   模型与 API
-                  配置保存在本机。首次使用请配置解析服务、语音服务，并导入参考录音。
+                  配置均保存在本机。首次使用请配置正文解析服务（LLM）、语音合成服务（TTS），并导入参考录音以开启多角色智能听书。
                 </Text>
               </>
             )}
@@ -571,7 +573,7 @@ export default function SettingsScreen({
   );
 }
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#F2F2F7'},
+  container: {flex: 1, backgroundColor: '#F8F6F0'},
   header: {
     height: 56,
     paddingHorizontal: 18,
@@ -579,20 +581,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  title: {fontSize: 20, fontWeight: '600', color: '#1C1C1E'},
+  title: {fontSize: 20, fontWeight: '700', color: '#1C1917'},
   content: {padding: 18, paddingBottom: 60},
   row: {
     backgroundColor: '#FFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 18,
     marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFECE6',
   },
-  label: {fontSize: 16, color: '#1C1C1E', marginBottom: 6},
-  link: {fontSize: 16, color: '#007AFF'},
-  hint: {fontSize: 13, lineHeight: 21, color: '#636366', marginTop: 6},
+  label: {fontSize: 16, color: '#1C1917', marginBottom: 6},
+  link: {fontSize: 16, color: '#B45309', fontWeight: '600'},
+  hint: {fontSize: 13, lineHeight: 21, color: '#78716C', marginTop: 6},
   field: {marginBottom: 18},
   input: {
     backgroundColor: '#FFF',

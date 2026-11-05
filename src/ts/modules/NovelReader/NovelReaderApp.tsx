@@ -2314,7 +2314,7 @@ const NovelReaderApp: React.FC = () => {
       {/* 安卓状态栏跟随当前页面底色，保留系统占位以避免遮挡顶部内容。 */}
       {Platform.OS === 'android' && (
         <StatusBar
-          backgroundColor={viewState === 'reader' ? '#F4F1E8' : '#F2F2F7'}
+          backgroundColor={viewState === 'reader' ? '#F4F1E8' : '#F8F6F0'}
           barStyle="dark-content"
           translucent={false}
         />
@@ -2327,6 +2327,7 @@ const NovelReaderApp: React.FC = () => {
             setSettingsGroup(undefined);
             setSettingsVisible(true);
           }}
+          onOpenAudioLibrary={() => setAudioLibraryVisible(true)}
           onManageBookSources={handleOpenBookSourceManager}
           isImporting={isImportingBook || isDeletingBook}
           readingRecords={readingRecords}
