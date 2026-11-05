@@ -19,6 +19,7 @@ import {
 import {callLlm, generateSpeech} from './providers';
 import {parsePrompt, prescanPrompt} from './prompts';
 import {assertNarratorAvailable} from './preflight';
+import {logPrescanResult} from './prescanLog';
 import {
   listAudio,
   loadProject,
@@ -521,6 +522,11 @@ async function run(task: Task): Promise<void> {
           config.advanced.llmTimeout,
           task.controller.signal,
           `角色预扫描（${prescan.length}章）`,
+        );
+        active(task);
+        logPrescanResult(
+          value,
+          prescan.map(item => item.chapterIndex),
         );
         const records = await listAudio();
         await updateProject(task.projectName, current => {

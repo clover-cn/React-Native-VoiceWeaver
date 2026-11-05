@@ -73,10 +73,9 @@ export const bookSourceLogger = {
       const result = await action();
       emit('log', tag, `${message} 完成 #${id}`, {
         elapsedMs: Date.now() - startedAt,
-        resultLength:
-          typeof result === 'string' || Array.isArray(result)
-            ? result.length
-            : undefined,
+        ...(typeof result === 'string' || Array.isArray(result)
+          ? {resultLength: result.length}
+          : {}),
       });
       return result;
     } catch (error) {
