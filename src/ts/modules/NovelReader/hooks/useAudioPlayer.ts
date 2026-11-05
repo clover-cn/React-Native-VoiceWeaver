@@ -440,13 +440,18 @@ export const useAudioPlayer = (
           chapterAssetId,
           segmentIndex,
           execute: async () => {
-            console.log('[useAudioPlayer] 开始缓存音频片段', {
-              chapterAssetId,
-              segmentIndex,
-              cacheKey,
-              remoteUrl,
-              priority,
-            });
+            console.log(
+              remoteUrl.startsWith('file://')
+                ? '[useAudioPlayer] 登记已生成的本地音频'
+                : '[useAudioPlayer] 开始缓存音频片段',
+              {
+                chapterAssetId,
+                segmentIndex,
+                cacheKey,
+                remoteUrl,
+                priority,
+              },
+            );
             const result = await ListenAudioCacheController.cacheAudio({
               url: remoteUrl,
               cacheKey,
@@ -470,14 +475,19 @@ export const useAudioPlayer = (
                 chapterCachedUrisRef.current.get(chapterAssetId) || new Set();
               existingUris.add(result.localUri);
               chapterCachedUrisRef.current.set(chapterAssetId, existingUris);
-              console.log('[useAudioPlayer] 音频缓存完成', {
-                chapterAssetId,
-                segmentIndex,
-                cacheKey,
-                hit: result.hit === true,
-                localUri: result.localUri,
-                localPath: result.localPath,
-              });
+              console.log(
+                remoteUrl.startsWith('file://')
+                  ? '[useAudioPlayer] 本地音频已登记，无需下载'
+                  : '[useAudioPlayer] 音频缓存完成',
+                {
+                  chapterAssetId,
+                  segmentIndex,
+                  cacheKey,
+                  hit: result.hit === true,
+                  localUri: result.localUri,
+                  localPath: result.localPath,
+                },
+              );
             } else {
               console.warn(
                 '[useAudioPlayer] 音频缓存失败，播放时将回退远端 URL',
@@ -934,6 +944,20 @@ export const useAudioPlayer = (
     segments,
     listenState,
   ]);
+
+  // 等待期间任务阶段变化也要重新协调；不能只依赖一次原生 waiting 事件。
+  useEffect(() => {
+    const index = currentSegIdxRef.current;
+    if (
+      nativeState === 'waiting' &&
+      listenState === 'ready' &&
+      index >= 0 &&
+      !segments[index]?.audioUrl &&
+      !segments[index]?.generationError
+    ) {
+      onMissingSegmentAudio?.(index);
+    }
+  }, [nativeState, listenState, onMissingSegmentAudio, segments]);
 
   useEffect(() => {
     if (listenState !== 'ready') {

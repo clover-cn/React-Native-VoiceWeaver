@@ -111,10 +111,6 @@ const NovelHome: React.FC<NovelHomeProps> = ({
           <View style={styles.headerTitleWrap}>
             <View style={styles.tagRow}>
               <Text style={styles.brandTag}>VOICEWEAVER · 织音</Text>
-              <View style={styles.readyBadge}>
-                <View style={styles.readyDot} />
-                <Text style={styles.readyText}>AI 演播已就绪</Text>
-              </View>
             </View>
             <TouchableOpacity
               onPress={() => debugCtx.registerTap()}
@@ -521,28 +517,6 @@ const styles = StyleSheet.create({
     color: '#B45309',
     letterSpacing: 1.2,
     marginRight: 8,
-  },
-  readyBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 12,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  readyDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-    marginRight: 4,
-  },
-  readyText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#065F46',
   },
   greeting: {
     fontSize: 26,

@@ -43,11 +43,13 @@ export const localService = {
     projectName: string;
     chapterIndex: number;
     segmentIndex: number;
+    waitForActiveTask?: boolean;
   }) => {
     const segments = await engine.regenerateSegments(
       payload.projectName,
       payload.chapterIndex,
       [payload.segmentIndex],
+      payload.waitForActiveTask,
     );
     return {
       success: true,

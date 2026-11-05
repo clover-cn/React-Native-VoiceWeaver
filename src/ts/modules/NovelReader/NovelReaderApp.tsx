@@ -64,7 +64,6 @@ import {BookSourceCancelToken} from './bookSource/types';
 import {
   areListenSegmentsFullyPlayable,
   buildListenSegmentFailureHint,
-  buildListenRegenerateSegmentPayload,
   buildListenProjectName,
   createTextHash,
   normalizeChapterTextForRequest,
@@ -1292,6 +1291,17 @@ const NovelReaderApp: React.FC = () => {
 
   const handleAutoGenerateMissingSegment = useCallback(
     async (segmentIndex: number) => {
+      if (listenError) {
+        const key = `${projectName}_${currentChapterIndex}_${listenError}`;
+        if (lastSegmentFailurePromptKeyRef.current !== key) {
+          lastSegmentFailurePromptKeyRef.current = key;
+          Alert.alert(
+            '听书生成已中断',
+            buildListenSegmentFailureHint(listenError),
+          );
+        }
+        return;
+      }
       const requestProjectName = projectName;
       const requestChapterIndex = currentChapterIndex;
       const chapterTitle = chapterList[requestChapterIndex]?.title || '';
@@ -1314,38 +1324,12 @@ const NovelReaderApp: React.FC = () => {
       );
 
       try {
-        const data = await localService.regenerate(
-          buildListenRegenerateSegmentPayload({
-            projectName: requestProjectName,
-            chapterIndex: requestChapterIndex,
-            segmentIndex,
-            chapterTitle,
-            chapterText,
-          }),
-        );
-
-        const latestProjectName = selectedBookRef.current
-          ? buildListenProjectName(selectedBookRef.current)
-          : '';
-        if (
-          currentChapterIndexRef.current !== requestChapterIndex ||
-          latestProjectName !== requestProjectName
-        ) {
-          return;
-        }
-
-        if (Array.isArray(data.segments) && data.segments.length) {
-          replaceSegments(markSegmentsCacheDirty(data.segments));
-        } else if (data.segment) {
-          const nextSegments = [...segments];
-          nextSegments[segmentIndex] = markSegmentCacheDirty(data.segment);
-          replaceSegments(nextSegments);
-        }
-
-        updateListenRuntime(
-          'ready',
-          areListenSegmentsFullyPlayable(data.segments || []),
-          '',
+        // 从现有检查点继续整章剩余音频，不能退化为逐段按需补生成。
+        await startListening(
+          requestProjectName,
+          requestChapterIndex,
+          {chapterText, chapterTitle},
+          true,
         );
       } catch (error) {
         const responseData = (error as {responseData?: unknown})
@@ -1396,6 +1380,8 @@ const NovelReaderApp: React.FC = () => {
       replaceSegments,
       segments,
       updateListenRuntime,
+      startListening,
+      listenError,
     ],
   );
 
@@ -2409,6 +2395,7 @@ const NovelReaderApp: React.FC = () => {
           bookName={selectedBook?.name || ''}
           chapterTitle={chapterList[currentChapterIndex]?.title || ''}
           ready={startupStatus === 'ready'}
+          generationComplete={isGenerationComplete}
           playing={startupStatus === 'playing' && !preparation.error}
           onCollapse={collapseListenPreparation}
           onExpand={() =>

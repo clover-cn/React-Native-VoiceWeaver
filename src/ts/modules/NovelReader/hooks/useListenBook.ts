@@ -17,6 +17,7 @@ import {
   subscribeTasks,
   getTask,
   TaskSnapshot,
+  getActiveChapterTask,
 } from '../local/engine';
 
 export type AbortSignalLike = {
@@ -66,7 +67,8 @@ export interface UseListenBookReturn {
     project: string,
     index: number,
     payload: ListenBookGeneratePayload,
-  ) => void;
+    continueActiveTask?: boolean,
+  ) => Promise<void>;
   resetListen: (skipCancel?: boolean) => void;
   checkListenCache: (
     project: string,
@@ -214,14 +216,25 @@ export const useListenBook = (): UseListenBookReturn => {
       project: string,
       chapter: number,
       payload: ListenBookGeneratePayload,
+      continueActiveTask = false,
     ) => {
+      if (
+        continueActiveTask &&
+        getActiveChapterTask(project, chapter)?.id === context.current.taskId
+      ) {
+        return;
+      }
       const epoch = ++context.current.epoch;
       context.current.project = project;
       context.current.chapter = chapter;
       setListenState('loading');
       setListenError('');
       try {
-        const task = await generateChapter(project, chapter, payload);
+        const running = continueActiveTask
+          ? getActiveChapterTask(project, chapter)
+          : undefined;
+        const task =
+          running || (await generateChapter(project, chapter, payload));
         if (epoch !== context.current.epoch) {
           return;
         }

@@ -10,7 +10,12 @@ import {
 } from '../utils/listenBook';
 import {EngineConfig, loadConfig, validateConfig} from './config';
 import {createCastingEngine} from './casting';
-import {nativeCall, readDocument, writeDocument} from './native';
+import {
+  nativeCall,
+  readDocument,
+  writeDocument,
+  logModelProgress,
+} from './native';
 import {callLlm, generateSpeech} from './providers';
 import {parsePrompt, prescanPrompt} from './prompts';
 import {assertNarratorAvailable} from './preflight';
@@ -40,6 +45,19 @@ interface Task extends TaskSnapshot {
   paused?: boolean;
 }
 const tasks = new Map<string, Task>();
+/** 播放等待时查询真实任务，避免依赖页面中可能滞后的阶段。 */
+export function getActiveChapterTask(
+  projectName: string,
+  chapterIndex: number,
+): TaskSnapshot | undefined {
+  return [...tasks.values()].find(
+    task =>
+      task.projectName === projectName &&
+      task.chapterIndex === chapterIndex &&
+      !task.controller.signal.aborted &&
+      !['done', 'error', 'cancelled', 'paused'].includes(task.phase),
+  );
+}
 const deletingProjects = new Set<string>();
 const projectVersions = new Map<string, number>();
 
@@ -576,6 +594,12 @@ async function run(task: Task): Promise<void> {
       }
       try {
         project = await loadProject(task.projectName);
+        const startedAt = Date.now();
+        logModelProgress(
+          `章节 ${task.chapterIndex + 1} 片段 ${index + 1}/${
+            task.segments.length
+          } 合成开始`,
+        );
         const uri = await generateSpeech(
           segment,
           task.config,
@@ -584,6 +608,11 @@ async function run(task: Task): Promise<void> {
           task.projectName,
         );
         active(task);
+        logModelProgress(
+          `章节 ${task.chapterIndex + 1} 片段 ${index + 1}/${
+            task.segments.length
+          } 合成完成，耗时=${Date.now() - startedAt}ms`,
+        );
         task.segments[index] = {
           ...segment,
           audioUrl: uri,
@@ -603,6 +632,11 @@ async function run(task: Task): Promise<void> {
       await checkpoint(task, hash);
     }
     task.phase = 'done';
+    logModelProgress(
+      `章节 ${task.chapterIndex + 1} 生成结束，成功=${
+        task.segments.filter(item => item.audioUrl).length
+      }/${task.segments.length}`,
+    );
     await checkpoint(task, hash);
   } catch (error) {
     task.phase = task.paused
@@ -611,6 +645,11 @@ async function run(task: Task): Promise<void> {
       ? 'cancelled'
       : 'error';
     task.error = error instanceof Error ? error.message : '生成失败';
+    logModelProgress(
+      `章节 ${task.chapterIndex + 1} 生成中断，状态=${task.phase}，已完成=${
+        task.segments.filter(item => item.audioUrl).length
+      }/${task.segments.length}`,
+    );
     publish(task);
   } finally {
     pending--;
@@ -785,6 +824,7 @@ export async function regenerateSegments(
   projectName: string,
   chapterIndex: number,
   indexes: number[],
+  waitForActiveTask = false,
 ): Promise<ListenSegment[]> {
   const projectVersion = projectVersions.get(projectName) || 0;
   if (deletingProjects.has(projectName)) {
@@ -795,6 +835,19 @@ export async function regenerateSegments(
   }
   const config = await loadConfig();
   validateConfig(config, true);
+  // 播放追上生成进度时等待原任务，自动补段不能取消整章连续生成。
+  if (waitForActiveTask) {
+    const running = [...tasks.values()].find(
+      task =>
+        task.projectName === projectName &&
+        task.chapterIndex === chapterIndex &&
+        !task.controller.signal.aborted &&
+        !['done', 'error', 'cancelled', 'paused'].includes(task.phase),
+    );
+    if (running) {
+      return running.segments;
+    }
+  }
   cancelGeneration(projectName, undefined, '启动片段重生成');
   const project = await loadProject(projectName);
   const entry = project.chapters[chapterIndex];
