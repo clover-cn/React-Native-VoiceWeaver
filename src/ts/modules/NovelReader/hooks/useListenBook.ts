@@ -1,6 +1,7 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
+import {DeviceEventEmitter} from 'react-native';
+import {ConfigurationError} from '../local/config';
 import {ListenBookGeneratePayload, ListenSegment} from '../types/reader';
-import {clearListenChapterCache} from '../utils/readerStorage';
 import {
   areListenSegmentsFullyPlayable,
   createTextHash,
@@ -9,96 +10,53 @@ import {
   normalizeChapterTextForRequest,
   translateListenPhase,
 } from '../utils/listenBook';
+import {
+  generateChapter,
+  checkChapter,
+  cancelGeneration,
+  subscribeTasks,
+  getTask,
+  TaskSnapshot,
+} from '../local/engine';
 
 export type AbortSignalLike = {
   aborted?: boolean;
   addEventListener?: (type: 'abort', listener: () => void) => void;
   removeEventListener?: (type: 'abort', listener: () => void) => void;
 };
-
-export type TimeoutRequestInit = RequestInit & {
-  signal?: AbortSignalLike;
-};
-
-// ⚠️ 重要：模拟器/真机上 localhost 指向设备自身，必须改为开发电脑的局域网IP
-// 例如：'http://192.168.1.100:3000'
-// 可以在电脑终端执行 ipconfig (Windows) 或 ifconfig (Mac/Linux) 查看
-export const API_BASE = 'https://tts.webpv.cn';
-
-// 带超时保护的 fetch，防止网络不可达时阻塞主线程导致 ANR 闪退
-export const fetchWithTimeout = (
+export type TimeoutRequestInit = RequestInit & {signal?: AbortSignalLike};
+/** 超时与用户取消均真正中止底层请求。 */
+export async function fetchWithTimeout(
   url: string,
   options?: TimeoutRequestInit,
-  timeoutMs: number = 15000,
-): Promise<Response> => {
-  return new Promise((resolve, reject) => {
-    const signal = options?.signal;
-    if (signal?.aborted) {
-      reject(new Error(`请求已取消: ${url}`));
-      return;
+  timeoutMs = 15000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (options?.signal?.aborted) {
+    throw new Error('请求已取消');
+  }
+  options?.signal?.addEventListener?.('abort', cancel);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await fetch(url, {...options, signal: controller.signal});
+  } catch (error) {
+    if (timedOut) {
+      throw new Error('请求超时');
     }
-
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      cleanup();
-      reject(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener?.('abort', handleAbort);
-    };
-
-    const handleAbort = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      reject(new Error(`请求已取消: ${url}`));
-    };
-
-    signal?.addEventListener?.('abort', handleAbort);
-
-    fetch(url, options)
-      .then(res => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        resolve(res);
-      })
-      .catch(err => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        reject(err);
-      });
-  });
-};
-
-const mergePolledSegments = (
-  prevSegments: ListenSegment[],
-  nextSegments: ListenSegment[],
-): ListenSegment[] => {
-  if (nextSegments.length < prevSegments.length) {
-    return prevSegments;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options?.signal?.removeEventListener?.('abort', cancel);
   }
-
-  if (JSON.stringify(prevSegments) === JSON.stringify(nextSegments)) {
-    return prevSegments;
-  }
-
-  return nextSegments;
-};
-
+}
 export interface UseListenBookReturn {
   getListenerId: (projectName?: string) => string;
-  serverPhase: string;
+  taskPhase: string;
   listenState: 'idle' | 'loading' | 'ready' | 'error';
   listenPhase: string;
   listenError: string;
@@ -126,390 +84,164 @@ export interface UseListenBookReturn {
 }
 
 export const useListenBook = (): UseListenBookReturn => {
-  const [serverPhase, setServerPhase] = useState('');
-  const epochRef = useRef(0);
-  const listenerIdRef = useRef('');
-  if (!listenerIdRef.current) {
-    listenerIdRef.current = createListenSessionId();
-  }
+  const [taskPhase, setTaskPhase] = useState('');
   const [listenState, setListenState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
-  const [listenPhase, setListenPhase] = useState<string>('');
-  const [listenError, setListenError] = useState<string>('');
+  const [listenPhase, setListenPhase] = useState('');
+  const [listenError, setListenError] = useState('');
   const [segments, setSegments] = useState<ListenSegment[]>([]);
-  const [isGenerationComplete, setIsGenerationComplete] =
-    useState<boolean>(false);
-
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const listenTaskIdRef = useRef<string | null>(null);
-  const curProjectRef = useRef<string>('');
-  const cachedListenStateRef = useRef<'idle' | 'loading' | 'ready'>('idle');
-
-  // 页面直接发起的预生成和编辑后重生成也必须登记同一个会话。
-  const getListenerId = useCallback((projectName?: string) => {
-    if (projectName) {
-      curProjectRef.current = projectName;
-    }
-    return listenerIdRef.current;
-  }, []);
-
-  const stopPolling = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  }, []);
-
-  const cancelListenTask = useCallback(
-    async (projectName?: string) => {
-      epochRef.current += 1;
-      const targetProject = projectName || curProjectRef.current;
-      const listenerId = listenerIdRef.current;
-      listenerIdRef.current = createListenSessionId();
-      stopPolling();
-      listenTaskIdRef.current = null;
-
-      if (!targetProject) {
+  const [isGenerationComplete, setIsGenerationComplete] = useState(false);
+  const context = useRef({
+    project: '',
+    chapter: -1,
+    taskId: '',
+    epoch: 0,
+    listener: createListenSessionId(),
+  });
+  const apply = useCallback((task: TaskSnapshot) => {
+    if (context.current.taskId !== task.id) {
+      if (
+        task.projectName === context.current.project &&
+        task.chapterIndex === context.current.chapter &&
+        getTask(context.current.taskId)?.phase === 'paused'
+      ) {
+        context.current.taskId = task.id;
+      } else {
         return;
       }
-
-      try {
-        await fetchWithTimeout(`${API_BASE}/api/listen-book/cancel`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({projectName: targetProject, listenerId}),
-        });
-      } catch (e) {
-        console.warn('Cancel req failed', e);
-      }
-    },
-    [stopPolling],
-  );
-
+    }
+    setTaskPhase(task.phase);
+    setListenPhase(translateListenPhase(task.phase));
+    setSegments(task.segments);
+    const playable = task.segments.some(hasPlayableListenAudio);
+    setIsGenerationComplete(
+      task.phase === 'done' && areListenSegmentsFullyPlayable(task.segments),
+    );
+    if (
+      task.phase === 'error' ||
+      task.phase === 'cancelled' ||
+      task.phase === 'paused'
+    ) {
+      setListenState(playable ? 'ready' : 'error');
+      setListenError(task.error || '生成已中断，重新开始可继续未完成片段。');
+    } else if (task.phase === 'done') {
+      setListenState(playable ? 'ready' : 'error');
+      setListenError(playable ? '' : '生成结束，但没有可播放片段。');
+    } else {
+      setListenState(playable ? 'ready' : 'loading');
+      setListenError('');
+    }
+  }, []);
+  useEffect(() => subscribeTasks(apply), [apply]);
+  const getListenerId = useCallback((project?: string) => {
+    if (project) {
+      context.current.project = project;
+    }
+    return context.current.listener;
+  }, []);
+  const cancelListenTask = useCallback(async (project?: string) => {
+    context.current.epoch++;
+    cancelGeneration(
+      project || context.current.project || undefined,
+      undefined,
+      '页面重置、章节切换或停止听书',
+    );
+    context.current.taskId = '';
+    context.current.listener = createListenSessionId();
+  }, []);
   const resetListen = useCallback(
     (skipCancel = false) => {
-      epochRef.current += 1;
-      setServerPhase('');
-      stopPolling();
       if (!skipCancel) {
         void cancelListenTask();
       }
-
       setListenState('idle');
       setListenPhase('');
       setListenError('');
       setSegments([]);
       setIsGenerationComplete(false);
-      listenTaskIdRef.current = null;
-      if (!skipCancel) {
-        curProjectRef.current = '';
-      }
-      cachedListenStateRef.current = 'idle';
+      setTaskPhase('');
     },
-    [stopPolling, cancelListenTask],
+    [cancelListenTask],
   );
-
-  const replaceSegments = useCallback((nextSegments: ListenSegment[]) => {
-    setSegments(nextSegments);
-  }, []);
-
-  const restoreListenCache = useCallback((nextSegments: ListenSegment[]) => {
-    setSegments(nextSegments);
-    setIsGenerationComplete(true);
-    setListenError('');
+  const replaceSegments = useCallback(
+    (value: ListenSegment[]) => setSegments(value),
+    [],
+  );
+  const restoreListenCache = useCallback((value: ListenSegment[]) => {
+    setSegments(value);
     setListenState('ready');
-    setListenPhase('');
-    cachedListenStateRef.current = 'ready';
+    setListenError('');
+    setIsGenerationComplete(areListenSegmentsFullyPlayable(value));
   }, []);
-
   const updateListenRuntime = useCallback(
     (
-      nextState: 'idle' | 'loading' | 'ready' | 'error',
-      generationComplete = false,
+      state: 'idle' | 'loading' | 'ready' | 'error',
+      complete = false,
       phase = '',
     ) => {
-      setListenState(nextState);
-      if (nextState !== 'error') {
+      setListenState(state);
+      setIsGenerationComplete(complete);
+      setListenPhase(phase);
+      if (state !== 'error') {
         setListenError('');
       }
-      setIsGenerationComplete(generationComplete);
-      setListenPhase(phase);
-      cachedListenStateRef.current =
-        nextState === 'ready'
-          ? 'ready'
-          : nextState === 'loading'
-          ? 'loading'
-          : 'idle';
     },
     [],
   );
-
-  const startPolling = useCallback(
-    (taskId: string) => {
-      stopPolling();
-      const epoch = epochRef.current;
-      let polling = false;
-
-      pollTimerRef.current = setInterval(async () => {
-        if (polling || epoch !== epochRef.current) {
-          return;
-        }
-        polling = true;
-        try {
-          const res = await fetchWithTimeout(
-            `${API_BASE}/api/listen-book/status/${taskId}`,
-          );
-          const data = await res.json();
-
-          if (epoch !== epochRef.current) {
-            return;
-          }
-          if (!res.ok) {
-            throw new Error(data?.error || `查询生成状态失败(${res.status})`);
-          }
-
-          const {phase, segments: segs, error} = data;
-          setServerPhase(phase || '');
-          setListenPhase(translateListenPhase(phase));
-
-          if (Array.isArray(segs) && segs.length > 0) {
-            setSegments(prev => mergePolledSegments(prev, segs));
-          }
-
-          const hasPlayableSegment =
-            Array.isArray(segs) && segs.some(hasPlayableListenAudio);
-
-          if (hasPlayableSegment) {
-            cachedListenStateRef.current = 'ready';
-            setListenState(prev => (prev === 'loading' ? 'ready' : prev));
-          }
-
-          if (phase === 'done') {
-            stopPolling();
-            if (!hasPlayableSegment) {
-              setListenState('error');
-              setListenError('生成已结束，但没有可播放的音频，请重试');
-              cachedListenStateRef.current = 'idle';
-              return;
-            }
-            if (Array.isArray(segs)) {
-              setSegments(segs);
-            }
-            const fullyPlayable = areListenSegmentsFullyPlayable(segs);
-            setListenError('');
-            setIsGenerationComplete(fullyPlayable);
-            cachedListenStateRef.current = 'ready';
-            setListenState('ready'); // 确保能触发播放
-          } else if (phase === 'error' || phase === 'cancelled') {
-            stopPolling();
-            cachedListenStateRef.current = 'idle';
-            setListenState('error');
-            setListenError(
-              error ||
-                (phase === 'cancelled'
-                  ? '听书任务已取消，请重试'
-                  : '听书音频生成失败'),
-            );
-            console.error('生成报错:', error);
-          }
-        } catch (err) {
-          if (epoch !== epochRef.current) {
-            return;
-          }
-          stopPolling();
-          setListenState('error');
-          setListenError(
-            err instanceof Error ? err.message : '查询生成状态失败，请重试',
-          );
-          console.warn('Status poll exception', err);
-        } finally {
-          polling = false;
-        }
-      }, 2000);
-    },
-    [stopPolling],
-  );
-
   const checkListenCache = useCallback(
-    async (projectName: string, chapterIndex: number, chapterText?: string) => {
-      const epoch = epochRef.current;
-      curProjectRef.current = projectName;
-      const listenerId = listenerIdRef.current;
-      try {
-        const normalizedText = normalizeChapterTextForRequest(chapterText);
-        const res = await fetchWithTimeout(
-          `${API_BASE}/api/listen-book/check`,
-          {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              projectName,
-              listenerId,
-              chapterIndex,
-              ...(normalizedText
-                ? {contentHash: createTextHash(normalizedText)}
-                : {}),
-            }),
-          },
-        );
-        const data = await res.json();
-
-        if (epoch !== epochRef.current) {
-          return {cached: false, inProgress: false};
-        }
-
-        if (!res.ok) {
-          throw new Error(data?.error || `缓存检查失败(${res.status})`);
-        }
-
-        if (data.exists && areListenSegmentsFullyPlayable(data.segments)) {
-          setSegments(data.segments);
-          setIsGenerationComplete(true);
-          setListenError('');
-          cachedListenStateRef.current = 'ready';
-          return {cached: true, inProgress: false};
-        }
-        // 服务端明确未命中时，旧 URL 不能继续作为已完成缓存使用。
-        stopPolling();
-        setSegments(Array.isArray(data.segments) ? data.segments : []);
-        setIsGenerationComplete(false);
-        setListenError('');
-        cachedListenStateRef.current = 'idle';
-        listenTaskIdRef.current = null;
-        await clearListenChapterCache(projectName, chapterIndex);
-        if (epoch !== epochRef.current) {
-          return {cached: false, inProgress: false};
-        }
-        if (data.inProgress && data.taskId) {
-          listenTaskIdRef.current = data.taskId;
-          cachedListenStateRef.current = 'loading';
-          return {cached: false, inProgress: true};
-        }
-        return {cached: false, inProgress: false};
-      } catch (e) {
-        console.warn('Check cache failed', e);
+    async (project: string, chapter: number, text?: string) => {
+      const epoch = context.current.epoch;
+      const data = await checkChapter(
+        project,
+        chapter,
+        text ? createTextHash(normalizeChapterTextForRequest(text)) : undefined,
+      );
+      if (epoch !== context.current.epoch) {
         return {cached: false, inProgress: false};
       }
+      context.current.project = project;
+      context.current.chapter = chapter;
+      context.current.taskId = data.taskId || '';
+      setSegments(data.segments);
+      setIsGenerationComplete(data.exists);
+      return {cached: data.exists, inProgress: data.inProgress};
     },
-    [stopPolling],
+    [],
   );
-
   const startListening = useCallback(
     async (
-      projectName: string,
-      chapterIndex: number,
+      project: string,
+      chapter: number,
       payload: ListenBookGeneratePayload,
     ) => {
-      const epoch = epochRef.current;
-      curProjectRef.current = projectName;
-      const listenerId = listenerIdRef.current;
-      const chapterText = normalizeChapterTextForRequest(payload.chapterText);
-
-      if (!chapterText) {
-        setListenState('error');
-        setListenError('当前章节正文为空，无法生成语音。');
-        cachedListenStateRef.current = 'idle';
-        console.warn('Trigger listening skipped: empty chapter text');
-        return;
-      }
-
-      if (
-        cachedListenStateRef.current === 'ready' &&
-        areListenSegmentsFullyPlayable(segments)
-      ) {
-        setListenState('ready');
-        return;
-      }
-
-      if (
-        cachedListenStateRef.current === 'loading' &&
-        listenTaskIdRef.current
-      ) {
-        setListenState('loading');
-        setListenPhase('正在等待 TTS 合成任务…');
-        startPolling(listenTaskIdRef.current);
-        return;
-      }
-
+      const epoch = ++context.current.epoch;
+      context.current.project = project;
+      context.current.chapter = chapter;
       setListenState('loading');
-      setListenPhase('正在等待 TTS 合成任务…');
-      cachedListenStateRef.current = 'loading';
-
+      setListenError('');
       try {
-        const res = await fetchWithTimeout(
-          `${API_BASE}/api/listen-book/generate`,
-          {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              projectName,
-              listenerId,
-              chapterIndex,
-              chapterTitle: payload.chapterTitle || '',
-              chapterText,
-              prescanTexts: payload.prescanTexts || [],
-            }),
-          },
-        );
-        const data = await res.json();
-
-        if (epoch !== epochRef.current) {
-          if (data.taskId && listenerId !== listenerIdRef.current) {
-            fetchWithTimeout(
-              `${API_BASE}/api/listen-book/cancel/${data.taskId}`,
-              {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({listenerId}),
-              },
-            ).catch(() => {});
+        const task = await generateChapter(project, chapter, payload);
+        if (epoch !== context.current.epoch) {
+          return;
+        }
+        context.current.taskId = task.id;
+        apply(getTask(task.id) || task);
+      } catch (error) {
+        if (epoch === context.current.epoch) {
+          setListenState('error');
+          setListenError(error instanceof Error ? error.message : '启动失败');
+          if (error instanceof ConfigurationError) {
+            DeviceEventEmitter.emit('VoiceWeaverOpenSettings', error.group);
           }
-          return;
         }
-
-        if (!res.ok) {
-          throw new Error(data?.error || `启动听书失败(${res.status})`);
-        }
-
-        if (data.alreadyDone && areListenSegmentsFullyPlayable(data.segments)) {
-          listenTaskIdRef.current = data.taskId || null;
-          setSegments(data.segments || []);
-          setIsGenerationComplete(true);
-          setListenError('');
-          setListenState('ready');
-          cachedListenStateRef.current = 'ready';
-          return;
-        }
-
-        if (Array.isArray(data.segments) && data.segments.length > 0) {
-          setSegments(data.segments);
-          setIsGenerationComplete(false);
-        }
-
-        listenTaskIdRef.current = data.taskId;
-        startPolling(data.taskId);
-      } catch (e) {
-        if (epoch !== epochRef.current) {
-          return;
-        }
-        console.error('Trigger listening failed', e);
-        setListenState('error');
-        setListenError(e instanceof Error ? e.message : '启动听书失败');
       }
     },
-    [segments, startPolling],
+    [apply],
   );
-
-  useEffect(() => {
-    return () => {
-      void cancelListenTask();
-    };
-  }, [cancelListenTask]);
-
   return {
     getListenerId,
-    serverPhase,
+    taskPhase,
     listenState,
     listenPhase,
     listenError,

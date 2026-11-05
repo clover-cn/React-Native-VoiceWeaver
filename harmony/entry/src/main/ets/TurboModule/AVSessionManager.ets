@@ -7,6 +7,7 @@ import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import { LoadManager } from '../rn';
 import { Logger } from '../utils/Logger';
+import { GenerationBackground } from './GenerationBackground';
 
 const TAG = 'AVSessionManager';
 const COMMAND_EVENT_NAME = 'VideoSessionCommand';
@@ -426,56 +427,16 @@ export class AVSessionManager {
   }
 
   private startContinuousTask(): void {
-    if (this.backgroundTaskStarted || !this.avSessionInstance) {
-      return;
-    }
-
-    const context = getContext() as common.UIAbilityContext;
-
-    const wantAgentInfo: wantAgent.WantAgentInfo = {
-      wants: [
-        {
-          bundleName: APP_BUNDLE_NAME,
-          abilityName: ENTRY_ABILITY_NAME,
-        },
-      ],
-      operationType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 0,
-      wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
-    };
-
-    wantAgent.getWantAgent(wantAgentInfo).then(agent => {
-      backgroundTaskManager.startBackgroundRunning(
-        context,
-        backgroundTaskManager.BackgroundMode.AUDIO_PLAYBACK,
-        agent,
-      ).then(() => {
-        this.backgroundTaskStarted = true;
-        Logger.info(TAG, 'startBackgroundRunning success');
-      }).catch((error: BusinessError) => {
-        Logger.error(TAG, `startBackgroundRunning failed: ${error.code}, ${error.message}`);
-      });
-    }).catch((error: BusinessError) => {
-      Logger.error(TAG, `getWantAgent for background failed: ${error.code}, ${error.message}`);
-    });
+    if (this.backgroundTaskStarted || !this.avSessionInstance) { return; }
+    GenerationBackground.update(getContext() as common.UIAbilityContext, 'audio', true).then(() => {
+      this.backgroundTaskStarted = true;
+    }).catch((): void => { Logger.error(TAG, '播放后台任务申请失败'); });
   }
-
   private stopContinuousTask(): void {
-    if (!this.backgroundTaskStarted) {
-      return;
-    }
-
-    backgroundTaskManager.stopBackgroundRunning(
-      getContext() as common.UIAbilityContext,
-      (error) => {
-        if (error) {
-          Logger.error(TAG, `stopBackgroundRunning failed: ${error.code}, ${error.message}`);
-          return;
-        }
-        this.backgroundTaskStarted = false;
-        Logger.info(TAG, 'stopBackgroundRunning success');
-      },
-    );
+    if (!this.backgroundTaskStarted) { return; }
+    GenerationBackground.update(getContext() as common.UIAbilityContext, 'audio', false).then(() => {
+      this.backgroundTaskStarted = false;
+    }).catch((): void => { Logger.error(TAG, '播放后台任务停止失败'); });
   }
 
   private async buildMetadata(data: SessionMetadataPayload): Promise<avSession.AVMetadata> {

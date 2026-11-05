@@ -532,7 +532,8 @@ export class NativeAudioPlayerManager {
   }
 
   private isLocalCacheUri(url: string): boolean {
-    return url.startsWith('internal://cache/') || url.startsWith(getContext().cacheDir);
+    return url.startsWith('file://') || url.startsWith('internal://cache/') ||
+      url.startsWith(getContext().cacheDir) || url.startsWith(getContext().filesDir);
   }
 
   private isRemoteStreamUri(url: string): boolean {
@@ -562,6 +563,10 @@ export class NativeAudioPlayerManager {
   }
 
   private resolveLocalCachePath(url: string): string {
+    // 端侧生成音频位于持久目录，AVPlayer 需要打开后的文件描述符。
+    if (url.startsWith('file://')) {
+      return url.substring('file://'.length);
+    }
     if (url.startsWith('internal://cache/')) {
       const relativePath = url.substring('internal://cache/'.length);
       return `${getContext().cacheDir}/${relativePath}`;

@@ -14,6 +14,7 @@ using namespace facebook;
 
 BridgeTurboModule::BridgeTurboModule(const ArkTSTurboModule::Context ctx, const std::string name) : ArkTSTurboModule(ctx, name) {
     methodMap_ = {
+        ARK_METHOD_METADATA(voiceWeaver, 2),
         ARK_METHOD_METADATA(replaceUrl, 3),
         ARK_METHOD_METADATA(pushUrl, 3),
         ARK_METHOD_METADATA(back, 2),

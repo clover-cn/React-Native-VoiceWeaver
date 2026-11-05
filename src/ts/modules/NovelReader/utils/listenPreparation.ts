@@ -14,16 +14,14 @@ export const PREPARATION_STEPS: {key: ListenPreparationStage; title: string}[] =
     {key: 'play', title: '准备播放'},
   ];
 
-export const stageFromServer = (
-  phase: string,
-): ListenPreparationStage | null => {
+export const stageFromTask = (phase: string): ListenPreparationStage | null => {
   switch (phase) {
     case 'prescan':
-    case 'parse':
+    case 'parsing':
       return 'analyze';
-    case 'assign':
+    case 'assigning':
       return 'assign';
-    case 'tts':
+    case 'generating':
       return 'generate';
     case 'done':
       return 'play';

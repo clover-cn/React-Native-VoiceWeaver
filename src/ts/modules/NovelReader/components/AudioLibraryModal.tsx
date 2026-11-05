@@ -1,3 +1,4 @@
+import {localService} from '../local/service';
 import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import React, {memo, useCallback, useEffect, useMemo, useState} from 'react';
 import {
@@ -15,20 +16,13 @@ import {
 import Video from 'react-native-video';
 import VideoSessionController from '../controllers/VideoSessionController';
 import bridge from '../../base/utils/bridge';
-import {fetchWithTimeout, TimeoutRequestInit} from '../hooks/useListenBook';
+import {importAudio} from '../local/repository';
 import {AudioOption, VoicePool} from '../types/audio';
 
 interface AudioLibraryModalProps {
   visible: boolean;
-  apiBase: string;
   onClose: () => void;
   onRecordsChanged?: (records: AudioOption[]) => void;
-}
-
-interface AudioListResponse {
-  success?: boolean;
-  list?: AudioOption[];
-  error?: string;
 }
 
 interface AudioVoiceActorGroup {
@@ -37,11 +31,6 @@ interface AudioVoiceActorGroup {
   records: AudioOption[];
   configuredPool: VoicePool;
   mixedPool: boolean;
-}
-
-interface ProviderResponse {
-  success?: boolean;
-  provider?: string;
 }
 
 interface SelectedAudioFile {
@@ -58,13 +47,6 @@ interface NativeAudioSelectionResult {
   uri?: string;
   name?: string;
   size?: number;
-}
-
-interface NativeUploadResult {
-  success?: boolean;
-  error?: string;
-  message?: string;
-  responseCode?: number;
 }
 
 const VOICE_POOL_OPTIONS: ReadonlyArray<{
@@ -129,7 +111,9 @@ const buildAudioVoiceActorGroups = (
 
   return Array.from(groups.values()).map(group => {
     const pools = Array.from(
-      new Set(group.records.map(record => normalizeVoicePool(record.voicePool))),
+      new Set(
+        group.records.map(record => normalizeVoicePool(record.voicePool)),
+      ),
     );
     return {
       ...group,
@@ -147,68 +131,6 @@ const buildPoolDrafts = (records: AudioOption[]) => {
     },
     {},
   );
-};
-
-const buildNativeUploadErrorMessage = (result?: NativeUploadResult) => {
-  const errorText = result?.error?.trim() || '';
-  if (errorText) {
-    return errorText;
-  }
-
-  const messageText = result?.message?.trim() || '';
-  if (messageText) {
-    return messageText;
-  }
-
-  if (typeof result?.responseCode === 'number') {
-    return `上传失败(${result.responseCode})`;
-  }
-
-  return '上传音频失败';
-};
-
-const sleep = (ms: number) =>
-  new Promise(resolve => {
-    setTimeout(resolve, ms);
-  });
-
-const requestJson = async <T,>(
-  url: string,
-  options?: TimeoutRequestInit,
-): Promise<T> => {
-  let retried = false;
-
-  while (true) {
-    try {
-      const response = await fetchWithTimeout(url, options);
-      if (response.status === 429 && !retried) {
-        retried = true;
-        await sleep(20000);
-        continue;
-      }
-
-      if (response.status >= 500 && response.status < 600 && !retried) {
-        retried = true;
-        await sleep(2000);
-        continue;
-      }
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.error || `请求失败(${response.status})`);
-      }
-      return data as T;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('请求超时') && !retried) {
-        retried = true;
-        await sleep(2000);
-        continue;
-      }
-      throw error;
-    }
-  }
 };
 
 const normalizeAudioList = (list?: AudioOption[]) => {
@@ -425,7 +347,6 @@ const PreviewPlayer = memo(({uri}: PreviewPlayerProps) => {
 
 const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   visible,
-  apiBase,
   onClose,
   onRecordsChanged,
 }) => {
@@ -446,15 +367,11 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     new Set(),
   );
   const [poolDrafts, setPoolDrafts] = useState<Record<string, VoicePool>>({});
-  const [savingPoolKeys, setSavingPoolKeys] = useState<Set<string>>(
-    new Set(),
-  );
+  const [savingPoolKeys, setSavingPoolKeys] = useState<Set<string>>(new Set());
 
   const fetchProvider = useCallback(async () => {
     try {
-      const data = await requestJson<ProviderResponse>(
-        `${apiBase}/api/tts/provider`,
-      );
+      const data = await localService.provider();
       setIsSiliconflow((data.provider || 'siliconflow') === 'siliconflow');
     } catch (err) {
       console.warn(
@@ -463,18 +380,16 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       );
       setIsSiliconflow(true);
     }
-  }, [apiBase]);
+  }, []);
 
   const fetchAudioList = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const data = await requestJson<AudioListResponse>(
-        `${apiBase}/api/audio/list`,
-      );
+      const data = await localService.audioList();
       if (!data.success) {
-        throw new Error(data.error || '获取音频列表失败');
+        throw new Error('获取音频列表失败');
       }
 
       const normalizedList = normalizeAudioList(data.list);
@@ -493,7 +408,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [apiBase, onRecordsChanged]);
+  }, [onRecordsChanged]);
 
   useEffect(() => {
     if (!visible) {
@@ -521,9 +436,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             item.createTime,
           ]
             .filter(Boolean)
-            .some(value =>
-              String(value).toLowerCase().includes(lowerKeyword),
-            );
+            .some(value => String(value).toLowerCase().includes(lowerKeyword));
         })
       : audioList;
 
@@ -609,19 +522,12 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
           return;
         }
 
-        const sampleRes = await requestJson<{
-          success?: boolean;
-          error?: string;
-        }>(`${apiBase}/api/audio/${item.id}/sample-text`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            sampleText: nextSampleText,
-          }),
+        const sampleRes = await localService.sampleText(item.id, {
+          sampleText: nextSampleText,
         });
 
         if (!sampleRes.success) {
-          throw new Error(sampleRes.error || '保存参考文本失败');
+          throw new Error('保存参考文本失败');
         }
 
         setInitialAudioMap(prev => ({
@@ -639,7 +545,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         setPendingId(null);
       }
     },
-    [apiBase, initialAudioMap, isSiliconflow],
+    [initialAudioMap, isSiliconflow],
   );
 
   const setGroupPool = useCallback((groupKey: string, voicePool: VoicePool) => {
@@ -669,27 +575,12 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
 
       setSavingPoolKeys(current => new Set(current).add(group.key));
       try {
-        const data = await requestJson<{
-          success?: boolean;
-          error?: string;
-          data?: {affectedCount?: number};
-        }>(
-          `${apiBase}/api/audio/voice-actor/${encodeURIComponent(
-            group.voiceActor,
-          )}/pool`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              voicePool: poolDrafts[group.key] || group.configuredPool,
-            }),
-          },
-        );
+        const data = await localService.voicePool(group.voiceActor, {
+          voicePool: poolDrafts[group.key] || group.configuredPool,
+        });
 
         if (!data.success) {
-          throw new Error(data.error || '更新音频池失败');
+          throw new Error('更新音频池失败');
         }
 
         await fetchAudioList();
@@ -707,14 +598,14 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         });
       }
     },
-    [apiBase, fetchAudioList, poolDrafts, savingPoolKeys],
+    [fetchAudioList, poolDrafts, savingPoolKeys],
   );
 
   const deleteAudioItem = useCallback(
     (item: AudioOption) => {
       Alert.alert(
         '删除音频',
-        '确定删除这段音频吗？删除后会同时清理它在角色上的绑定。',
+        '确定删除本机这段参考录音吗？关联片段再次生成前需要重新选择音色。',
         [
           {text: '取消', style: 'cancel'},
           {
@@ -723,15 +614,10 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             onPress: async () => {
               setPendingId(item.id);
               try {
-                const data = await requestJson<{
-                  success?: boolean;
-                  error?: string;
-                }>(`${apiBase}/api/audio/${item.id}`, {
-                  method: 'DELETE',
-                });
+                const data = await localService.deleteAudio(item.id);
 
                 if (!data.success) {
-                  throw new Error(data.error || '删除音频失败');
+                  throw new Error('删除音频失败');
                 }
 
                 await fetchAudioList();
@@ -748,7 +634,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         ],
       );
     },
-    [apiBase, fetchAudioList],
+    [fetchAudioList],
   );
 
   const handleUploadPress = useCallback(async () => {
@@ -800,57 +686,17 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
 
     setUploading(true);
     try {
-      const draftDebugInfo = buildUploadDraftDebugInfo(uploadDraft);
-      console.log('[AudioLibraryModal] 上传音频入参摘要', {
-        ...draftDebugInfo,
-        apiBase,
-        uploadUrl: `${apiBase}/api/audio/upload`,
-      });
-
-      const payload = JSON.stringify({
-        url: `${apiBase}/api/audio/upload`,
-        uri: uploadDraft.uri,
-        fileName: uploadDraft.fileName,
-        uploadName: finalName,
-        mimeType: uploadDraft.mimeType,
-      });
-      console.log('[AudioLibraryModal] 上传音频原始 payload', payload);
-      const nativeResult = await new Promise<NativeUploadResult>(
-        (resolve, reject) => {
-          try {
-            bridge.uploadAudio(payload, result => {
-              if (!result) {
-                reject(new Error('上传结果为空'));
-                return;
-              }
-
-              try {
-                const parsedResult = JSON.parse(result) as NativeUploadResult;
-                console.log(
-                  '[AudioLibraryModal] 上传音频原生返回',
-                  parsedResult,
-                );
-                resolve(parsedResult);
-              } catch (_parseError) {
-                reject(new Error('上传结果解析失败'));
-              }
-            });
-          } catch (nativeError) {
-            reject(nativeError);
-          }
-        },
+      await importAudio(
+        uploadDraft.uri,
+        uploadDraft.fileName,
+        finalName,
+        uploadDraft.mimeType,
       );
-
-      if (!nativeResult.success) {
-        throw new Error(buildNativeUploadErrorMessage(nativeResult));
-      }
-
       setUploadDraft(null);
       await fetchAudioList();
-      Alert.alert('上传成功', nativeResult.message || '音频已上传。');
+      Alert.alert('上传成功', '参考录音已保存到本机。');
     } catch (err) {
       console.warn('[AudioLibraryModal] 上传音频失败', err, {
-        apiBase,
         uploadDraft: buildUploadDraftDebugInfo(uploadDraft),
       });
       Alert.alert(
@@ -860,7 +706,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     } finally {
       setUploading(false);
     }
-  }, [apiBase, fetchAudioList, uploadDraft]);
+  }, [fetchAudioList, uploadDraft]);
 
   const listHeader = useMemo(
     () => (
@@ -926,11 +772,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   );
 
   const renderAudioRecord = (record: AudioOption) => {
-    const previewUri = record.url
-      ? record.url.startsWith('http')
-        ? record.url
-        : `${apiBase}${record.url}`
-      : '';
+    const previewUri = record.url ? record.url : '';
     const isPending = pendingId === record.id;
 
     return (
@@ -1186,11 +1028,11 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
                 <Text style={styles.uploadRuleText}>
                   音频命名必须严格按照：名字-情绪-性别
                 </Text>
-                <Text style={styles.uploadRuleExample}>
-                  例：小明-高兴-男
-                </Text>
+                <Text style={styles.uploadRuleExample}>例：小明-高兴-男</Text>
                 <Text style={styles.uploadRuleTitle}>目前支持的情绪有</Text>
-                <Text style={styles.uploadRuleText}>高兴、愤怒、悲伤、害怕、厌恶、忧郁、惊讶、平静</Text>
+                <Text style={styles.uploadRuleText}>
+                  高兴、愤怒、悲伤、害怕、厌恶、忧郁、惊讶、平静
+                </Text>
                 <Text style={styles.uploadRuleText}>
                   旁白必须使用：名字-旁白-性别
                 </Text>

@@ -30,7 +30,7 @@ const ReaderHeader: React.FC<ReaderHeaderProps> = ({ title, onBack, onSettingCli
 
         <TouchableOpacity style={styles.settingBtn} onPress={onSettingClick}>
           {/* <Text style={styles.settingText}>设置</Text> */}
-          <Text style={styles.settingText}></Text>
+          <Text style={styles.settingText}>设置</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

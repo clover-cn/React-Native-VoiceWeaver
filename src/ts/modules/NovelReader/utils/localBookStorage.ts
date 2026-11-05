@@ -40,6 +40,7 @@ const CHAPTER_PATTERNS = [
   /^\d{1,5}[、.．]\s*\S+/,
 ];
 const localTextCache = new Map<string, string>();
+const localBookVersions = new Map<string, number>();
 
 interface TxtDecodeResult {
   content: string;
@@ -514,6 +515,7 @@ export const importLocalTxtBook =
 export const readLocalTxtBookContent = async (
   localBookId: string,
 ): Promise<string> => {
+  const version = localBookVersions.get(localBookId) || 0;
   const cachedContent = localTextCache.get(localBookId);
   if (cachedContent !== undefined) {
     return cachedContent;
@@ -532,11 +534,20 @@ export const readLocalTxtBookContent = async (
   }
   const decoded = decodeNativeTxtPayload(payload);
   const content = decoded.content;
+  if (version !== (localBookVersions.get(localBookId) || 0)) {
+    throw new Error('书籍正在删除，正文读取已取消。');
+  }
   localTextCache.set(localBookId, content);
   return content;
 };
 
 export const deleteLocalTxtBookFile = async (localBookId: string) => {
+  // 使删除前发起的读取失效，避免迟到结果重新填充正文缓存。
+  localBookVersions.set(
+    localBookId,
+    (localBookVersions.get(localBookId) || 0) + 1,
+  );
+  localTextCache.delete(localBookId);
   const payload = parseNativeResult(
     await callNative(callback =>
       bridge.deleteLocalTxtBook(localBookId, callback),

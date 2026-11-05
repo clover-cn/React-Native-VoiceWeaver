@@ -14,7 +14,6 @@ import {Dropdown} from 'react-native-element-dropdown';
 import Video from 'react-native-video';
 import VideoSessionController from '../controllers/VideoSessionController';
 import {ListenSegment} from '../types/reader';
-import {API_BASE} from '../hooks/useListenBook';
 import {AudioOption} from '../types/audio';
 
 export interface SegmentEditPayload {
@@ -110,9 +109,7 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
       return '';
     }
 
-    return matchedAudio.url.startsWith('http')
-      ? matchedAudio.url
-      : `${API_BASE}${matchedAudio.url}`;
+    return matchedAudio.url;
   }, [audioOptions, selectedAudioId]);
 
   const effectiveRole = role || '旁白';

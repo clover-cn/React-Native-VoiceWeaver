@@ -2,6 +2,7 @@ import {hasNativeStorage} from '../../base/utils/nativeCapabilities';
 import {Book, Chapter, ListenSegment} from '../types/reader';
 import bridge from '../../base/utils/bridge';
 import {normalizePlaybackRate} from './playbackRate';
+import ListenAudioCacheController from '../controllers/ListenAudioCacheController';
 
 const PLAYBACK_RATE_KEY = 'novel_reader_playback_rate';
 
@@ -216,15 +217,11 @@ export const saveReadingRecords = async (
   const trimmed = records;
 
   if (trimmed.length === 0) {
-    try {
-      if (isNativeStorageAvailable()) {
-        await removePrefData(READING_RECORD_KEY);
-        return;
-      }
-      getStorage().removeItem(READING_RECORD_KEY);
-    } catch (error) {
-      console.warn('[readerStorage] 清空阅读记录失败', error);
+    if (isNativeStorageAvailable()) {
+      await removePrefData(READING_RECORD_KEY);
+      return;
     }
+    getStorage().removeItem(READING_RECORD_KEY);
     return;
   }
 
@@ -235,30 +232,40 @@ export const saveReadingRecords = async (
   }
 };
 
+let readingWrites: Promise<unknown> = Promise.resolve();
+/** 串行处理书架读改写，避免旧进度保存覆盖删除结果。 */
+function serializeReadingRecords<T>(work: () => Promise<T>): Promise<T> {
+  const next = readingWrites.then(work, work);
+  readingWrites = next.catch(() => undefined);
+  return next;
+}
+
 // 写入/更新一条书架记录：按 bookUrl 去重，最新访问的书籍置顶。
 export const upsertReadingRecord = async (
   record: ReadingRecord,
 ): Promise<ReadingRecord[]> => {
-  const current = await loadReadingRecords();
-  const next = [
-    record,
-    ...current.filter(item => item.book.bookUrl !== record.book.bookUrl),
-  ];
-  await saveReadingRecords(next);
-  return next;
+  return serializeReadingRecords(async () => {
+    const current = await loadReadingRecords();
+    const next = [
+      record,
+      ...current.filter(item => item.book.bookUrl !== record.book.bookUrl),
+    ];
+    await saveReadingRecords(next);
+    return next;
+  });
 };
 
 // 按 bookUrl 删除一条阅读记录，返回更新后的列表
 export const removeReadingRecord = async (
   bookUrl: string,
 ): Promise<ReadingRecord[]> => {
-  const current = await loadReadingRecords();
-  const next = current.filter(item => item.book.bookUrl !== bookUrl);
-  if (next.length === current.length) {
-    return current;
-  }
-  await saveReadingRecords(next);
-  return next;
+  return serializeReadingRecords(async () => {
+    const current = await loadReadingRecords();
+    const next = current.filter(item => item.book.bookUrl !== bookUrl);
+    // 上次落盘失败可能已改变原生内存缓存，重试仍须提交磁盘状态。
+    await saveReadingRecords(next);
+    return next;
+  });
 };
 
 // 兼容旧版（单对象）持久化数据：读取时归一为数组形式
@@ -294,6 +301,11 @@ const isValidReadingRecord = (value: unknown): value is ReadingRecord => {
 // ──── 听书进度持久化 ────
 
 const LISTEN_PROGRESS_KEY = 'novel_reader_listen_progress';
+const removedListeningProjects = new Set<string>();
+/** 用户主动重新打开书籍后，允许保存新的听书进度。 */
+export const activateBookListeningData = (projectName: string): void => {
+  removedListeningProjects.delete(projectName);
+};
 
 export interface ListenProgress {
   segmentIndex: number; // 当前播放段落序号
@@ -314,6 +326,9 @@ export interface ListenChapterCache {
 export const saveListenProgress = async (
   progress: ListenProgress,
 ): Promise<void> => {
+  if (removedListeningProjects.has(progress.projectName)) {
+    return;
+  }
   // 使用复合 key，区分不同书的不同章节
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${progress.projectName}_${progress.chapterIndex}`;
   if (isNativeStorageAvailable()) {
@@ -353,9 +368,57 @@ export const clearListenProgress = async (
 const getListenChapterCacheKey = (projectName: string, chapterIndex: number) =>
   `listen_book_cache_${projectName}_${chapterIndex}`;
 
+/** 删除整本书的听书偏好；失败向上传递，避免界面误报清理成功。 */
+export async function clearBookListeningData(
+  projectName: string,
+  chapterIndexes: number[],
+): Promise<void> {
+  removedListeningProjects.add(projectName);
+  for (const index of new Set(chapterIndexes)) {
+    if (!Number.isInteger(index) || index < 0) {
+      continue;
+    }
+    const cacheKey = getListenChapterCacheKey(projectName, index);
+    const cache = isNativeStorageAvailable()
+      ? await readPrefJson<ListenChapterCache | null>(cacheKey, null)
+      : readJson<ListenChapterCache | null>(cacheKey, null);
+    const localUris = (cache?.segments || []).flatMap(segment =>
+      [segment.localAudioUrl, segment.audioUrl].filter((uri): uri is string =>
+        Boolean(
+          uri &&
+            /^(file:\/\/|internal:\/\/|\/)/.test(uri) &&
+            !uri.includes('/voiceweaver/'),
+        ),
+      ),
+    );
+    if (localUris.length) {
+      const result = await ListenAudioCacheController.cleanupAudioCache({
+        localUris: [...new Set(localUris)],
+      });
+      if (!result.success || result.failedCount) {
+        throw new Error('清理书籍播放缓存失败，请停止播放后重试。');
+      }
+    }
+    const keys = [
+      getListenChapterCacheKey(projectName, index),
+      `${LISTEN_PROGRESS_KEY}_${projectName}_${index}`,
+    ];
+    for (const key of keys) {
+      if (isNativeStorageAvailable()) {
+        await removePrefData(key);
+      } else {
+        getStorage().removeItem(key);
+      }
+    }
+  }
+}
+
 export const saveListenChapterCache = async (
   cache: ListenChapterCache,
 ): Promise<void> => {
+  if (removedListeningProjects.has(cache.projectName)) {
+    return;
+  }
   const key = getListenChapterCacheKey(cache.projectName, cache.chapterIndex);
   if (isNativeStorageAvailable()) {
     await writePrefJson(key, cache);

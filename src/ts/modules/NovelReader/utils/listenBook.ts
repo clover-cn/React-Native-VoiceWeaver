@@ -103,18 +103,20 @@ export const buildListenRegenerateSegmentPayload = ({
   };
 };
 
-// 后端 listen-book/status 返回的 phase key → 前端展示文案
-// 后端返回英文 key（如 'prescan'/'parse'/'assign'/'tts'），前端翻译成中文再展示
+// 端侧引擎任务状态对应的展示文案。
 const LISTEN_PHASE_TEXT_MAP: Record<string, string> = {
-  waiting: '准备中…',
-  prescan: '正在预扫描章节角色…',
-  parse: '正在分析剧情对话…',
-  assign: '正在分配参考音频…',
-  tts: '正在生成语音…',
+  queued: '正在等待生成任务…',
+  prescan: '正在预扫描章节角色，等待模型返回…',
+  parsing: '正在分析剧情对话，等待模型返回…',
+  assigning: '正在分配参考音频…',
+  generating: '正在生成语音…',
+  paused: '生成已暂停…',
+  cancelled: '生成已取消',
+  error: '生成失败',
   done: '',
 };
 
-/** 把后端返回的英文 phase key 翻译成中文展示文案；未知 key 返回空串，交给调用方兜底。 */
+/** 将端侧任务阶段翻译为中文文案。 */
 export const translateListenPhase = (phase?: string): string => {
   if (!phase) {
     return '';

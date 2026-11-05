@@ -2,7 +2,6 @@ import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
 import {ListenSegment} from '../types/reader';
 import VideoPlayerController from '../controllers/VideoPlayerController';
 import ListenAudioCacheController from '../controllers/ListenAudioCacheController';
-import {API_BASE} from './useListenBook';
 import {saveListenProgress} from '../utils/readerStorage';
 import {getSegmentPlaybackError} from '../utils/segmentPlaybackError';
 
@@ -86,7 +85,7 @@ const buildAbsoluteAudioUrl = (audioUrl?: string | null): string | null => {
     return audioUrl;
   }
 
-  return `${API_BASE}${audioUrl}`;
+  return audioUrl.startsWith('file://') ? audioUrl : null;
 };
 
 const getAudioFileExtension = (url: string): string => {

@@ -18,6 +18,7 @@ interface NovelHomeProps {
   onNavigateSearch: () => void;
   onImportBook: () => void;
   onManageBookSources: () => void;
+  onOpenSettings: () => void;
   isImporting?: boolean;
   readingRecords: ReadingRecord[];
   onResumeReading: (record: ReadingRecord) => void;
@@ -28,6 +29,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   onNavigateSearch,
   onImportBook,
   onManageBookSources,
+  onOpenSettings,
   isImporting = false,
   readingRecords,
   onResumeReading,
@@ -43,14 +45,18 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   }, [isImporting]);
 
   const handleLongPress = (record: ReadingRecord) => {
-    Alert.alert('从书架删除', `确定要从书架中删除《${record.book.name}》吗？`, [
-      {text: '取消', style: 'cancel'},
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: () => onRemoveRecord(record.book.bookUrl),
-      },
-    ]);
+    Alert.alert(
+      '删除书籍及本地数据',
+      `确定删除《${record.book.name}》吗？将清理该书的正文、阅读与听书进度、角色绑定及生成音频，本地导入的 TXT 也会删除。共享音色和 API 配置保留。`,
+      [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => onRemoveRecord(record.book.bookUrl),
+        },
+      ],
+    );
   };
 
   return (
@@ -65,6 +71,13 @@ const NovelHome: React.FC<NovelHomeProps> = ({
             <Text style={styles.greeting}>下午好，阅读爱好者</Text>
           </TouchableOpacity>
           <Text style={styles.subGreeting}>今天想听点什么？</Text>
+          <TouchableOpacity
+            onPress={onOpenSettings}
+            accessibilityLabel="打开设置">
+            <Text style={{color: '#007AFF', fontSize: 16, marginTop: 12}}>
+              设置 ›
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
@@ -84,6 +97,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
             return (
               <TouchableOpacity
                 key={book.bookUrl}
+                disabled={isImporting}
                 style={styles.bookCard}
                 onPress={() => onResumeReading(record)}
                 onLongPress={() => handleLongPress(record)}

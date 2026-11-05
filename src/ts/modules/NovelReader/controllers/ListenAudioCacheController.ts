@@ -31,6 +31,9 @@ class ListenAudioCacheController {
   cacheAudio(
     payload: CacheListenAudioPayload,
   ): Promise<CacheListenAudioResult> {
+    if (payload.url.startsWith('file://')) {
+      return Promise.resolve({success: true, cacheKey: payload.cacheKey, localUri: payload.url, hit: true});
+    }
     if (!BridgeTurboModule) {
       return Promise.resolve({
         success: false,
@@ -42,7 +45,7 @@ class ListenAudioCacheController {
 
     return new Promise(resolve => {
       try {
-        BridgeTurboModule.cacheListenBookAudio(
+        BridgeTurboModule!.cacheListenBookAudio(
           JSON.stringify(payload),
           resultText => {
             try {
@@ -71,6 +74,10 @@ class ListenAudioCacheController {
   cleanupAudioCache(
     payload: CleanupListenAudioCachePayload,
   ): Promise<CleanupListenAudioCacheResult> {
+    payload = {
+      localUris: payload.localUris?.filter(uri => !uri.includes('/voiceweaver/')),
+      localPaths: payload.localPaths?.filter(path => !path.replace(/\\/g, '/').includes('/voiceweaver/')),
+    };
     if (!BridgeTurboModule) {
       return Promise.resolve({
         success: false,
@@ -81,7 +88,7 @@ class ListenAudioCacheController {
 
     return new Promise(resolve => {
       try {
-        BridgeTurboModule.cleanupListenBookAudioCache(
+        BridgeTurboModule!.cleanupListenBookAudioCache(
           JSON.stringify(payload),
           resultText => {
             try {

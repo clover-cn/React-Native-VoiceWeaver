@@ -56,6 +56,7 @@ interface NovelReaderProps {
   isGenerationComplete: boolean;
   projectName?: string; // 项目名（用于进度持久化）
   onBack: () => void;
+  onOpenSettings: () => void;
   onPrevChapter: () => void;
   onNextChapter: () => void;
   onStartListen: () => void;
@@ -953,6 +954,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
             {transform: [{translateY: headerTranslateY}]},
           ]}>
           <ReaderHeader
+            onSettingClick={() => onMenuItemClick('settings')}
             onBack={onBack}
             title={currentChapter?.title}
             onMenuClick={menuName => {

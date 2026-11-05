@@ -1,6 +1,7 @@
 import {TurboModule, TurboModuleRegistry} from 'react-native';
 
 export interface Spec extends TurboModule {
+  voiceWeaver(payload: string, callback: (result: string) => void): void;
   replaceUrl(
     pageName: string,
     param?: string,

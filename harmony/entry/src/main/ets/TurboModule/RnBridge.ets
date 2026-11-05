@@ -24,6 +24,7 @@ import picker from '@ohos.file.picker';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import request from '@ohos.request';
 import { BookSourceSessionManager } from './BookSourceSessionManager';
+import { VoiceWeaverLocal } from './VoiceWeaverLocal';
 const TAG = 'RnBridge';
 const LISTEN_AUDIO_CACHE_PREFIX = 'listen_book_audio_';
 
@@ -174,6 +175,11 @@ class NativeAudioSessionCommandHandler extends AVSessionCommandHandler {
 }
 
 export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
+  private localEngine?: VoiceWeaverLocal;
+  voiceWeaver(payload: string, callback: (result: string) => void): void {
+    if (!this.localEngine) { this.localEngine = new VoiceWeaverLocal(getContext(this) as common.UIAbilityContext); }
+    this.localEngine.execute(payload).then((result: string) => callback(result));
+  }
   prePageName: string = ''
 
   openBookSourceLogin(sourceId: string, loginUrl: string, callback: (result: string) => void): void {
@@ -1038,7 +1044,7 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     })
   }
 
-  setOhPrefData(key: string, val: null | Object, prefName?: string, callback?: () => void) {
+  setOhPrefData(key: string, val: null | Object, prefName?: string, callback?: (error?: string) => void) {
     RnBridge.getRnBridgePref(prefName).then((pref) => {
       if (pref) {
         if (val === null || val === undefined) {
@@ -1049,18 +1055,26 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
         pref.flushSync()
       }
     })
-      .finally(() => {
+      .then(() => {
         callback && callback()
+      }).catch(() => {
+        Logger.error(TAG, '偏好存储写入或落盘失败')
+        callback?.('本机存储写入失败，请检查可用空间后重试。')
       })
   }
 
-  delOhPrefData(key: string, prefName?: string, callback?: () => void) {
+  delOhPrefData(key: string, prefName?: string, callback?: (error?: string) => void) {
     RnBridge.getRnBridgePref(prefName).then((pref) => {
       if (pref) {
         pref.deleteSync(key)
+        // deleteSync 只更新内存，落盘后才能报告删除成功。
+        pref.flushSync()
       }
-    }).finally(() => {
+    }).then(() => {
       callback && callback()
+    }).catch(() => {
+      Logger.error(TAG, '偏好存储删除或落盘失败')
+      callback?.('本机存储删除失败，请检查可用空间后重试。')
     })
   }
 
@@ -1584,7 +1598,9 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
   ): void {
     const id = this.getNonEmptyText(localBookId)
     try {
-      fs.unlinkSync(this.buildLocalTxtBookPath(id))
+      // 删除可能在后续清理阶段失败，重试时源文件已不存在也视为完成。
+      const path = this.buildLocalTxtBookPath(id)
+      if (fs.accessSync(path)) { fs.unlinkSync(path) }
       const result: NativeDeleteLocalTxtResult = {
         success: true,
         localBookId: id,

@@ -31,6 +31,7 @@ export interface AudioReferenceConfig {
 }
 
 export interface ListenSegment {
+  missingEmotionPolicy?: 'strict' | 'fallback_neutral';
   index?: number;
   type: 'narration' | 'dialogue';
   role?: string;

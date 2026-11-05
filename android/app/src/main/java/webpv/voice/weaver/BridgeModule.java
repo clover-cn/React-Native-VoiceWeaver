@@ -25,6 +25,17 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
   private final ExecutorService io = Executors.newFixedThreadPool(3);
   private final ExecutorService storage = Executors.newSingleThreadExecutor();
   private final Object cacheLock = new Object();
+  @ReactMethod
+  public void voiceWeaver(String payload, Callback callback) {
+    io.execute(() -> {
+      try {
+        Object data = new VoiceWeaverLocal(getReactApplicationContext()).execute(new JSONObject(payload));
+        callback.invoke(new JSONObject().put("success", true).put("data", data).toString());
+      } catch (Exception error) {
+        callback.invoke("{\"success\":false,\"error\":\"端侧操作失败，请检查配置、网络或可用存储空间\"}");
+      }
+    });
+  }
   private final OkHttpClient http = new OkHttpClient.Builder()
     .callTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
     .build();
