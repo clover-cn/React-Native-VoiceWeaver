@@ -45,6 +45,15 @@ interface Task extends TaskSnapshot {
   paused?: boolean;
 }
 const tasks = new Map<string, Task>();
+let globalCancelVersion = 0;
+const cancelVersions = new Map<string, number>();
+const cancelStamp = (project: string) =>
+  `${globalCancelVersion}:${cancelVersions.get(project) || 0}`;
+function assertStartAllowed(project: string, stamp: string): void {
+  if (stamp !== cancelStamp(project)) {
+    throw new Error('生成启动已取消。');
+  }
+}
 /** 播放等待时查询真实任务，避免依赖页面中可能滞后的阶段。 */
 export function getActiveChapterTask(
   projectName: string,
@@ -224,6 +233,8 @@ async function rememberPending(): Promise<void> {
   });
 }
 export async function restorePendingGeneration(): Promise<void> {
+  const cancellationVersions = new Map(cancelVersions);
+  const globalVersion = globalCancelVersion;
   const versions = new Map(projectVersions);
   const saved = await readDocument<
     Array<{
@@ -233,6 +244,13 @@ export async function restorePendingGeneration(): Promise<void> {
     }>
   >('pending.json', []);
   for (const item of saved) {
+    if (
+      globalVersion !== globalCancelVersion ||
+      (cancellationVersions.get(item.projectName) || 0) !==
+        (cancelVersions.get(item.projectName) || 0)
+    ) {
+      continue;
+    }
     if (
       deletingProjects.has(item.projectName) ||
       (versions.get(item.projectName) || 0) !==
@@ -667,6 +685,7 @@ export async function generateChapter(
   payload: ListenBookGeneratePayload,
   prefetch = false,
 ): Promise<TaskSnapshot> {
+  const startStamp = cancelStamp(projectName);
   const projectVersion = projectVersions.get(projectName) || 0;
   if (deletingProjects.has(projectName)) {
     throw new Error('正在删除该书籍。');
@@ -677,6 +696,8 @@ export async function generateChapter(
   const config = await loadConfig();
   validateConfig(config, true);
   await assertNarratorAvailable();
+  // 取消必须覆盖仍在读取配置或检查录音、尚未登记到 tasks 的请求。
+  assertStartAllowed(projectName, startStamp);
   const key = taskKey(projectName, chapterIndex);
   const hash = createTextHash(
     normalizeChapterTextForRequest(payload.chapterText),
@@ -777,6 +798,16 @@ export function cancelGeneration(
   id?: string,
   reason = '页面操作或任务替换',
 ): void {
+  if (!id) {
+    if (projectName) {
+      cancelVersions.set(
+        projectName,
+        (cancelVersions.get(projectName) || 0) + 1,
+      );
+    } else {
+      globalCancelVersion++;
+    }
+  }
   for (const task of tasks.values()) {
     if (
       (!projectName || task.projectName === projectName) &&
@@ -826,6 +857,7 @@ export async function regenerateSegments(
   indexes: number[],
   waitForActiveTask = false,
 ): Promise<ListenSegment[]> {
+  const initialStamp = cancelStamp(projectName);
   const projectVersion = projectVersions.get(projectName) || 0;
   if (deletingProjects.has(projectName)) {
     throw new Error('正在删除该书籍。');
@@ -835,6 +867,7 @@ export async function regenerateSegments(
   }
   const config = await loadConfig();
   validateConfig(config, true);
+  assertStartAllowed(projectName, initialStamp);
   // 播放追上生成进度时等待原任务，自动补段不能取消整章连续生成。
   if (waitForActiveTask) {
     const running = [...tasks.values()].find(
@@ -849,7 +882,9 @@ export async function regenerateSegments(
     }
   }
   cancelGeneration(projectName, undefined, '启动片段重生成');
+  const startStamp = cancelStamp(projectName);
   const project = await loadProject(projectName);
+  assertStartAllowed(projectName, startStamp);
   const entry = project.chapters[chapterIndex];
   if (!entry) {
     throw new Error('没有可重生成的章节。');

@@ -99,6 +99,7 @@ export const useListenBook = (): UseListenBookReturn => {
     chapter: -1,
     taskId: '',
     epoch: 0,
+    stopped: true,
     listener: createListenSessionId(),
   });
   const apply = useCallback((task: TaskSnapshot) => {
@@ -143,6 +144,7 @@ export const useListenBook = (): UseListenBookReturn => {
     return context.current.listener;
   }, []);
   const cancelListenTask = useCallback(async (project?: string) => {
+    context.current.stopped = true;
     context.current.epoch++;
     cancelGeneration(
       project || context.current.project || undefined,
@@ -218,6 +220,13 @@ export const useListenBook = (): UseListenBookReturn => {
       payload: ListenBookGeneratePayload,
       continueActiveTask = false,
     ) => {
+      // 退出后到达的原生 waiting 回调不得重新启动听书。
+      if (continueActiveTask && context.current.stopped) {
+        return;
+      }
+      if (!continueActiveTask) {
+        context.current.stopped = false;
+      }
       if (
         continueActiveTask &&
         getActiveChapterTask(project, chapter)?.id === context.current.taskId
