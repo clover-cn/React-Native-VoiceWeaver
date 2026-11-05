@@ -283,7 +283,7 @@ export async function generateSpeech(
         body: JSON.stringify({
           model: mimo.model,
           messages: [
-            {role: 'user', content: mimo.stylePrompt},
+            {role: 'user', content: mimo.stylePrompt.trim()},
             {role: 'assistant', content: segment.text},
           ],
           audio: {format: 'pcm16'},

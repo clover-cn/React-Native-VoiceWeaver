@@ -92,9 +92,6 @@ export function validateTtsConfig(config: EngineConfig): void {
       throw new ConfigurationError('请填写语音合成模型。', 'tts');
     }
   }
-  if (config.provider === 'mimoTTS' && !config.mimoTTS.stylePrompt.trim()) {
-    throw new ConfigurationError('请填写 Mimo 风格指令。', 'advanced');
-  }
 }
 const endpointValid = (value: string) =>
   /^https?:\/\/[^\s/?#]+[^\s]*$/.test(value) && !/[?#]/.test(value);
@@ -166,9 +163,6 @@ export function validateConfig(
         throw new ConfigurationError(`请填写${label}模型。`, group);
       }
     }
-  }
-  if (config.provider === 'mimoTTS' && !config.mimoTTS.stylePrompt.trim()) {
-    throw new ConfigurationError('请填写 Mimo 风格指令。', 'advanced');
   }
 }
 

@@ -409,6 +409,21 @@ export default function SettingsScreen({
                   ),
                 )}
                 {modelFields(config.provider)}
+                {config.provider === 'mimoTTS' && (
+                  <>
+                    {field(
+                      'mimoTTS',
+                      'stylePrompt',
+                      'Mimo 风格指令（可选）',
+                      false,
+                      true,
+                    )}
+                    <Text style={styles.hint}>
+                      可留空，不额外指定朗读风格。
+                    </Text>
+                    {field('mimoTTS', 'sampleRate', 'Mimo PCM 采样率', true)}
+                  </>
+                )}
                 {config.provider === 'siliconflow' &&
                   field('siliconflow', 'uploadEndpoint', '音色上传完整端点')}
                 {config.provider === 'indextts2' && (
@@ -499,14 +514,6 @@ export default function SettingsScreen({
                       '临时角色最多对白数',
                       true,
                     )}
-                    {field(
-                      'mimoTTS',
-                      'stylePrompt',
-                      'Mimo 风格指令',
-                      false,
-                      true,
-                    )}
-                    {field('mimoTTS', 'sampleRate', 'Mimo PCM 采样率', true)}
                   </>
                 )}
               </>
