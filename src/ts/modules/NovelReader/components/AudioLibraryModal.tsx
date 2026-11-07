@@ -1,12 +1,22 @@
 import {localService} from '../local/service';
 import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
-import React, {memo, useCallback, useEffect, useMemo, useState} from 'react';
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -18,6 +28,11 @@ import VideoSessionController from '../controllers/VideoSessionController';
 import bridge from '../../base/utils/bridge';
 import {importAudio} from '../local/repository';
 import {AudioOption, VoicePool} from '../types/audio';
+import {
+  AudioNameFields,
+  parseAudioNameDraft,
+  validateAudioName,
+} from '../utils/audioUploadName';
 
 interface AudioLibraryModalProps {
   visible: boolean;
@@ -33,10 +48,9 @@ interface AudioVoiceActorGroup {
   mixedPool: boolean;
 }
 
-interface SelectedAudioFile {
+interface SelectedAudioFile extends AudioNameFields {
   uri: string;
   fileName: string;
-  uploadName: string;
   size: number;
   mimeType: string;
 }
@@ -230,9 +244,9 @@ const buildUploadDraftDebugInfo = (draft?: SelectedAudioFile | null) => ({
   uriEmpty: !(draft?.uri || '').trim(),
   fileName: draft?.fileName || '',
   fileNameEmpty: !(draft?.fileName || '').trim(),
-  uploadName: draft?.uploadName || '',
-  uploadNameEmpty: !(draft?.uploadName || '').trim(),
-  uploadNameLength: (draft?.uploadName || '').trim().length,
+  voiceActor: draft?.voiceActor || '',
+  emotion: draft?.emotion || '',
+  gender: draft?.gender || '',
   mimeType: draft?.mimeType || '',
   mimeTypeEmpty: !(draft?.mimeType || '').trim(),
   size: draft?.size ?? 0,
@@ -362,6 +376,8 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     null,
   );
   const [uploading, setUploading] = useState(false);
+  const uploadInFlightRef = useRef(false);
+  const uploadValidation = uploadDraft ? validateAudioName(uploadDraft) : null;
   const [searchKeyword, setSearchKeyword] = useState('');
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<Set<string>>(
     new Set(),
@@ -485,7 +501,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     return {
       uri: selectedUri,
       fileName,
-      uploadName: getBaseName(fileName),
+      ...parseAudioNameDraft(getBaseName(fileName)),
       size: fileSize,
       mimeType: getAudioMimeType(fileName),
     };
@@ -643,7 +659,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       return;
     }
 
-    if (uploading) {
+    if (uploading || uploadInFlightRef.current) {
       return;
     }
 
@@ -674,22 +690,26 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   }, [pickHarmonyAudio, uploading]);
 
   const confirmUpload = useCallback(async () => {
-    if (!uploadDraft) {
+    if (!uploadDraft || uploadInFlightRef.current) {
       return;
     }
 
-    const finalName = uploadDraft.uploadName.trim();
-    if (!finalName) {
-      Alert.alert('名称不能为空', '请先输入音频名称。');
+    const validation = validateAudioName(uploadDraft);
+    if (!validation.valid) {
+      Alert.alert(
+        '请完善音频名称',
+        Object.values(validation.errors).join('；'),
+      );
       return;
     }
 
+    uploadInFlightRef.current = true;
     setUploading(true);
     try {
       await importAudio(
         uploadDraft.uri,
         uploadDraft.fileName,
-        finalName,
+        validation.name,
         uploadDraft.mimeType,
       );
       setUploadDraft(null);
@@ -704,6 +724,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         err instanceof Error ? err.message : '上传失败，请稍后重试。',
       );
     } finally {
+      uploadInFlightRef.current = false;
       setUploading(false);
     }
   }, [fetchAudioList, uploadDraft]);
@@ -995,8 +1016,13 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             setUploadDraft(null);
           }
         }}>
-        <View style={styles.uploadMask}>
-          <View style={styles.uploadDialog}>
+        <KeyboardAvoidingView
+          style={styles.uploadMask}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <ScrollView
+            style={styles.uploadScroll}
+            contentContainerStyle={styles.uploadDialog}
+            keyboardShouldPersistTaps="handled">
             <Text style={styles.uploadTitle}>上传音频</Text>
             <Text style={styles.uploadMeta}>
               文件：{uploadDraft?.fileName || '-'}
@@ -1006,23 +1032,56 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             </Text>
             <View style={styles.uploadFieldBlock}>
               <Text style={styles.fieldLabel}>音频名称</Text>
-              <TextInput
-                style={styles.input}
-                value={uploadDraft?.uploadName || ''}
-                editable={!uploading}
-                placeholder="请输入音频名称"
-                placeholderTextColor="#8E8E93"
-                onChangeText={value =>
-                  setUploadDraft(prev =>
-                    prev
-                      ? {
-                          ...prev,
-                          uploadName: value,
-                        }
-                      : prev,
-                  )
-                }
-              />
+              <View style={styles.uploadNameRow}>
+                {(['voiceActor', 'emotion', 'gender'] as const).map(
+                  (field, index) => (
+                    <React.Fragment key={field}>
+                      {index > 0 ? (
+                        <Text style={styles.uploadSeparator}>-</Text>
+                      ) : null}
+                      <View
+                        style={
+                          field === 'voiceActor'
+                            ? styles.uploadActorField
+                            : styles.uploadFeatureField
+                        }>
+                        <TextInput
+                          style={[styles.input, styles.uploadNameInput]}
+                          value={uploadDraft?.[field] || ''}
+                          editable={!uploading}
+                          placeholder={
+                            {
+                              voiceActor: '名字',
+                              emotion: '情绪',
+                              gender: '性别',
+                            }[field]
+                          }
+                          accessibilityLabel={
+                            {
+                              voiceActor: '名字',
+                              emotion: '情绪',
+                              gender: '性别',
+                            }[field]
+                          }
+                          placeholderTextColor="#8E8E93"
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          onChangeText={value =>
+                            setUploadDraft(prev =>
+                              prev ? {...prev, [field]: value} : prev,
+                            )
+                          }
+                        />
+                        {uploadValidation?.errors[field] ? (
+                          <Text style={styles.uploadFieldError}>
+                            {uploadValidation.errors[field]}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </React.Fragment>
+                  ),
+                )}
+              </View>
               <View style={styles.uploadRuleCard}>
                 <Text style={styles.uploadRuleTitle}>重要提示</Text>
                 <Text style={styles.uploadRuleText}>
@@ -1046,8 +1105,12 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
                 <Text style={styles.uploadCancelText}>取消</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.uploadConfirmBtn}
-                disabled={uploading}
+                style={[
+                  styles.uploadConfirmBtn,
+                  (uploading || !uploadValidation?.valid) &&
+                    styles.uploadConfirmDisabled,
+                ]}
+                disabled={uploading || !uploadValidation?.valid}
                 onPress={confirmUpload}>
                 {uploading ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
@@ -1056,8 +1119,8 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
                 )}
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
@@ -1518,6 +1581,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 20,
   },
+  uploadScroll: {flexGrow: 0, maxHeight: '100%', borderRadius: 16},
+  uploadNameRow: {flexDirection: 'row', alignItems: 'flex-start'},
+  uploadActorField: {flex: 2, minWidth: 0},
+  uploadFeatureField: {flex: 1, minWidth: 0},
+  uploadSeparator: {paddingHorizontal: 4, paddingTop: 10, color: '#636366'},
+  uploadNameInput: {paddingHorizontal: 8, minWidth: 0},
+  uploadFieldError: {
+    color: '#C62828',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  uploadConfirmDisabled: {backgroundColor: '#B8B8C2'},
   uploadTitle: {
     color: '#1C1C1E',
     fontSize: 18,

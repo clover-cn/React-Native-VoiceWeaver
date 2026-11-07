@@ -1,6 +1,7 @@
 import {AudioOption, VoicePool} from '../types/audio';
 import {GlobalAudioBindings, ListenSegment} from '../types/reader';
 import {createTextHash} from '../utils/listenBook';
+import {requireAudioUploadName} from '../utils/audioUploadName';
 import {nativeCall, readDocument, writeDocument} from './native';
 import type {PrescanRecord} from './prescanCache';
 
@@ -113,6 +114,7 @@ export async function importAudio(
   name: string,
   mime: string,
 ): Promise<void> {
+  const normalizedName = requireAudioUploadName(name);
   const localUri = await nativeCall<string>('importAudio', {
     uri,
     extension: fileName.split('.').pop() || 'wav',
@@ -121,7 +123,7 @@ export async function importAudio(
     ...records,
     {
       id: `voice_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      name,
+      name: normalizedName,
       url: localUri,
       mime,
       sampleText: '',
