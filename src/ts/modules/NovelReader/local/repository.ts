@@ -2,6 +2,7 @@ import {AudioOption, VoicePool} from '../types/audio';
 import {GlobalAudioBindings, ListenSegment} from '../types/reader';
 import {createTextHash} from '../utils/listenBook';
 import {nativeCall, readDocument, writeDocument} from './native';
+import type {PrescanRecord} from './prescanCache';
 
 export interface LocalAudio extends AudioOption {
   url: string;
@@ -24,6 +25,7 @@ export interface LocalChapter {
   taskId?: string;
 }
 export interface LocalProject {
+  prescans?: Record<string, PrescanRecord>;
   characters: Record<string, Character>;
   bindings: GlobalAudioBindings;
   overrides: Record<string, string | null>;

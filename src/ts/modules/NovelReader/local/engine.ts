@@ -20,6 +20,7 @@ import {callLlm, generateSpeech} from './providers';
 import {parsePrompt, prescanPrompt} from './prompts';
 import {assertNarratorAvailable} from './preflight';
 import {logPrescanResult} from './prescanLog';
+import {canReusePrescan, createPrescanRecord} from './prescanCache';
 import {
   listAudio,
   loadProject,
@@ -510,7 +511,14 @@ async function run(task: Task): Promise<void> {
               },
             ]
       ).slice(0, config.generation.prescanCount);
-      if (prescan.length) {
+      const reusePrescan = canReusePrescan(
+        project.prescans?.[task.chapterIndex],
+        config,
+        task.chapterIndex,
+        hash,
+        task.payload.prescanTexts,
+      );
+      if (prescan.length && !reusePrescan) {
         task.phase = 'prescan';
         publish(task);
         const value = await callLlm(
@@ -544,7 +552,16 @@ async function run(task: Task): Promise<void> {
             {complete: true},
           );
           current.casting = casting.snapshot().casting;
+          // 与角色和活动记录一起落盘，后续正文解析失败也可复用成功结果。
+          current.prescans = {
+            ...current.prescans,
+            [task.chapterIndex]: createPrescanRecord(config, prescan),
+          };
         });
+      } else if (reusePrescan) {
+        logModelProgress(
+          `章节 ${task.chapterIndex + 1} 复用已完成的角色预扫描`,
+        );
       }
       active(task);
       task.phase = 'parsing';
@@ -771,6 +788,12 @@ export async function checkChapter(
   const project = await loadProject(projectName);
   const entry = project.chapters[chapterIndex];
   const config = await loadConfig();
+  const prescanComplete = canReusePrescan(
+    project.prescans?.[chapterIndex],
+    config,
+    chapterIndex,
+    contentHash,
+  );
   const task = [...tasks.values()].find(
     item =>
       item.projectName === projectName &&
@@ -785,6 +808,7 @@ export async function checkChapter(
     return {
       exists: false,
       segments: [],
+      prescanComplete,
       inProgress: Boolean(task),
       taskId: task?.id,
     };
@@ -795,6 +819,7 @@ export async function checkChapter(
       segments.length > 0 &&
       segments.every(segment => Boolean(segment.audioUrl)),
     segments,
+    prescanComplete,
     inProgress: Boolean(task),
     taskId: task?.id,
   };

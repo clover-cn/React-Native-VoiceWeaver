@@ -1884,7 +1884,11 @@ const NovelReaderApp: React.FC = () => {
 
       let prescanTexts: ListenBookPrescanText[] = [];
       setStage('analyze');
-      if (!cacheStatus.inProgress && !cacheStatus.hasReusableSegments) {
+      if (
+        !cacheStatus.inProgress &&
+        !cacheStatus.hasReusableSegments &&
+        !cacheStatus.prescanComplete
+      ) {
         const config = await fetchListenBookConfig();
         if (!active()) {
           return;

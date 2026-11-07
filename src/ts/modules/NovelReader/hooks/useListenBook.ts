@@ -78,6 +78,7 @@ export interface UseListenBookReturn {
     cached: boolean;
     inProgress: boolean;
     hasReusableSegments: boolean;
+    prescanComplete: boolean;
   }>;
   replaceSegments: (nextSegments: ListenSegment[]) => void;
   restoreListenCache: (nextSegments: ListenSegment[]) => void;
@@ -210,6 +211,7 @@ export const useListenBook = (): UseListenBookReturn => {
           cached: false,
           inProgress: false,
           hasReusableSegments: false,
+          prescanComplete: false,
         };
       }
       context.current.project = project;
@@ -222,6 +224,7 @@ export const useListenBook = (): UseListenBookReturn => {
         inProgress: data.inProgress,
         // 引擎仅返回正文和配置匹配的分段，缺少音频也能继续合成。
         hasReusableSegments: data.segments.length > 0,
+        prescanComplete: data.prescanComplete,
       };
     },
     [],
