@@ -755,9 +755,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     try {
       await importAudio(
         uploadDraft.uri,
-        uploadDraft.fileName,
         validation.name,
-        uploadDraft.mimeType,
       );
       setUploadDraft(null);
       await fetchAudioList();

@@ -110,14 +110,11 @@ export function updateAudio(
 }
 export async function importAudio(
   uri: string,
-  fileName: string,
   name: string,
-  mime: string,
 ): Promise<void> {
   const normalizedName = requireAudioUploadName(name);
   const localUri = await nativeCall<string>('importAudio', {
     uri,
-    extension: fileName.split('.').pop() || 'wav',
   });
   await updateAudio(records => [
     ...records,
@@ -125,7 +122,7 @@ export async function importAudio(
       id: `voice_${Date.now()}_${Math.random().toString(36).slice(2)}`,
       name: normalizedName,
       url: localUri,
-      mime,
+      mime: 'audio/wav',
       sampleText: '',
       voicePool: 'general',
       createTime: new Date().toISOString(),

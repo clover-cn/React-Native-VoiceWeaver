@@ -104,12 +104,12 @@ final class VoiceWeaverLocal {
       case "write": atomic(file(p.getString("key")), p.getString("text").getBytes(StandardCharsets.UTF_8)); return JSONObject.NULL;
       case "exists": return ownedAudio(p.getString("uri")).isFile();
       case "importAudio": {
-        File target = file("reference-" + UUID.randomUUID() + "." + p.optString("extension", "wav").replaceAll("[^a-zA-Z0-9]", ""));
-        try (InputStream in = context.getContentResolver().openInputStream(Uri.parse(p.getString("uri"))); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        File target = file("reference-" + UUID.randomUUID() + ".wav");
+        try (InputStream in = context.getContentResolver().openInputStream(Uri.parse(p.getString("uri")))) {
           if (in == null) throw new IOException("无法读取参考录音");
-          byte[] b = new byte[16384]; int n;
-          while ((n = in.read(b)) != -1) { out.write(b, 0, n); if (out.size() > 32 * 1024 * 1024) throw new IOException("参考录音超过32MB限制"); }
-          atomic(target, out.toByteArray());
+          byte[] b = new byte[16384]; int n; long size = 0;
+          while ((n = in.read(b)) != -1) { size += n; if (size > 5 * 1024 * 1024) throw new IOException("参考录音超过5MB限制"); }
+          atomic(target, ReferenceAudioWav.convert(context, Uri.parse(p.getString("uri"))));
         }
         return Uri.fromFile(target).toString();
       }

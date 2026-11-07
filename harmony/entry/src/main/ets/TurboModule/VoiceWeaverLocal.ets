@@ -8,6 +8,7 @@ import { GenerationBackground } from './GenerationBackground';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { inspectReferenceAudio, ReferenceAudioInspectionError } from './ReferenceAudioInspector';
+import { convert } from 'libreference_wav.so';
 
 interface UploadPart { name: string; uri: string; mime: string }
 interface LocalPayload {
@@ -171,12 +172,13 @@ export class VoiceWeaverLocal {
           break;
         }
         case 'importAudio': {
-          const target = this.path('reference-' + util.generateRandomUUID() + '.' + (p.extension || 'wav').replace(/[^a-zA-Z0-9]/g, ''));
+          const target = this.path('reference-' + util.generateRandomUUID() + '.wav');
           const source = fs.openSync(this.importSource(p.uri), fs.OpenMode.READ_ONLY);
           try {
-            if (fs.statSync(source.fd).size > 32 * 1024 * 1024) { throw new Error('参考录音超过32MB限制'); }
+            if (fs.statSync(source.fd).size > 5 * 1024 * 1024) { throw new ReferenceAudioInspectionError('参考录音超过5MB限制'); }
             await inspectReferenceAudio(source.fd, fs.statSync(source.fd).size);
-            fs.copyFileSync(source.fd, target);
+            const wav: ArrayBuffer = await convert(source.fd, fs.statSync(source.fd).size);
+            this.atomic(target, new Uint8Array(wav));
           } finally { fs.closeSync(source); }
           data = 'file://' + target; break;
         }

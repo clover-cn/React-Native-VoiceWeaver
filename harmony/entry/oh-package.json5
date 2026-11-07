@@ -7,6 +7,7 @@
   "main": "",
   "version": "1.0.0",
   "dependencies": {
+    "libreference_wav.so": "file:./src/main/cpp/types/libreference_wav",
     "@react-native-ohos/react-native-linear-gradient": "file:../../node_modules/@react-native-ohos/react-native-linear-gradient/harmony/linear_gradient.har",
     "@rnoh/react-native-openharmony": "X.X.X",
     "@react-native-oh-tpl/react-native-view-shot": "file:../../node_modules/@react-native-oh-tpl/react-native-view-shot/harmony/view_shot.har",
