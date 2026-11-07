@@ -27,6 +27,7 @@ import Video from 'react-native-video';
 import VideoSessionController from '../controllers/VideoSessionController';
 import bridge from '../../base/utils/bridge';
 import {importAudio} from '../local/repository';
+import {nativeCall} from '../local/native';
 import {AudioOption, VoicePool} from '../types/audio';
 import {
   AudioNameFields,
@@ -49,6 +50,7 @@ interface AudioVoiceActorGroup {
 }
 
 interface SelectedAudioFile extends AudioNameFields {
+  durationMs: number;
   uri: string;
   fileName: string;
   size: number;
@@ -377,6 +379,23 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   );
   const [uploading, setUploading] = useState(false);
   const uploadInFlightRef = useRef(false);
+  const selectionRequestRef = useRef(0);
+  const selectingRef = useRef(false);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const [selectionStatus, setSelectionStatus] = useState('');
+  const closeLibrary = useCallback(() => {
+    selectionRequestRef.current += 1;
+    selectingRef.current = false;
+    setSelectionStatus('');
+    onClose();
+  }, [onClose]);
+  useEffect(() => {
+    return () => {
+      selectionRequestRef.current += 1;
+      selectingRef.current = false;
+    };
+  }, [visible]);
   const uploadValidation = uploadDraft ? validateAudioName(uploadDraft) : null;
   const [searchKeyword, setSearchKeyword] = useState('');
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<Set<string>>(
@@ -430,6 +449,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     if (!visible) {
       setUploadDraft(null);
       setUploading(false);
+      setSelectionStatus('');
       setSearchKeyword('');
       return;
     }
@@ -659,33 +679,60 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       return;
     }
 
-    if (uploading || uploadInFlightRef.current) {
+    if (uploading || uploadInFlightRef.current || selectingRef.current) {
       return;
     }
 
+    selectingRef.current = true;
+    const requestId = ++selectionRequestRef.current;
+    const active = () =>
+      visibleRef.current && requestId === selectionRequestRef.current;
+    setSelectionStatus('正在选择音频…');
     try {
       const selectedFile = await pickHarmonyAudio();
-      if (!selectedFile) {
+      if (!selectedFile || !active()) {
         return;
       }
-
-      console.log(
-        '[AudioLibraryModal] 选中上传音频',
-        buildUploadDraftDebugInfo(selectedFile),
-      );
 
       if (selectedFile.size > MAX_UPLOAD_FILE_SIZE) {
         Alert.alert('文件过大', '当前仅支持上传 5MB 以内的音频，请重新选择。');
         return;
       }
 
-      setUploadDraft(selectedFile);
+      setSelectionStatus('正在检查音频时长…');
+      const inspection = await nativeCall<{durationMs: number}>(
+        'inspectReferenceAudio',
+        {uri: selectedFile.uri},
+      );
+      if (!active()) {
+        return;
+      }
+      // 防止不匹配的旧安装包返回空值时绕过界面检查。
+      if (
+        !inspection ||
+        !Number.isFinite(inspection.durationMs) ||
+        inspection.durationMs <= 0 ||
+        inspection.durationMs > 20000
+      ) {
+        throw new Error(
+          '音频时长无效或超过 20 秒，请选择 20 秒以内的有效录音。',
+        );
+      }
+      setUploadDraft({...selectedFile, durationMs: inspection.durationMs});
     } catch (err) {
+      if (!active()) {
+        return;
+      }
       console.warn('[AudioLibraryModal] 选择上传音频失败', err);
       Alert.alert(
-        '选择失败',
+        '音频检查失败',
         err instanceof Error ? err.message : '选择音频失败，请稍后重试。',
       );
+    } finally {
+      if (requestId === selectionRequestRef.current) {
+        selectingRef.current = false;
+        setSelectionStatus('');
+      }
     }
   }, [pickHarmonyAudio, uploading]);
 
@@ -751,15 +798,18 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.primaryBtn}
-            disabled={uploading}
+            disabled={uploading || !!selectionStatus}
             onPress={handleUploadPress}>
-            {uploading ? (
+            {uploading || selectionStatus ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text style={styles.primaryBtnText}>上传音频</Text>
             )}
           </TouchableOpacity>
         </View>
+        {selectionStatus ? (
+          <Text style={styles.infoDesc}>{selectionStatus}</Text>
+        ) : null}
         {audioList.length > 0 ? (
           <View style={styles.searchCard}>
             <TextInput
@@ -789,6 +839,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       isSiliconflow,
       searchKeyword,
       uploading,
+      selectionStatus,
     ],
   );
 
@@ -943,18 +994,20 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         visible={visible}
         animationType="slide"
         transparent
-        onRequestClose={onClose}>
+        onRequestClose={closeLibrary}>
         <View style={styles.modalBg}>
           <TouchableOpacity
             style={styles.bgTouch}
             activeOpacity={1}
-            onPress={onClose}
+            onPress={closeLibrary}
           />
           <View style={styles.modalContent}>
             <SafeAreaView style={styles.safeArea}>
               <View style={styles.header}>
                 <Text style={styles.title}>音频管理</Text>
-                <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                <TouchableOpacity
+                  onPress={closeLibrary}
+                  style={styles.closeBtn}>
                   <Text style={styles.closeText}>关闭</Text>
                 </TouchableOpacity>
               </View>
@@ -1030,6 +1083,10 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             <Text style={styles.uploadMeta}>
               大小：{formatFileSize(uploadDraft?.size)}
             </Text>
+            <Text style={styles.uploadMeta}>
+              时长：{((uploadDraft?.durationMs || 0) / 1000).toFixed(2)}{' '}
+              秒，最长 20 秒
+            </Text>
             <View style={styles.uploadFieldBlock}>
               <Text style={styles.fieldLabel}>音频名称</Text>
               <View style={styles.uploadNameRow}>
@@ -1085,15 +1142,15 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
               <View style={styles.uploadRuleCard}>
                 <Text style={styles.uploadRuleTitle}>重要提示</Text>
                 <Text style={styles.uploadRuleText}>
+                  上传的音频尽量别超过20秒。
+                </Text>
+                <Text style={styles.uploadRuleText}>
                   音频命名必须严格按照：名字-情绪-性别
                 </Text>
                 <Text style={styles.uploadRuleExample}>例：小明-高兴-男</Text>
-                <Text style={styles.uploadRuleTitle}>目前支持的情绪有</Text>
+                <Text style={styles.uploadRuleTitle}>目前支持的情绪有：</Text>
                 <Text style={styles.uploadRuleText}>
-                  高兴、愤怒、悲伤、害怕、厌恶、忧郁、惊讶、平静
-                </Text>
-                <Text style={styles.uploadRuleText}>
-                  旁白必须使用：名字-旁白-性别
+                  高兴、愤怒、悲伤、害怕、厌恶、忧郁、惊讶、平静。旁白必须使用：名字-旁白-性别；
                 </Text>
               </View>
             </View>

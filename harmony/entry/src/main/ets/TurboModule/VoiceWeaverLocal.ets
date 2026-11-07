@@ -7,6 +7,7 @@ import http from '@ohos.net.http';
 import { GenerationBackground } from './GenerationBackground';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { inspectReferenceAudio, ReferenceAudioInspectionError } from './ReferenceAudioInspector';
 
 interface UploadPart { name: string; uri: string; mime: string }
 interface LocalPayload {
@@ -162,11 +163,19 @@ export class VoiceWeaverLocal {
         case 'read': { const path = this.path(p.key); data = fs.accessSync(path) ? util.TextDecoder.create('utf-8').decodeWithStream(this.read(path)) : null; break; }
         case 'write': this.atomic(this.path(p.key), new util.TextEncoder().encodeInto(p.text)); break;
         case 'exists': data = fs.accessSync(this.owned(p.uri)); break;
+        case 'inspectReferenceAudio': {
+          const source = fs.openSync(this.importSource(p.uri), fs.OpenMode.READ_ONLY);
+          try {
+            data = await inspectReferenceAudio(source.fd, fs.statSync(source.fd).size);
+          } finally { fs.closeSync(source); }
+          break;
+        }
         case 'importAudio': {
           const target = this.path('reference-' + util.generateRandomUUID() + '.' + (p.extension || 'wav').replace(/[^a-zA-Z0-9]/g, ''));
           const source = fs.openSync(this.importSource(p.uri), fs.OpenMode.READ_ONLY);
           try {
             if (fs.statSync(source.fd).size > 32 * 1024 * 1024) { throw new Error('参考录音超过32MB限制'); }
+            await inspectReferenceAudio(source.fd, fs.statSync(source.fd).size);
             fs.copyFileSync(source.fd, target);
           } finally { fs.closeSync(source); }
           data = 'file://' + target; break;
@@ -203,7 +212,7 @@ export class VoiceWeaverLocal {
       }
       return JSON.stringify({ success: true, data: data });
     } catch (error) {
-      if (error instanceof StreamRequestError) {
+      if (error instanceof StreamRequestError || error instanceof ReferenceAudioInspectionError) {
         return JSON.stringify({ success: false, error: error.message });
       }
       if (error instanceof ConfigStorageError) {
@@ -212,6 +221,9 @@ export class VoiceWeaverLocal {
       }
       const code = (error as BusinessError).code;
       const safeCode = typeof code === 'number' && Number.isFinite(code) ? code : 0;
+      if (operation === 'inspectReferenceAudio' || operation === 'importAudio') {
+        return JSON.stringify({ success: false, error: '参考录音读取或导入失败，请确认文件可用后重新选择（错误码 ' + safeCode + '）。' });
+      }
       hilog.error(0x0fff, 'VoiceWeaverLocal', '端侧操作失败 operation=%{public}s code=%{public}d', operation, safeCode);
       if (operation === 'request' && safeCode === 2300023) {
         return JSON.stringify({ success: false, error: '模型响应接收失败（2300023），可能超过响应大小限制或请求已中止，请检查响应大小和生成日志。' });
