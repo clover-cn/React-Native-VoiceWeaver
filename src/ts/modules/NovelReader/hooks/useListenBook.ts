@@ -74,7 +74,11 @@ export interface UseListenBookReturn {
     project: string,
     index: number,
     chapterText?: string,
-  ) => Promise<{cached: boolean; inProgress: boolean}>;
+  ) => Promise<{
+    cached: boolean;
+    inProgress: boolean;
+    hasReusableSegments: boolean;
+  }>;
   replaceSegments: (nextSegments: ListenSegment[]) => void;
   restoreListenCache: (nextSegments: ListenSegment[]) => void;
   updateListenRuntime: (
@@ -202,14 +206,23 @@ export const useListenBook = (): UseListenBookReturn => {
         text ? createTextHash(normalizeChapterTextForRequest(text)) : undefined,
       );
       if (epoch !== context.current.epoch) {
-        return {cached: false, inProgress: false};
+        return {
+          cached: false,
+          inProgress: false,
+          hasReusableSegments: false,
+        };
       }
       context.current.project = project;
       context.current.chapter = chapter;
       context.current.taskId = data.taskId || '';
       setSegments(data.segments);
       setIsGenerationComplete(data.exists);
-      return {cached: data.exists, inProgress: data.inProgress};
+      return {
+        cached: data.exists,
+        inProgress: data.inProgress,
+        // 引擎仅返回正文和配置匹配的分段，缺少音频也能继续合成。
+        hasReusableSegments: data.segments.length > 0,
+      };
     },
     [],
   );

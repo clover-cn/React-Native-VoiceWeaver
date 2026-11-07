@@ -731,7 +731,7 @@ const NovelReaderApp: React.FC = () => {
     [],
   );
 
-  const readChapterContentData = useCallback(
+  const fetchChapterContentData = useCallback(
     async (
       book: Book,
       list: Chapter[],
@@ -783,6 +783,48 @@ const NovelReaderApp: React.FC = () => {
       }
     },
     [],
+  );
+
+  const chapterContentRequestsRef = useRef<
+    Map<string, Promise<ChapterContentCacheEntry>>
+  >(new Map());
+
+  const readChapterContentData = useCallback(
+    async (
+      book: Book,
+      list: Chapter[],
+      index: number,
+      cancelToken?: BookSourceCancelToken,
+    ): Promise<ChapterContentCacheEntry> => {
+      const key = buildChapterContentCacheKey(book, index);
+      const cached = chapterContentCacheRef.current.get(key);
+      if (cached) {
+        return cached;
+      }
+      // 阅读页的取消令牌独立生效，不与后台下载共享可取消请求。
+      if (cancelToken) {
+        return fetchChapterContentData(book, list, index, cancelToken);
+      }
+      const pending = chapterContentRequestsRef.current.get(key);
+      if (pending) {
+        return pending;
+      }
+      const request = fetchChapterContentData(book, list, index)
+        .then(data => {
+          rememberChapterContentData(key, data);
+          return data;
+        })
+        .finally(() => {
+          chapterContentRequestsRef.current.delete(key);
+        });
+      chapterContentRequestsRef.current.set(key, request);
+      return request;
+    },
+    [
+      buildChapterContentCacheKey,
+      fetchChapterContentData,
+      rememberChapterContentData,
+    ],
   );
 
   const showExitPrompt = useCallback(() => {
@@ -1055,18 +1097,8 @@ const NovelReaderApp: React.FC = () => {
         };
       }
 
-      let text = '';
-      if (isLocalTxtBook(book)) {
-        const localContent = await readLocalTxtBookContent(
-          book.localBookId || '',
-        );
-        text = normalizeChapterTextForRequest(
-          getLocalChapterContent(localContent, `${book.name}.txt`, index).text,
-        );
-      } else {
-        const data = await LocalBookSourceService.getBookContent(book, chapter);
-        text = normalizeChapterTextForRequest(data.text);
-      }
+      const data = await readChapterContentData(book, list, index);
+      const text = normalizeChapterTextForRequest(data.text);
       if (!text) {
         return null;
       }
@@ -1077,7 +1109,7 @@ const NovelReaderApp: React.FC = () => {
         text,
       };
     },
-    [],
+    [readChapterContentData],
   );
 
   const buildPrescanTexts = useCallback(
@@ -1834,8 +1866,7 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
-      // 先检查端侧是否已有该章缓存音频或在途任务，命中即跳过预扫描，
-      // 避免每次点击听书都重复串行拉取多章正文。
+      // 先检查完整音频、在途任务及可复用分段，避免恢复合成时下载预扫描正文。
       updateListenRuntime('loading', false, '正在检查听书缓存…');
       const cacheStatus = await checkListenCache(
         curProjectName,
@@ -1853,7 +1884,7 @@ const NovelReaderApp: React.FC = () => {
 
       let prescanTexts: ListenBookPrescanText[] = [];
       setStage('analyze');
-      if (!cacheStatus.inProgress) {
+      if (!cacheStatus.inProgress && !cacheStatus.hasReusableSegments) {
         const config = await fetchListenBookConfig();
         if (!active()) {
           return;
