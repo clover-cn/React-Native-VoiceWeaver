@@ -99,6 +99,7 @@ export class NativeAudioPlayerManager {
   private currentSourceUrl: string = '';
   private consecutiveFailures: number = 0;
   private failedRequestId: number = -1;
+  private playingFailurePrompt: boolean = false;
   private sourceLoadQueue: Promise<void> = Promise.resolve();
   private currentLocalFile: fs.File | null = null;
   private lastPlaybackEventAt: number = 0;
@@ -142,6 +143,12 @@ export class NativeAudioPlayerManager {
 
     this.desiredPlaying = true;
     this.stoppedExplicitly = false;
+    if (this.playingFailurePrompt) {
+      if (this.player.state === 'paused' || this.player.state === 'prepared') {
+        this.player.play().catch(() => this.handleSegmentFailure(this.loadRequestId, '提示音恢复失败'));
+      }
+      return;
+    }
     this.consecutiveFailures = 0;
     this.resumeAfterInterrupt = false;
 
@@ -351,6 +358,8 @@ export class NativeAudioPlayerManager {
     if (payload.autoPlay !== undefined) {
       this.desiredPlaying = payload.autoPlay;
     }
+    // 正文生成进度刷新不能重载或中断正在播放的提示音。
+    if (this.playingFailurePrompt) return;
     // 空文件缓存结果可能先于播放器报错，加载中也要响应这个确定的失败。
     const playbackError = this.queue[this.currentIndex]?.playbackError;
     if (playbackError && !this.waitingForMoreSegments) {
@@ -478,6 +487,7 @@ export class NativeAudioPlayerManager {
 
     const target = this.queue[normalizedIndex];
     const requestId = ++this.loadRequestId;
+    this.playingFailurePrompt = false;
     this.currentIndex = normalizedIndex;
     this.currentDurationMs = target.duration ?? 0;
     this.currentPositionMs = 0;
@@ -689,7 +699,11 @@ export class NativeAudioPlayerManager {
           }
           break;
         case 'prepared':
-          this.applyPlaybackRate();
+          if (this.playingFailurePrompt) {
+            player.setPlaybackRate(1);
+          } else {
+            this.applyPlaybackRate();
+          }
           this.currentDurationMs = player.duration;
           this.markSourceLoadSettled();
           this.updateSessionMetadata();
@@ -771,6 +785,11 @@ export class NativeAudioPlayerManager {
   }
 
   private handleSegmentCompleted(): void {
+    if (this.playingFailurePrompt) {
+      this.playingFailurePrompt = false;
+      this.continueAfterSegmentFailure();
+      return;
+    }
     if (this.currentDurationMs <= 0 && this.currentPositionMs <= 0) {
       this.handleSegmentFailure(this.loadRequestId, '音频未产生有效播放时长');
       return;
@@ -794,6 +813,12 @@ export class NativeAudioPlayerManager {
 
   /** 同一加载请求只计一次失败；第三个连续坏片段停止，不自动跨章。 */
   private handleSegmentFailure(requestId: number, message: string): void {
+    // 提示音自身出错时直接继续跳段，不增加正文的连续失败次数。
+    if (requestId === this.loadRequestId && this.playingFailurePrompt) {
+      this.playingFailurePrompt = false;
+      this.continueAfterSegmentFailure();
+      return;
+    }
     if (requestId !== this.loadRequestId || requestId === this.failedRequestId) return;
     this.failedRequestId = requestId;
     this.markSourceLoadSettled();
@@ -801,6 +826,49 @@ export class NativeAudioPlayerManager {
     // 将实际播放失败传回准备页，避免只收到停止或跳段状态。
     this.emitPlaybackEvent('error');
     Logger.warn(TAG, `片段播放失败: index=${this.currentIndex}, consecutive=${this.consecutiveFailures}, message=${message}`);
+    const target = this.queue[this.currentIndex];
+    const generationFailed = Boolean(target?.generationError) ||
+      (this.isGenerationComplete && !this.hasUsableUrl(target?.url));
+    if (this.desiredPlaying && this.consecutiveFailures === 1 && generationFailed) {
+      this.playingFailurePrompt = true;
+      this.playFailurePrompt(requestId);
+      return;
+    }
+    this.continueAfterSegmentFailure();
+  }
+
+  /** 提示音使用正文播放器，暂停、停止和切章沿用同一套控制及请求隔离。 */
+  private playFailurePrompt(requestId: number): void {
+    this.sourceLoadQueue = this.sourceLoadQueue.then(async () => {
+      if (requestId !== this.loadRequestId) return;
+      try {
+        const player = await this.preparePlayerForLoad(requestId);
+        if (!player || requestId !== this.loadRequestId) return;
+        this.registerPlayerListeners(requestId);
+        const content = await getContext().resourceManager.getRawFileContent('segment_generation_failed.wav');
+        if (requestId !== this.loadRequestId) return;
+        const path = `${getContext().cacheDir}/segment_generation_failed.wav`;
+        const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+        try {
+          fs.writeSync(file.fd, content.buffer);
+        } finally {
+          fs.closeSync(file);
+        }
+        // 沿用正文的文件描述符释放逻辑，不将提示音登记为正文缓存。
+        this.currentSourceUrl = '';
+        await this.applyPlayerSource(player, `file://${path}`, requestId);
+      } catch (error) {
+        Logger.warn(TAG, `失败提示音播放失败: ${JSON.stringify(error)}`);
+        if (requestId === this.loadRequestId && this.playingFailurePrompt) {
+          this.playingFailurePrompt = false;
+          this.continueAfterSegmentFailure();
+        }
+      }
+    });
+  }
+
+  /** 提示结束后保留原有连续失败上限、停止及等待生成规则。 */
+  private continueAfterSegmentFailure(): void {
     if (!this.player || !this.desiredPlaying || this.consecutiveFailures >= MAX_CONSECUTIVE_PLAYBACK_FAILURES ||
       (this.isGenerationComplete && this.currentIndex + 1 >= this.queue.length)) {
       this.stop();

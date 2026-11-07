@@ -12,7 +12,9 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
+    "predev:basic": "node scripts/sync-harmony-audio.cjs",
     "dev:basic": "react-native bundle-harmony --dev false --entry-file ./index.js --bundle-output ./harmony/entry/src/main/resources/rawfile/bundle/basic/basic.harmony.bundle --config ./basic.config.js",
+    "predev:base": "node scripts/sync-harmony-audio.cjs",
     "dev:base": "react-native bundle-harmony --dev false --entry-file ./src/ts/modules/base/index.js --bundle-output ./harmony/entry/src/main/resources/rawfile/bundle/base/base.harmony.bundle --assets-dest ./harmony/entry/src/main/resources/rawfile/assets --config ./base.config.js",
     "dev:all": "npm run dev:basic && npm run dev:base",
     "codegen": "react-native codegen-harmony --cpp-output-path ./harmony/entry/src/main/cpp/generated --rnoh-module-path ./harmony/entry/oh_modules/@rnoh/react-native-openharmony"

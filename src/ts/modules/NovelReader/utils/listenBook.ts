@@ -57,6 +57,7 @@ export const isReferenceAudioAssignmentError = (
     text.includes('尚未绑定参考音频') ||
     text.includes('尚未进行全局录音配置绑定') ||
     text.includes('参考音频') ||
+    text.includes('参考录音') ||
     text.includes('自动分配音频失败')
   );
 };
@@ -65,7 +66,12 @@ export const buildListenSegmentFailureHint = (
   message?: string | null,
 ): string => {
   if (isReferenceAudioAssignmentError(message)) {
-    return '该段落自动分配音频失败，请长按段落手动分配参考音频。';
+    // 保留底层具体原因，便于区分缺少情绪录音、绑定失效等问题。
+    const detail = String(message || '')
+      .trim()
+      .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [已隐藏]')
+      .replace(/\bsk-[A-Za-z0-9_-]+/g, '[已隐藏]');
+    return `${detail}\n请长按段落检查参考音频配置后重试。`;
   }
   return '该段落音频生成失败，请长按段落检查参考音频配置后重试。';
 };
