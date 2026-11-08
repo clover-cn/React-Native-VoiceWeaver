@@ -1323,6 +1323,10 @@ const NovelReaderApp: React.FC = () => {
   const handleChapterFinished = useCallback(() => {
     const list = chapterListRef.current;
     const idx = currentChapterIndexRef.current;
+    console.info('[NovelReaderApp] 收到章节结束，准备自动换章', {
+      chapterIndex: idx,
+      chapterCount: list.length,
+    });
     let nextIdx = idx + 1;
     while (nextIdx < list.length && list[nextIdx].isVolume) {
       nextIdx++;
@@ -1447,7 +1451,8 @@ const NovelReaderApp: React.FC = () => {
     playFromIndex,
   } = useAudioPlayer(
     segments,
-    isGenerationComplete,
+    // 任务结束后不会再追加片段；失败片段由原生播放器跳过，不能一直等待。
+    isGenerationComplete || taskPhase === 'done',
     isListenMode ? listenState : 'idle',
     selectedBook && currentChapterIndex >= 0
       ? {

@@ -911,7 +911,8 @@ export const useAudioPlayer = (
   useEffect(() => {
     const unsubscribe = VideoPlayerController.onPlaybackState(payload => {
       if (
-        listenState !== 'ready' ||
+        // 生成任务的 loading/error 不代表播放会话退出，不能丢弃一次性的结束事件。
+        listenState === 'idle' ||
         stoppedRef.current ||
         !payload.chapterAssetId ||
         payload.chapterAssetId !== nativeAssetId
