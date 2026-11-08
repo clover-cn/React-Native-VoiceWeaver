@@ -448,6 +448,7 @@ const NovelReaderApp: React.FC = () => {
   );
   const preparationIdRef = useRef(0);
   const [playbackSession, setPlaybackSession] = useState(0);
+  const [restorePlaybackProgress, setRestorePlaybackProgress] = useState(true);
   useEffect(
     () => () => {
       preparationIdRef.current += 1;
@@ -952,6 +953,7 @@ const NovelReaderApp: React.FC = () => {
           : {loadSeq: requestSeq, cancelToken: requestCancelToken};
       const {loadSeq, cancelToken} = loadContext;
 
+      VideoPlayerController.stop();
       resetListen(false);
       setIsListenMode(false);
       setCurrentChapterIndex(index);
@@ -1226,7 +1228,17 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
-      const content = await loadChapterContent(list, index, book);
+      const {loadSeq, cancelToken} = beginChapterLoad();
+      const content = await loadChapterContent(
+        list,
+        index,
+        book,
+        loadSeq,
+        cancelToken,
+      );
+      if (!content || !isChapterLoadActive(loadSeq, cancelToken)) {
+        return;
+      }
       const chapter = list[index];
       const currentProjectName = buildListenProjectName(book);
 
@@ -1241,13 +1253,15 @@ const NovelReaderApp: React.FC = () => {
       }
 
       setIsListenMode(true);
-      startListening(currentProjectName, index, {
+      setRestorePlaybackProgress(false);
+      setPlaybackSession(++preparationIdRef.current);
+      await startListening(currentProjectName, index, {
         chapterTitle: chapter.title || '',
         chapterText,
         prescanTexts: [],
       });
     },
-    [loadChapterContent, startListening],
+    [loadChapterContent, startListening, beginChapterLoad, isChapterLoadActive],
   );
 
   const handleSourceSelect = async (source: any) => {
@@ -1309,7 +1323,10 @@ const NovelReaderApp: React.FC = () => {
   const handleChapterFinished = useCallback(() => {
     const list = chapterListRef.current;
     const idx = currentChapterIndexRef.current;
-    const nextIdx = idx + 1;
+    let nextIdx = idx + 1;
+    while (nextIdx < list.length && list[nextIdx].isVolume) {
+      nextIdx++;
+    }
 
     if (nextIdx >= list.length) {
       Alert.alert('提示', '全书已播放完毕');
@@ -1318,6 +1335,7 @@ const NovelReaderApp: React.FC = () => {
 
     startListenForChapter(nextIdx).catch(error => {
       console.warn('[NovelReaderApp] 自动换章失败:', error);
+      Alert.alert('自动换章失败', '请重试开启当前章节听书。');
     });
   }, [startListenForChapter]);
 
@@ -1435,6 +1453,7 @@ const NovelReaderApp: React.FC = () => {
       ? {
           assetId: `${projectName}_${currentChapterIndex}`,
           playbackSessionId: playbackSession,
+          restoreProgress: restorePlaybackProgress,
           title: chapterList[currentChapterIndex]?.title || '',
           author: selectedBook.author,
           album: selectedBook.name || '',
@@ -1443,7 +1462,7 @@ const NovelReaderApp: React.FC = () => {
       : undefined,
     projectName,
     currentChapterIndex,
-    preparation ? undefined : handleChapterFinished,
+    handleChapterFinished,
     handleAutoGenerateMissingSegment,
     preparation ? preparation.autoPlay && !preparation.error : true,
   );
@@ -1820,6 +1839,7 @@ const NovelReaderApp: React.FC = () => {
     resetListen(true);
     stopPlayback();
     const id = ++preparationIdRef.current;
+    setRestorePlaybackProgress(true);
     setPlaybackSession(id);
     setPreparation({
       id,
@@ -1950,8 +1970,7 @@ const NovelReaderApp: React.FC = () => {
   };
 
   const handleStopListen = () => {
-    preparationIdRef.current += 1;
-    setPreparation(null);
+    cancelActiveChapterLoad();
     stopPlayback();
     resetListen();
     setIsListenMode(false);

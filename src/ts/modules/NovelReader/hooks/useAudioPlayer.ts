@@ -1,13 +1,19 @@
 import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
+import {AppState} from 'react-native';
 import {ListenSegment} from '../types/reader';
 import VideoPlayerController from '../controllers/VideoPlayerController';
 import ListenAudioCacheController from '../controllers/ListenAudioCacheController';
-import {saveListenProgress} from '../utils/readerStorage';
+import {
+  saveListenProgress,
+  loadListenProgress,
+  ListenProgress,
+} from '../utils/readerStorage';
 import {getSegmentPlaybackError} from '../utils/segmentPlaybackError';
 
 export interface AudioChapterMetadata {
   assetId: string;
   playbackSessionId?: number;
+  restoreProgress?: boolean;
   title: string;
   author?: string;
   album?: string;
@@ -135,6 +141,74 @@ export const useAudioPlayer = (
     : '';
   const [nativeState, setNativeState] = useState('idle');
   const [startupFailed, setStartupFailed] = useState(false);
+  const [resume, setResume] = useState<{session: string; index: number} | null>(
+    null,
+  );
+  const latestProgressRef = useRef<ListenProgress | null>(null);
+  const stoppedRef = useRef(false);
+  const finishedSessionRef = useRef('');
+  const flushProgress = useCallback(() => {
+    const progress = latestProgressRef.current;
+    if (progress) {
+      saveListenProgress({...progress, updatedAt: Date.now()}).catch(error =>
+        console.warn('[useAudioPlayer] 补存进度失败', error),
+      );
+    }
+  }, []);
+  useEffect(() => {
+    let active = true;
+    stoppedRef.current = false;
+    finishedSessionRef.current = '';
+    latestProgressRef.current = null;
+    setResume(null);
+    const read =
+      projectName &&
+      chapterIndex !== undefined &&
+      chapterMeta?.restoreProgress !== false
+        ? loadListenProgress(projectName, chapterIndex)
+        : Promise.resolve(null);
+    read
+      .catch(error => {
+        console.warn('[useAudioPlayer] 读取进度失败', error);
+        return null;
+      })
+      .then(progress => {
+        if (active) {
+          setResume({
+            session: nativeAssetId,
+            index:
+              progress &&
+              progress.projectName === projectName &&
+              progress.chapterIndex === chapterIndex &&
+              Number.isInteger(progress.segmentIndex) &&
+              progress.segmentIndex >= 0
+                ? progress.segmentIndex
+                : 0,
+          });
+        }
+      });
+    return () => {
+      active = false;
+      flushProgress();
+    };
+  }, [
+    nativeAssetId,
+    projectName,
+    chapterIndex,
+    chapterMeta?.restoreProgress,
+    flushProgress,
+  ]);
+  useEffect(() => {
+    if (listenState === 'idle') {
+      flushProgress();
+    }
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') {
+        flushProgress();
+      }
+    });
+    return () => subscription.remove();
+  }, [listenState, flushProgress]);
   const hasStartedRef = useRef(false);
   const autoStartRef = useRef(allowAutoStart);
   autoStartRef.current = allowAutoStart;
@@ -142,6 +216,9 @@ export const useAudioPlayer = (
     setNativeState('idle');
     setStartupFailed(false);
     hasStartedRef.current = false;
+    currentSegIdxRef.current = -1;
+    lastSaveTimeRef.current = 0;
+    lastQueueSyncKeyRef.current = '';
   }, [nativeAssetId]);
   const suppressAutoPlay = useCallback(() => {
     autoStartRef.current = false;
@@ -272,14 +349,21 @@ export const useAudioPlayer = (
   }, [chapterMeta?.assetId, cleanupEvictedChapters]);
 
   const persistProgress = useCallback(
-    (segIdx: number, time: number) => {
+    (segIdx: number, time: number, force = false) => {
       const now = Date.now();
+      if (!projectName || chapterIndex === undefined || segIdx < 0) {
+        return;
+      }
+      latestProgressRef.current = {
+        segmentIndex: segIdx,
+        currentTime: time,
+        chapterIndex,
+        projectName,
+        updatedAt: now,
+      };
       if (
-        now - lastSaveTimeRef.current <
-          LISTEN_TUNING.PROGRESS_SAVE_THROTTLE_MS ||
-        !projectName ||
-        chapterIndex === undefined ||
-        segIdx < 0
+        !force &&
+        now - lastSaveTimeRef.current < LISTEN_TUNING.PROGRESS_SAVE_THROTTLE_MS
       ) {
         return;
       }
@@ -740,6 +824,8 @@ export const useAudioPlayer = (
   }, [cacheEntries, chapterMeta?.assetId, isGenerationComplete, segments]);
 
   const stopPlayback = useCallback(() => {
+    flushProgress();
+    stoppedRef.current = true;
     setNativeState('idle');
     setStartupFailed(false);
     hasStartedRef.current = false;
@@ -757,7 +843,7 @@ export const useAudioPlayer = (
     pendingManualStartIndexRef.current = -1;
     lastRequestedMissingSegmentRef.current = -1;
     VideoPlayerController.stop();
-  }, []);
+  }, [flushProgress]);
 
   const playFromIndex = useCallback(
     (index: number) => {
@@ -781,6 +867,8 @@ export const useAudioPlayer = (
       });
 
       currentChapterAssetIdRef.current = chapterMeta.assetId;
+      stoppedRef.current = false;
+      finishedSessionRef.current = '';
       pendingManualStartIndexRef.current = index;
       prefetchWindow(index);
 
@@ -807,22 +895,24 @@ export const useAudioPlayer = (
 
   const togglePlayPause = useCallback(() => {
     if (isPlayingRef.current) {
+      flushProgress();
       VideoPlayerController.pause();
       return;
     }
 
     if (currentSegIdxRef.current === -1) {
-      playFromIndex(0);
+      playFromIndex(resume?.session === nativeAssetId ? resume.index : 0);
       return;
     }
 
     VideoPlayerController.play();
-  }, [playFromIndex]);
+  }, [playFromIndex, flushProgress, resume, nativeAssetId]);
 
   useEffect(() => {
     const unsubscribe = VideoPlayerController.onPlaybackState(payload => {
       if (
         listenState !== 'ready' ||
+        stoppedRef.current ||
         !payload.chapterAssetId ||
         payload.chapterAssetId !== nativeAssetId
       ) {
@@ -909,7 +999,11 @@ export const useAudioPlayer = (
       }
 
       if (nextSegIdx >= 0) {
-        persistProgress(nextSegIdx, nextProgress);
+        persistProgress(
+          nextSegIdx,
+          nextProgress,
+          segChanged || payload.state === 'paused' || payload.chapterFinished,
+        );
       }
 
       if (
@@ -925,8 +1019,10 @@ export const useAudioPlayer = (
       if (
         payload.chapterFinished &&
         payload.chapterAssetId &&
-        payload.chapterAssetId === nativeAssetId
+        payload.chapterAssetId === nativeAssetId &&
+        finishedSessionRef.current !== nativeAssetId
       ) {
+        finishedSessionRef.current = nativeAssetId;
         onChapterFinished?.();
       }
     });
@@ -970,7 +1066,13 @@ export const useAudioPlayer = (
         : currentSegIdxRef.current >= 0
         ? currentSegIdxRef.current
         : segments.length > 0
-        ? 0
+        ? resume?.session === nativeAssetId
+          ? resume.index < segments.length
+            ? resume.index
+            : isGenerationComplete
+            ? 0
+            : -1
+          : -1
         : -1;
 
     if (preferredStartIndex >= 0) {
@@ -982,12 +1084,29 @@ export const useAudioPlayer = (
     listenState,
     prefetchWindow,
     segments.length,
+    resume,
+    nativeAssetId,
+    isGenerationComplete,
   ]);
 
   useEffect(() => {
-    if (listenState !== 'ready') {
+    if (
+      listenState !== 'ready' ||
+      stoppedRef.current ||
+      resume?.session !== nativeAssetId
+    ) {
       return;
     }
+
+    // 生成中的队列可能还没有恢复目标段，等待完整队列再判定越界。
+    if (
+      resume.index >= segments.length &&
+      !isGenerationComplete &&
+      pendingManualStartIndexRef.current < 0
+    ) {
+      return;
+    }
+    const resumeIndex = resume.index < segments.length ? resume.index : 0;
 
     if (
       lastRequestedMissingSegmentRef.current >= 0 &&
@@ -1010,7 +1129,7 @@ export const useAudioPlayer = (
     const startIndex = hasManualStart
       ? pendingManualStartIndexRef.current
       : shouldAutoStart
-      ? 0
+      ? resumeIndex
       : undefined;
     const autoPlay =
       startIndex !== undefined && (hasManualStart || shouldAutoStart)
@@ -1042,24 +1161,33 @@ export const useAudioPlayer = (
     segments,
     allowAutoStart,
     nativeAssetId,
+    resume,
+    isGenerationComplete,
   ]);
 
+  const startupIndex =
+    currentSegIdx >= 0
+      ? currentSegIdx
+      : resume?.session === nativeAssetId && resume.index < segments.length
+      ? resume.index
+      : 0;
   return {
     suppressAutoPlay,
     startupStatus:
       startupFailed ||
       nativeState === 'error' ||
-      (segments[0] &&
-        (segments[0].generationError ||
-          getSegmentPlaybackError(segments[0].text)))
+      (segments[startupIndex] &&
+        (segments[startupIndex].generationError ||
+          getSegmentPlaybackError(segments[startupIndex].text)))
         ? 'error'
         : nativeState === 'playing'
         ? 'playing'
         : nativeState === 'loading'
         ? 'buffering'
-        : segments[0]?.audioUrl && canStartPlaybackAtIndex(0)
+        : segments[startupIndex]?.audioUrl &&
+          canStartPlaybackAtIndex(startupIndex)
         ? 'ready'
-        : segments[0]?.audioUrl
+        : segments[startupIndex]?.audioUrl
         ? 'buffering'
         : 'waiting',
     isPlaying,

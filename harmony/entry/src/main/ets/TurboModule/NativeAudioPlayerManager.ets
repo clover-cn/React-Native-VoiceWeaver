@@ -79,6 +79,7 @@ export class NativeAudioPlayerManager {
   }
   private queue: NativeAudioSegmentPayload[] = [];
   private chapterAssetId: string = '';
+  private chapterFinishedEmitted: boolean = false;
   private chapterTitle: string = '';
   private chapterAuthor: string = '';
   private chapterAlbum: string = '';
@@ -328,6 +329,7 @@ export class NativeAudioPlayerManager {
     this.isGenerationComplete = payload.isGenerationComplete ?? false;
 
     if (isNewChapter) {
+      this.chapterFinishedEmitted = false;
       this.consecutiveFailures = 0;
       this.currentIndex = -1;
       this.currentDurationMs = 0;
@@ -347,6 +349,7 @@ export class NativeAudioPlayerManager {
 
     // 用户选段必须优先于旧片段恢复；缓存刷新不能解除故障停止状态。
     if (isExplicitStart && targetStartIndex >= 0) {
+      this.chapterFinishedEmitted = false;
       this.consecutiveFailures = 0;
       this.stoppedExplicitly = false;
       await this.loadIndex(targetStartIndex, payload.autoPlay ?? true);
@@ -355,6 +358,8 @@ export class NativeAudioPlayerManager {
     if (this.stoppedExplicitly) {
       return;
     }
+    // 已结束会话的缓存刷新不能重新播放末段或重复触发换章。
+    if (this.chapterFinishedEmitted) return;
     if (payload.autoPlay !== undefined) {
       this.desiredPlaying = payload.autoPlay;
     }
@@ -975,6 +980,8 @@ export class NativeAudioPlayerManager {
   }
 
   private finishChapter(): void {
+    if (this.chapterFinishedEmitted || this.stoppedExplicitly) return;
+    this.chapterFinishedEmitted = true;
     this.desiredPlaying = false;
     this.resumeAfterInterrupt = false;
     this.waitingForMoreSegments = false;

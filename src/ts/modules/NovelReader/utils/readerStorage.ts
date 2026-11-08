@@ -302,6 +302,7 @@ const isValidReadingRecord = (value: unknown): value is ReadingRecord => {
 
 const LISTEN_PROGRESS_KEY = 'novel_reader_listen_progress';
 const removedListeningProjects = new Set<string>();
+const progressWrites = new Map<string, Promise<void>>();
 /** 用户主动重新打开书籍后，允许保存新的听书进度。 */
 export const activateBookListeningData = (projectName: string): void => {
   removedListeningProjects.delete(projectName);
@@ -331,10 +332,26 @@ export const saveListenProgress = async (
   }
   // 使用复合 key，区分不同书的不同章节
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${progress.projectName}_${progress.chapterIndex}`;
-  if (isNativeStorageAvailable()) {
-    await writePrefJson(compositeKey, progress);
-  } else {
-    writeJson(compositeKey, progress);
+  const snapshot = {...progress};
+  const write = (progressWrites.get(compositeKey) || Promise.resolve())
+    .catch(() => {})
+    .then(async () => {
+      if (removedListeningProjects.has(snapshot.projectName)) {
+        return;
+      }
+      if (isNativeStorageAvailable()) {
+        await writePrefJson(compositeKey, snapshot);
+      } else {
+        writeJson(compositeKey, snapshot);
+      }
+    });
+  progressWrites.set(compositeKey, write);
+  try {
+    await write;
+  } finally {
+    if (progressWrites.get(compositeKey) === write) {
+      progressWrites.delete(compositeKey);
+    }
   }
 };
 
@@ -343,6 +360,7 @@ export const loadListenProgress = async (
   chapterIndex: number,
 ): Promise<ListenProgress | null> => {
   const compositeKey = `${LISTEN_PROGRESS_KEY}_${projectName}_${chapterIndex}`;
+  await progressWrites.get(compositeKey)?.catch(() => {});
   if (isNativeStorageAvailable()) {
     return readPrefJson<ListenProgress | null>(compositeKey, null);
   }
