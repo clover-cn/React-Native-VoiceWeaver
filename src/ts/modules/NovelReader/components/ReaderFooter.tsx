@@ -30,6 +30,7 @@ interface ReaderFooterProps {
 
 // 模块级常量与工具函数 —— 单行 4 项，超出自动换行
 const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
+  {label: '音色分配', id: 'voiceGraph'},
   {label: '定时关闭', id: 'sleep'},
   {label: '书源切换', id: 'source'},
   {label: '翻页模式', id: 'flip'},
@@ -43,6 +44,7 @@ const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
 // 📖 书卷替代单页纸
 // ℹ️ 详情信息
 const MENU_ICONS: Record<string, string> = {
+  voiceGraph: '🕸',
   audio: '🎧',
   sleep: '🌙',
   source: '🌐',
@@ -242,7 +244,9 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
 
         {/* 快捷功能网格 */}
         <View style={styles.gridContainer}>
-          {MENU_ITEMS.map(item => (
+          {MENU_ITEMS.filter(
+            item => item.id !== 'voiceGraph' || showChapterControls,
+          ).map(item => (
             <FooterMenuItem
               key={item.id}
               id={item.id}

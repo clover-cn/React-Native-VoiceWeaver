@@ -26,6 +26,7 @@ export interface LocalChapter {
   taskId?: string;
 }
 export interface LocalProject {
+  voiceGraphLayout?: Record<string, {x: number; y: number}>;
   prescans?: Record<string, PrescanRecord>;
   characters: Record<string, Character>;
   bindings: GlobalAudioBindings;
@@ -55,7 +56,7 @@ export const loadProject = (name: string) =>
   readDocument(projectKey(name), emptyProject());
 export async function updateProject<T>(
   name: string,
-  update: (project: LocalProject) => T,
+  update: (project: LocalProject) => T | Promise<T>,
 ): Promise<T> {
   const version = projectVersions.get(name) || 0;
   return serialized(async () => {
@@ -63,7 +64,7 @@ export async function updateProject<T>(
       throw new Error('书籍已删除，本次修改已取消。');
     }
     const project = await loadProject(name);
-    const result = update(project);
+    const result = await update(project);
     await writeDocument(projectKey(name), project);
     return result;
   });

@@ -22,6 +22,7 @@ add_subdirectory("${OH_MODULES}/@react-native-ohos/react-native-linear-gradient/
 add_subdirectory("${OH_MODULES}/@react-native-ohos/checkbox/src/main/cpp" ./checkbox)
 add_subdirectory("${OH_MODULES}/@react-native-oh-tpl/react-native-view-shot/src/main/cpp" ./view-shot)
 add_subdirectory("${OH_MODULES}/@react-native-ohos/react-native-video/src/main/cpp" ./video)
+add_subdirectory("${OH_MODULES}/@react-native-oh-tpl/react-native-webview/src/main/cpp" ./webview)
 # RNOH_END: add_package_subdirectories
 
 add_library(rnoh_app SHARED
@@ -40,4 +41,5 @@ target_link_libraries(rnoh_app PUBLIC rnoh_view_shot)
 target_link_libraries(rnoh_app PUBLIC rnoh_linear_gradient)
 target_link_libraries(rnoh_app PUBLIC rnoh_checkbox)
 target_link_libraries(rnoh_app PUBLIC rnoh_video)
+target_link_libraries(rnoh_app PUBLIC rnoh_webview)
 # RNOH_END: link_packages

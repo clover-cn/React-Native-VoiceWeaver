@@ -31,6 +31,14 @@ export interface AudioReferenceConfig {
 }
 
 export interface ListenSegment {
+  /** 音色分配来源；旧记录由解析器保守识别。 */
+  assignmentSource?: 'auto' | 'role' | 'segment' | 'legacy';
+  /** 保留 IndexTTS2 片段特例时固定说话人，避免被新的普通音色间接替换。 */
+  referenceSpeakerId?: string;
+  /** 分配已保存，须由用户主动重新生成。 */
+  needsVoiceRegeneration?: boolean;
+  previousAudioUrl?: string | null;
+  previousLocalAudioUrl?: string | null;
   missingEmotionPolicy?: 'strict' | 'fallback_neutral';
   index?: number;
   type: 'narration' | 'dialogue';
