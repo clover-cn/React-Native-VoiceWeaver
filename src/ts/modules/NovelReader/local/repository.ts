@@ -108,10 +108,7 @@ export function updateAudio(
     await writeDocument('references.json', update(await listAudio()));
   });
 }
-export async function importAudio(
-  uri: string,
-  name: string,
-): Promise<void> {
+export async function importAudio(uri: string, name: string): Promise<void> {
   const normalizedName = requireAudioUploadName(name);
   const localUri = await nativeCall<string>('importAudio', {
     uri,
@@ -144,3 +141,15 @@ export const setVoicePool = (voiceActor: string, pool: VoicePool) =>
         : item,
     ),
   );
+
+/** 批量切换当前录音状态，不覆盖文本、音频池及上传缓存。 */
+export const setAudioDisabled = (ids: string[], disabled: boolean) => {
+  const selected = new Set(ids);
+  return serialized(async () => {
+    const records = (await listAudio()).map(item =>
+      selected.has(item.id) ? {...item, disabled} : item,
+    );
+    await writeDocument('references.json', records);
+    return records;
+  });
+};

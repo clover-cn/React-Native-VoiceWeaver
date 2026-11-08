@@ -18,6 +18,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -403,6 +404,40 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   );
   const [poolDrafts, setPoolDrafts] = useState<Record<string, VoicePool>>({});
   const [savingPoolKeys, setSavingPoolKeys] = useState<Set<string>>(new Set());
+  const availabilityLocks = useRef(new Set<string>());
+  const [savingAvailability, setSavingAvailability] = useState(
+    new Set<string>(),
+  );
+
+  const changeAvailability = async (
+    groupKey: string,
+    ids: string[],
+    disabled: boolean,
+  ) => {
+    if (availabilityLocks.current.has(groupKey)) {
+      return;
+    }
+    availabilityLocks.current.add(groupKey);
+    setSavingAvailability(new Set(availabilityLocks.current));
+    try {
+      const data = await localService.audioDisabled(ids, disabled);
+      const selected = new Set(ids);
+      setAudioList(current =>
+        current.map(record =>
+          selected.has(record.id) ? {...record, disabled} : record,
+        ),
+      );
+      onRecordsChanged?.(normalizeAudioList(data.list));
+    } catch (err) {
+      Alert.alert(
+        '更新启用状态失败',
+        err instanceof Error ? err.message : '请稍后重试',
+      );
+    } finally {
+      availabilityLocks.current.delete(groupKey);
+      setSavingAvailability(new Set(availabilityLocks.current));
+    }
+  };
 
   const fetchProvider = useCallback(async () => {
     try {
@@ -753,10 +788,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     uploadInFlightRef.current = true;
     setUploading(true);
     try {
-      await importAudio(
-        uploadDraft.uri,
-        validation.name,
-      );
+      await importAudio(uploadDraft.uri, validation.name);
       setUploadDraft(null);
       await fetchAudioList();
       Alert.alert('上传成功', '参考录音已保存到本机。');
@@ -853,12 +885,30 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
               {record.name || '未命名音频'}
             </Text>
             <Text style={styles.cardTime}>{formatDate(record.createTime)}</Text>
+            {record.disabled ? (
+              <Text style={styles.cardTime}>已禁用</Text>
+            ) : null}
           </View>
           {isPending ? (
             <ActivityIndicator size="small" color="#007AFF" />
           ) : null}
         </View>
 
+        <View style={styles.availabilityRow}>
+          <Text style={styles.fieldLabel}>启用音频</Text>
+          <Switch
+            accessibilityLabel={`${record.name}启用音频`}
+            value={!record.disabled}
+            disabled={savingAvailability.has(getAudioGroupKey(record))}
+            onValueChange={enabled =>
+              changeAvailability(
+                getAudioGroupKey(record),
+                [record.id],
+                !enabled,
+              )
+            }
+          />
+        </View>
         {previewUri ? (
           <PreviewPlayer uri={previewUri} />
         ) : (
@@ -910,6 +960,10 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     const isExpanded = expandedGroupKeys.has(item.key);
     const isSavingPool = savingPoolKeys.has(item.key);
     const selectedPool = poolDrafts[item.key] || item.configuredPool;
+    const allRecords = audioList.filter(
+      record => getAudioGroupKey(record) === item.key,
+    );
+    const enabledCount = allRecords.filter(record => !record.disabled).length;
 
     return (
       <View style={styles.voiceActorCard}>
@@ -928,6 +982,26 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
           <Text style={styles.expandText}>{isExpanded ? '收起' : '展开'}</Text>
         </TouchableOpacity>
 
+        <View style={styles.availabilityRow}>
+          <View>
+            <Text style={styles.fieldLabel}>全部启用</Text>
+            <Text style={styles.cardTime}>
+              已启用 {enabledCount}/{allRecords.length}
+            </Text>
+          </View>
+          <Switch
+            accessibilityLabel={`${item.voiceActor || '未识别声线'}全部启用`}
+            value={enabledCount === allRecords.length}
+            disabled={savingAvailability.has(item.key)}
+            onValueChange={enabled =>
+              changeAvailability(
+                item.key,
+                allRecords.map(record => record.id),
+                !enabled,
+              )
+            }
+          />
+        </View>
         <View style={styles.groupPoolBlock}>
           <View style={styles.groupPoolHeader}>
             <Text style={styles.fieldLabel}>音频池</Text>
@@ -1182,6 +1256,12 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
 };
 
 const styles = StyleSheet.create({
+  availabilityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
   modalBg: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.4)',

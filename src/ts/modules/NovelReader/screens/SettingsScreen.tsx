@@ -219,7 +219,7 @@ export default function SettingsScreen({
       validateConfig(config);
       const signal = new AbortController().signal;
       if (speech) {
-        const records = await listAudio();
+        const records = (await listAudio()).filter(record => !record.disabled);
         if (!records.length) {
           throw new Error('请先在音色库导入参考录音。');
         }

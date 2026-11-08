@@ -238,6 +238,9 @@ const buildEmotionAudioMapForVoiceActor = (
 
   const emotionMap: Record<string, AudioReferenceConfig> = {};
   audioOptions.forEach(item => {
+    if (item.disabled) {
+      return;
+    }
     const itemMeta = parseAudioRecordMeta(item.id, audioMap);
     if (!itemMeta || itemMeta.voiceActor !== meta.voiceActor) {
       return;

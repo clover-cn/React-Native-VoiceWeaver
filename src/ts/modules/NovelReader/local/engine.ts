@@ -19,6 +19,7 @@ import {
 import {callLlm, generateSpeech} from './providers';
 import {parsePrompt, prescanPrompt} from './prompts';
 import {assertNarratorAvailable} from './preflight';
+import {AvailabilityContext} from './audioAvailability';
 import {logPrescanResult} from './prescanLog';
 import {canReusePrescan, createPrescanRecord} from './prescanCache';
 import {
@@ -40,6 +41,7 @@ export interface TaskSnapshot {
   failedIndexes: number[];
 }
 interface Task extends TaskSnapshot {
+  availability?: AvailabilityContext;
   controller: AbortController;
   config: EngineConfig;
   payload: ListenBookGeneratePayload;
@@ -47,6 +49,22 @@ interface Task extends TaskSnapshot {
   paused?: boolean;
 }
 const tasks = new Map<string, Task>();
+
+/** 生成入口共享任务级替代声线快照，片段引用随现有检查点保存。 */
+async function taskAvailability(task: Task): Promise<AvailabilityContext> {
+  if (!task.availability) {
+    const project = await loadProject(task.projectName);
+    task.availability = {
+      casting: JSON.parse(JSON.stringify(project.casting)),
+      cards: task.segments,
+      projectName: task.projectName,
+      chapterIndex: task.chapterIndex,
+      environment: castingEnvironment(task.config),
+      replacements: new Map(),
+    };
+  }
+  return task.availability;
+}
 let globalCancelVersion = 0;
 const cancelVersions = new Map<string, number>();
 const cancelStamp = (project: string) =>
@@ -647,6 +665,7 @@ async function run(task: Task): Promise<void> {
           project.bindings,
           task.controller.signal,
           task.projectName,
+          await taskAvailability(task),
         );
         active(task);
         logModelProgress(
@@ -974,6 +993,7 @@ export async function regenerateSegments(
           ).bindings,
           task.controller.signal,
           task.projectName,
+          await taskAvailability(task),
         );
         active(task);
         task.segments[index] = {

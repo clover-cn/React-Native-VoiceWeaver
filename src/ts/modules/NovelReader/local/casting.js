@@ -644,6 +644,9 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
     );
 
     for (const rawRecord of sorted) {
+      if (rawRecord.disabled) {
+        continue;
+      }
       const rec = {
         ...rawRecord,
         voicePool: normalizeVoicePool(rawRecord.voicePool),
