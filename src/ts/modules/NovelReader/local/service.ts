@@ -10,6 +10,10 @@ import * as repository from './repository';
 /** 界面使用的端侧业务接口，不再经过 HTTP 路由。 */
 export const localService = {
   audioList: async () => ({success: true, list: await repository.listAudio()}),
+  audioDisabled: async (ids: string[], disabled: boolean) => {
+    const list = await repository.setAudioDisabled(ids, disabled);
+    return {success: true, list};
+  },
   provider: async () => ({
     success: true,
     provider: (await loadConfig()).provider,

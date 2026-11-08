@@ -3,6 +3,7 @@ import {createTextHash} from '../utils/listenBook';
 import {EngineConfig, ModelConfig} from './config';
 import {logModelFailure, logModelProgress, nativeCall} from './native';
 import {listAudio, updateAudio} from './repository';
+import {availableSegment, AvailabilityContext} from './audioAvailability';
 import {parseLlmResponse} from './llmStream';
 
 interface NativeResponse {
@@ -72,6 +73,7 @@ export async function modelRequest(
   payload: object,
   signal: AbortSignal,
   stage = '',
+  beforeAttempt?: () => Promise<void>,
 ): Promise<NativeResponse> {
   if (signal.aborted) {
     throw new Error('任务已取消');
@@ -82,6 +84,10 @@ export async function modelRequest(
   };
   signal.addEventListener('abort', abort);
   try {
+    await beforeAttempt?.();
+    if (signal.aborted) {
+      throw new Error('任务已取消');
+    }
     let result = await nativeCall<NativeResponse>('request', {id, ...payload});
     if (!signal.aborted && (result.status === 429 || result.status >= 500)) {
       const value = result.retryAfter || '';
@@ -95,6 +101,10 @@ export async function modelRequest(
       logModelProgress(
         `${stage || '模型请求'}：HTTP ${result.status}，准备重试 1/1`,
       );
+      await beforeAttempt?.();
+      if (signal.aborted) {
+        throw new Error('任务已取消');
+      }
       result = await nativeCall<NativeResponse>('request', {id, ...payload});
     }
     if (signal.aborted) {
@@ -177,16 +187,57 @@ export async function callLlm(
   }
 }
 
+class AudioAvailabilityChanged extends Error {}
+
+/** 禁用状态在上传或重试等待期间改变时，重新选音后再发送请求。 */
 export async function generateSpeech(
   segment: ListenSegment,
   config: EngineConfig,
   bindings: GlobalAudioBindings,
   signal: AbortSignal,
   projectName?: string,
+  availability?: AvailabilityContext,
 ): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await generateAvailableSpeech(
+        segment,
+        config,
+        bindings,
+        signal,
+        projectName,
+        availability,
+      );
+    } catch (error) {
+      if (!(error instanceof AudioAvailabilityChanged)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error('音频启用状态连续变化，请稍后重新生成。');
+}
+
+async function generateAvailableSpeech(
+  segment: ListenSegment,
+  config: EngineConfig,
+  bindings: GlobalAudioBindings,
+  signal: AbortSignal,
+  projectName?: string,
+  availability?: AvailabilityContext,
+): Promise<string> {
+  const records = await listAudio();
+  const prepared = availableSegment(
+    segment,
+    bindings,
+    records,
+    config.provider,
+    availability,
+  );
+  const replaced = prepared !== segment;
+  Object.assign(segment, prepared);
   const role = {
     ...segment.autoEmotionAudioMap,
-    ...bindings[segment.role || ''],
+    ...(replaced ? {} : bindings[segment.role || '']),
   };
   const reference =
     segment.referenceAudio ||
@@ -195,7 +246,6 @@ export async function generateSpeech(
   if (segment.manualAssigned && segment.referenceAudio === null) {
     throw new Error(`角色“${segment.role || '旁白'}”缺少当前情绪的参考音频。`);
   }
-  const records = await listAudio();
   const record = records.find(
     item =>
       item.id ===
@@ -211,6 +261,24 @@ export async function generateSpeech(
     );
   }
   const provider = config.provider;
+  const usedIds = [record.id];
+  if (
+    provider === 'indextts2' &&
+    (reference?.mode === 2 || reference?.mode === 3)
+  ) {
+    usedIds.push(role.neutral?.id || record.id);
+  }
+  const speechRequest = (payload: object, requestSignal: AbortSignal) =>
+    modelRequest(payload, requestSignal, '', async () => {
+      const latest = await listAudio();
+      if (
+        usedIds.some(
+          id => !latest.some(item => item.id === id && !item.disabled),
+        )
+      ) {
+        throw new AudioAvailabilityChanged();
+      }
+    });
   const model = config[provider];
   const common = {
     url: model.endpoint,
@@ -226,7 +294,7 @@ export async function generateSpeech(
     );
     let voice = record.siliconVoices?.[account];
     if (!voice) {
-      const uploaded = await modelRequest(
+      const uploaded = await speechRequest(
         {
           url: sf.uploadEndpoint,
           timeout: config.advanced.ttsTimeout,
@@ -257,7 +325,7 @@ export async function generateSpeech(
         ),
       );
     }
-    result = await modelRequest(
+    result = await speechRequest(
       {
         ...common,
         headers: {Authorization: `Bearer ${sf.apiKey}`},
@@ -272,7 +340,7 @@ export async function generateSpeech(
     );
   } else if (provider === 'mimoTTS') {
     const mimo = config.mimoTTS;
-    result = await modelRequest(
+    result = await speechRequest(
       {
         ...common,
         headers: {'api-key': mimo.apiKey, 'Content-Type': 'application/json'},
@@ -328,7 +396,7 @@ export async function generateSpeech(
       );
       fields.emo_alpha = '0.6';
     }
-    result = await modelRequest(
+    result = await speechRequest(
       {
         ...common,
         extension: '.wav',

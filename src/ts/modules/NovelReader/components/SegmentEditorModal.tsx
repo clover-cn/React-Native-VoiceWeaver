@@ -125,10 +125,12 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
   const audioDropdownData = useMemo(
     () => [
       {label: '清除手动指定', value: '__clear__'},
-      ...audioOptions.map(item => ({
-        label: item.name,
-        value: item.id,
-      })),
+      ...audioOptions
+        .filter(item => !item.disabled)
+        .map(item => ({
+          label: item.name,
+          value: item.id,
+        })),
     ],
     [audioOptions],
   );

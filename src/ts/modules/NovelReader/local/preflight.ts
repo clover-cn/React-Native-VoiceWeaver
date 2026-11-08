@@ -9,6 +9,7 @@ export async function assertNarratorAvailable(): Promise<void> {
   const casting = createCastingEngine({}, records);
   for (const record of records) {
     if (
+      !record.disabled &&
       casting.parseAudioRecordName(record.name)?.emotion === 'narration' &&
       (await nativeCall<boolean>('exists', {uri: record.url}))
     ) {
@@ -16,7 +17,7 @@ export async function assertNarratorAvailable(): Promise<void> {
     }
   }
   throw new ConfigurationError(
-    '缺少可用的旁白参考录音，请先在音色库导入“声线-旁白-性别”或“声线-narration-性别”录音，再开始听书。',
+    '缺少可用的旁白参考录音，请先在音色库启用或导入“声线-旁白-性别”或“声线-narration-性别”录音，再开始听书。',
     'storage',
   );
 }
