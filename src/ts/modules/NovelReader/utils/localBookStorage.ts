@@ -1,6 +1,7 @@
 import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import iconv from 'iconv-lite';
 import {Buffer} from 'buffer';
+import {detectTxtEncoding} from './txtEncoding';
 import bridge from '../../base/utils/bridge';
 import {Book, Chapter} from '../types/reader';
 import {createTextHash, normalizeChapterTextForRequest} from './listenBook';
@@ -45,9 +46,6 @@ const localBookVersions = new Map<string, number>();
 interface TxtDecodeResult {
   content: string;
   encoding: string;
-  repaired: boolean;
-  score: number;
-  originalScore: number;
 }
 
 const callNative = (
@@ -109,97 +107,8 @@ const normalizeText = (content: string) =>
     .replace(/^\uFEFF/, '')
     .replace(/\r\n?/g, '\n');
 
-const scoreTxtContent = (content: string): number => {
-  let score = 0;
-  let cjkCount = 0;
-  let suspiciousLatin1Count = 0;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const code = content.charCodeAt(index);
-    if (
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0x4e00 && code <= 0x9fff)
-    ) {
-      cjkCount += 1;
-    }
-    if ((code >= 0x00a1 && code <= 0x00ff) || code === 0x0080) {
-      suspiciousLatin1Count += 1;
-    }
-    if (code === 0xfffd) {
-      score -= 500;
-    }
-    if (code === 0 || (code < 0x20 && code !== 0x09 && code !== 0x0a)) {
-      score -= 80;
-    }
-  }
-
-  score += cjkCount * 4;
-  score -= suspiciousLatin1Count;
-  if (content.indexOf('《') >= 0) {
-    score += 300;
-  }
-  if (content.indexOf('》') >= 0) {
-    score += 300;
-  }
-  if (content.indexOf('第') >= 0) {
-    score += 120;
-  }
-  if (content.indexOf('章') >= 0 || content.indexOf('回') >= 0) {
-    score += 100;
-  }
-  if (CHAPTER_PATTERNS.some(pattern => pattern.test(content))) {
-    score += 160;
-  }
-  return score;
-};
-
-const buildLatin1Bytes = (content: string): Buffer | null => {
-  const bytes = Buffer.allocUnsafe(content.length);
-  for (let index = 0; index < content.length; index += 1) {
-    const code = content.charCodeAt(index);
-    if (code > 0xff) {
-      return null;
-    }
-    bytes[index] = code;
-  }
-  return bytes;
-};
-
-const decodeTxtContentWithMeta = (content: string): TxtDecodeResult => {
-  const source = normalizeText(content);
-  const originalScore = scoreTxtContent(source);
-  let best: TxtDecodeResult = {
-    content: source,
-    encoding: 'native',
-    repaired: false,
-    score: originalScore,
-    originalScore,
-  };
-
-  const latin1Bytes = buildLatin1Bytes(source);
-  if (!latin1Bytes) {
-    return best;
-  }
-
-  ['gb18030', 'gbk'].forEach(encoding => {
-    const decoded = normalizeText(iconv.decode(latin1Bytes, encoding));
-    const score = scoreTxtContent(decoded);
-    if (score > best.score + 50) {
-      best = {
-        content: decoded,
-        encoding,
-        repaired: true,
-        score,
-        originalScore,
-      };
-    }
-  });
-
-  return best;
-};
-
-export const decodeTxtContent = (content: string) =>
-  decodeTxtContentWithMeta(content).content;
+// 已解码字符串只做规范化，避免章节解析时再次猜测编码。
+export const decodeTxtContent = (content: string) => normalizeText(content);
 
 const decodeTxtBytesWithMeta = (
   contentBase64: string,
@@ -207,40 +116,20 @@ const decodeTxtBytesWithMeta = (
 ): TxtDecodeResult => {
   const bytes = Buffer.from(contentBase64 || '', 'base64');
   if (bytes.length === 0) {
-    return decodeTxtContentWithMeta(fallbackContent);
+    return {content: normalizeText(fallbackContent), encoding: 'native'};
   }
-
-  const fallback = decodeTxtContentWithMeta(fallbackContent);
-  let best: TxtDecodeResult = {
-    content: fallback.content,
-    encoding: `${fallback.encoding}-fallback`,
-    repaired: fallback.repaired,
-    score: fallback.score,
-    originalScore: fallback.originalScore,
+  const encoding = detectTxtEncoding(bytes);
+  return {
+    content: normalizeText(iconv.decode(bytes, encoding)),
+    encoding,
   };
-
-  ['utf8', 'gb18030', 'gbk', 'utf16le', 'utf16be'].forEach(encoding => {
-    const decoded = normalizeText(iconv.decode(bytes, encoding));
-    const score = scoreTxtContent(decoded);
-    if (score > best.score + 50) {
-      best = {
-        content: decoded,
-        encoding,
-        repaired: encoding !== 'utf8',
-        score,
-        originalScore: fallback.originalScore,
-      };
-    }
-  });
-
-  return best;
 };
 
 const decodeNativeTxtPayload = (result: NativeTxtBookResult) => {
   if (result.contentBase64) {
     return decodeTxtBytesWithMeta(result.contentBase64, result.content || '');
   }
-  return decodeTxtContentWithMeta(result.content || '');
+  return {content: normalizeText(result.content || ''), encoding: 'native'};
 };
 
 const normalizeContent = decodeTxtContent;
@@ -416,9 +305,7 @@ export const buildLocalTxtBook = (
   console.info(
     `[localBookStorage] import phase=decode encoding=${
       decoded.encoding
-    } repaired=${decoded.repaired} originalScore=${
-      decoded.originalScore
-    } score=${decoded.score} hasBase64=${Boolean(result.contentBase64)}`,
+    } hasBase64=${Boolean(result.contentBase64)}`,
   );
   const content = decoded.content;
   if (!localBookId || !content.trim()) {
