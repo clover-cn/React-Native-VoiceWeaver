@@ -881,33 +881,40 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       <View key={record.id} style={styles.audioDetailCard}>
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderMain}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {record.name || '未命名音频'}
-            </Text>
+            <View style={styles.cardTitleRow}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {record.name || '未命名音频'}
+              </Text>
+              {record.disabled ? (
+                <View style={styles.disabledBadge}>
+                  <Text style={styles.disabledBadgeText}>已禁用</Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={styles.cardTime}>{formatDate(record.createTime)}</Text>
-            {record.disabled ? (
-              <Text style={styles.cardTime}>已禁用</Text>
-            ) : null}
           </View>
-          {isPending ? (
-            <ActivityIndicator size="small" color="#007AFF" />
-          ) : null}
-        </View>
-
-        <View style={styles.availabilityRow}>
-          <Text style={styles.fieldLabel}>启用音频</Text>
-          <Switch
-            accessibilityLabel={`${record.name}启用音频`}
-            value={!record.disabled}
-            disabled={savingAvailability.has(getAudioGroupKey(record))}
-            onValueChange={enabled =>
-              changeAvailability(
-                getAudioGroupKey(record),
-                [record.id],
-                !enabled,
-              )
-            }
-          />
+          <View style={styles.cardHeaderRight}>
+            {isPending ? (
+              <ActivityIndicator
+                size="small"
+                color="#007AFF"
+                style={styles.headerIndicator}
+              />
+            ) : null}
+            <Switch
+              accessibilityLabel={`${record.name}启用音频`}
+              style={styles.compactSwitch}
+              value={!record.disabled}
+              disabled={savingAvailability.has(getAudioGroupKey(record))}
+              onValueChange={enabled =>
+                changeAvailability(
+                  getAudioGroupKey(record),
+                  [record.id],
+                  !enabled,
+                )
+              }
+            />
+          </View>
         </View>
         {previewUri ? (
           <PreviewPlayer uri={previewUri} />
@@ -982,15 +989,16 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
           <Text style={styles.expandText}>{isExpanded ? '收起' : '展开'}</Text>
         </TouchableOpacity>
 
-        <View style={styles.availabilityRow}>
-          <View>
-            <Text style={styles.fieldLabel}>全部启用</Text>
-            <Text style={styles.cardTime}>
+        <View style={styles.groupAvailabilityRow}>
+          <View style={styles.groupAvailabilityLeft}>
+            <Text style={styles.groupAvailabilityLabel}>全部启用</Text>
+            <Text style={styles.groupAvailabilitySub}>
               已启用 {enabledCount}/{allRecords.length}
             </Text>
           </View>
           <Switch
             accessibilityLabel={`${item.voiceActor || '未识别声线'}全部启用`}
+            style={styles.compactSwitch}
             value={enabledCount === allRecords.length}
             disabled={savingAvailability.has(item.key)}
             onValueChange={enabled =>
@@ -1256,11 +1264,54 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  availabilityRow: {
+  compactSwitch: {
+    transform: [{scaleX: 0.78}, {scaleY: 0.78}],
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  disabledBadge: {
+    borderRadius: 4,
+    backgroundColor: '#F2F2F7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  disabledBadgeText: {
+    color: '#8E8E93',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerIndicator: {
+    marginRight: 4,
+  },
+  groupAvailabilityRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    marginBottom: 8,
+  },
+  groupAvailabilityLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  groupAvailabilityLabel: {
+    color: '#1C1C1E',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  groupAvailabilitySub: {
+    color: '#8E8E93',
+    fontSize: 12,
   },
   modalBg: {
     flex: 1,
