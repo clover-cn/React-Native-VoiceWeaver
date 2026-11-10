@@ -25,6 +25,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import request from '@ohos.request';
 import { BookSourceSessionManager } from './BookSourceSessionManager';
 import { VoiceWeaverLocal } from './VoiceWeaverLocal';
+import { detectTxtEncoding } from '../utils/TxtEncoding';
 const TAG = 'RnBridge';
 const LISTEN_AUDIO_CACHE_PREFIX = 'listen_book_audio_';
 
@@ -263,63 +264,22 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
     return result
   }
 
-  private scoreTxtContent(content: string): number {
-    let score = 0
-    let cjkCount = 0
-    for (let index = 0; index < content.length; index += 1) {
-      const code = content.charCodeAt(index)
-      if ((code >= 0x3400 && code <= 0x4DBF) || (code >= 0x4E00 && code <= 0x9FFF)) {
-        cjkCount += 1
+  private readTxtText(contentBase64: string): string {
+    const bytes = new util.Base64Helper().decodeSync(contentBase64)
+    const encoding = detectTxtEncoding(bytes)
+    let content: string
+    try {
+      content = util.TextDecoder.create(encoding).decodeWithStream(bytes)
+    } catch (error) {
+      // GBK 是 GB18030 的子集，仅在平台解码器不支持 GB18030 时降级。
+      if (encoding !== 'gb18030') {
+        throw new Error(this.parseBusinessError(error).message ?? 'TXT 文件解码失败')
       }
-      if (code === 0xFFFD) {
-        score -= 100
-      }
-      if (code === 0 || (code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D)) {
-        score -= 20
-      }
+      content = util.TextDecoder.create('gbk').decodeWithStream(bytes)
     }
-
-    score += cjkCount * 2
-    if (content.indexOf('《') >= 0) {
-      score += 120
-    }
-    if (content.indexOf('》') >= 0) {
-      score += 120
-    }
-    if (content.indexOf('第') >= 0) {
-      score += 60
-    }
-    if (content.indexOf('章') >= 0 || content.indexOf('回') >= 0) {
-      score += 40
-    }
-    return score
-  }
-
-  private readTxtText(path: string): string {
-    const encodings: Array<string> = ['utf-8', 'gb18030', 'gbk', 'utf-16le', 'utf-16be']
-    let bestContent = ''
-    let bestScore = -1000000000
-    let bestEncoding = ''
-    for (let index = 0; index < encodings.length; index += 1) {
-      const encoding = encodings[index]
-      try {
-        const candidate = this.sanitizeUtf16(fs.readTextSync(path, { encoding: encoding }))
-        const score = this.scoreTxtContent(candidate)
-        if (score > bestScore) {
-          bestContent = candidate
-          bestScore = score
-          bestEncoding = encoding
-        }
-      } catch (error) {
-        Logger.warn(TAG, `read TXT with encoding failed: encoding=${encoding}, error=${JSON.stringify(error)}`)
-      }
-    }
-
-    if (bestContent.length > 0) {
-      Logger.info(TAG, `read TXT encoding selected: encoding=${bestEncoding}, score=${bestScore}, length=${bestContent.length}`)
-      return bestContent
-    }
-    return this.sanitizeUtf16(fs.readTextSync(path))
+    const normalized = this.sanitizeUtf16(content).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+    Logger.info(TAG, `read TXT encoding selected: encoding=${encoding}, length=${normalized.length}`)
+    return normalized
   }
 
   private readFileBase64(path: string, fileSize: number): string {
@@ -1494,8 +1454,8 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
             sourceFile = fs.openSync(selectedUri, fs.OpenMode.READ_ONLY)
             fs.copyFileSync(sourceFile.fd, targetPath)
             const stat = await fs.stat(targetPath)
-            const content = this.readTxtText(targetPath)
             const contentBase64 = this.readFileBase64(targetPath, Number(stat.size ?? 0))
+            const content = this.readTxtText(contentBase64)
             Logger.info(
               TAG,
               `selectTxtDocument success: localBookId=${localBookId}, fileNameLength=${sourceFileName.length}, contentLength=${content.length}, base64Length=${contentBase64.length}, fileSize=${Number(stat.size ?? 0)}`,
@@ -1564,8 +1524,8 @@ export class RnBridge extends TurboModule implements TM.BridgeTurboModule.Spec {
       const path = this.buildLocalTxtBookPath(id)
       const stat = fs.statSync(path)
       const fileSize = Number(stat.size ?? 0)
-      const content = this.readTxtText(path)
       const contentBase64 = this.readFileBase64(path, fileSize)
+      const content = this.readTxtText(contentBase64)
       const result: NativeLocalTxtResult = {
         success: true,
         localBookId: id,
