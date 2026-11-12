@@ -1,6 +1,8 @@
 import {restorePendingGeneration} from './local/engine';
 import {assertNarratorAvailable} from './local/preflight';
 import SettingsScreen from './screens/SettingsScreen';
+import ArticleImportModal from './components/ArticleImportModal';
+import {readArticle, saveArticle} from './utils/articleStorage';
 import {SettingsGroup} from './local/config';
 import {localService} from './local/service';
 import {deleteBookData} from './local/bookDeletion';
@@ -376,6 +378,8 @@ const NovelReaderApp: React.FC = () => {
   const [isListenMode, setIsListenMode] = useState<boolean>(false);
   const [readingRecords, setReadingRecords] = useState<ReadingRecord[]>([]);
   const [isImportingBook, setIsImportingBook] = useState(false);
+  const [articleImportVisible, setArticleImportVisible] = useState(false);
+  const pendingArticlePlayback = useRef('');
   const [isDeletingBook, setIsDeletingBook] = useState(false);
   const removedBookUrlsRef = useRef(new Set<string>());
   const [audioOptions, setAudioOptions] = useState<AudioOption[]>([]);
@@ -747,6 +751,9 @@ const NovelReaderApp: React.FC = () => {
         throw new Error('章节不存在');
       }
 
+      if (book.sourceType === 'local_article') {
+        return readArticle(book);
+      }
       if (isLocalTxtBook(book)) {
         const localContent = await readLocalTxtBookContent(
           book.localBookId || '',
@@ -847,6 +854,9 @@ const NovelReaderApp: React.FC = () => {
   );
 
   const handleBookSelect = async (book: Book) => {
+    if (pendingArticlePlayback.current !== book.bookUrl) {
+      pendingArticlePlayback.current = '';
+    }
     if (isDeletingBook) {
       return;
     }
@@ -868,11 +878,13 @@ const NovelReaderApp: React.FC = () => {
     });
     openReaderFromView();
 
-    if (isLocalTxtBook(book)) {
+    if (isLocalTxtBook(book) || book.sourceType === 'local_article') {
       const localRecord = readingRecords.find(
         item => item.book.bookUrl === book.bookUrl,
       );
-      const localChapters = localRecord?.chapterList || [];
+      const localChapters = localRecord?.chapterList || (book.sourceType === 'local_article'
+        ? [{title: book.name, bookUrl: `${book.bookUrl}/chapter/0`, index: 0}]
+        : []);
       setSelectedBook(book);
       setChapterList(localChapters);
       if (localChapters.length > 0) {
@@ -1567,6 +1579,7 @@ const NovelReaderApp: React.FC = () => {
   }, [cancelActiveChapterLoad, resetListen, stopPlayback]);
 
   const exitReader = useCallback(async () => {
+    pendingArticlePlayback.current = '';
     const nextViewState = readerReturnViewState;
     cancelActiveChapterLoad();
     setReaderLoading(null);
@@ -1836,7 +1849,7 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
     try {
-      await assertNarratorAvailable();
+      await assertNarratorAvailable(curProjectName);
     } catch (error) {
       Alert.alert(
         '无法开始听书',
@@ -1855,6 +1868,7 @@ const NovelReaderApp: React.FC = () => {
       startedAt: Date.now(),
       expanded: true,
       autoPlay: true,
+      plain: selectedBook.listenMode === 'plain',
       stage: 'read',
       visited: ['read'],
       error: '',
@@ -1911,8 +1925,9 @@ const NovelReaderApp: React.FC = () => {
       }
 
       let prescanTexts: ListenBookPrescanText[] = [];
-      setStage('analyze');
+      setStage(selectedBook.listenMode === 'plain' ? 'generate' : 'analyze');
       if (
+        selectedBook.listenMode !== 'plain' &&
         !cacheStatus.inProgress &&
         !cacheStatus.hasReusableSegments &&
         !cacheStatus.prescanComplete
@@ -1983,6 +1998,17 @@ const NovelReaderApp: React.FC = () => {
     resetListen();
     setIsListenMode(false);
   };
+
+  // 等待新文章的阅读状态提交后再播放，避免使用上一本书的闭包状态。
+  useEffect(() => {
+    if (pendingArticlePlayback.current && selectedBook?.bookUrl === pendingArticlePlayback.current &&
+        viewState === 'reader' && currentChapterIndex >= 0 && !readerLoading) {
+      pendingArticlePlayback.current = '';
+      if (currentChapterText.trim()) {
+        void handleStartListen();
+      }
+    }
+  });
 
   const persistChapterEdits = useCallback(
     async (
@@ -2294,6 +2320,10 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
     if (id === 'source') {
+      if (selectedBookRef.current?.sourceType === 'local_article') {
+        Alert.alert('本地文章', '当前朗读使用已保存的正文快照，无需切换小说书源。');
+        return;
+      }
       setSourceModalVisible(true);
       return;
     }
@@ -2371,6 +2401,7 @@ const NovelReaderApp: React.FC = () => {
         <NovelHome
           onNavigateSearch={() => setViewState('search')}
           onImportBook={handleImportBook}
+          onImportArticle={() => setArticleImportVisible(true)}
           onOpenSettings={() => {
             setSettingsGroup(undefined);
             setSettingsVisible(true);
@@ -2476,6 +2507,27 @@ const NovelReaderApp: React.FC = () => {
           onComplete={completePreparation}
         />
       )}
+
+      {articleImportVisible && <ArticleImportModal
+        visible={!settingsVisible}
+        onOpenSettings={() => {
+          setSettingsGroup('llm');
+          setSettingsVisible(true);
+        }}
+        onClose={() => setArticleImportVisible(false)}
+        onSave={async (title, text, sourceUrl, play, referenceAudioId) => {
+          const record = await saveArticle(title, text, sourceUrl, referenceAudioId);
+          const existing = readingRecords.find(item => item.book.bookUrl === record.book.bookUrl);
+          const nextRecords = await upsertReadingRecord(existing || record);
+          setReadingRecords(nextRecords);
+          setArticleImportVisible(false);
+          if (play) {
+            pendingArticlePlayback.current = record.book.bookUrl;
+            setReaderReturnViewState('home');
+            await handleBookSelect(record.book);
+          }
+        }}
+      />}
 
       <SettingsScreen
         canClearStorage={!isPlaying}

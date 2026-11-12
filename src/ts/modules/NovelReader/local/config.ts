@@ -173,9 +173,9 @@ export async function loadConfig(): Promise<EngineConfig> {
   }
   const saved = JSON.parse(text) as EngineConfig;
   const defaults = defaultConfig();
-  return {
+  const config: EngineConfig = {
     ...defaults,
-    ...saved,
+    provider: saved.provider || defaults.provider,
     llm: {...defaults.llm, ...saved.llm},
     prescan: {...defaults.prescan, ...saved.prescan},
     siliconflow: {...defaults.siliconflow, ...saved.siliconflow},
@@ -184,6 +184,11 @@ export async function loadConfig(): Promise<EngineConfig> {
     generation: {...defaults.generation, ...saved.generation},
     advanced: {...defaults.advanced, ...saved.advanced},
   };
+  // 载入时清除已移除的文章服务配置及密钥，其余设置保持原值。
+  if ('article' in saved) {
+    await nativeCall('saveConfig', {text: JSON.stringify(config)});
+  }
+  return config;
 }
 export async function saveConfig(config: EngineConfig): Promise<void> {
   validateConfig(config);

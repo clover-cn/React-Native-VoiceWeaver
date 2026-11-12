@@ -8,8 +8,10 @@ export const AppImages = {
   // 播放按钮图标
   play: require('./icons/play.png'),
   setting: require('./icons/setting.png'),
-  imp: require('./icons/imp.png')
-
+  imp: require('./icons/imp.png'),
+  refresh: require('./icons/refresh_icon.png'),
+  back: require('./icons/back_icon.png'),
+  delete: require('./icons/delete_icon.png'),
 };
 
 export default AppImages;

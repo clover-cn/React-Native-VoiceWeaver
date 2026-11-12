@@ -43,7 +43,7 @@ const BookDetailModal: React.FC<BookDetailModalProps> = ({
         <View style={styles.modalContent}>
           <SafeAreaView style={styles.safeArea}>
             <View style={styles.header}>
-              <Text style={styles.title}>书籍详情</Text>
+              <Text style={styles.title}>{book?.contentType === 'article' ? '文章详情' : '书籍详情'}</Text>
               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                 <Text style={styles.closeText}>关闭</Text>
               </TouchableOpacity>
@@ -66,6 +66,11 @@ const BookDetailModal: React.FC<BookDetailModalProps> = ({
                 <Text style={styles.fieldLabel}>使用书源</Text>
                 <Text style={styles.fieldValue}>{sourceName}</Text>
               </View>
+
+              {book?.sourceUrl && <View style={styles.infoCard}>
+                <Text style={styles.fieldLabel}>原文地址</Text>
+                <Text selectable style={styles.fieldValue}>{book.sourceUrl}</Text>
+              </View>}
 
               <View style={styles.infoCard}>
                 <Text style={styles.fieldLabel}>书籍详情</Text>

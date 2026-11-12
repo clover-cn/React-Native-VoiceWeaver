@@ -10,7 +10,10 @@ export interface Book {
   latestChapterTitle?: string;
   bookUrl: string;
   tocUrl?: string;
-  sourceType?: 'remote' | 'local_txt';
+  sourceType?: 'remote' | 'local_txt' | 'local_article';
+  contentType?: 'novel' | 'article';
+  listenMode?: 'plain' | 'drama';
+  sourceUrl?: string;
   localBookId?: string;
   contentHash?: string;
 }
