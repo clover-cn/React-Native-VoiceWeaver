@@ -55,8 +55,6 @@ import {
   activateBookListeningData,
 } from './utils/readerStorage';
 import AudioLibraryModal from './components/AudioLibraryModal';
-import VoiceAssignmentGraph from './components/VoiceAssignmentGraph';
-import {loadProject} from './local/repository';
 import BookDetailModal from './components/BookDetailModal';
 import BookSourceManagerModal from './components/BookSourceManagerModal';
 import SourceSwitchModal from './components/SourceSwitchModal';
@@ -387,7 +385,6 @@ const NovelReaderApp: React.FC = () => {
     useState(false);
   const [bookSourceRefreshVersion, setBookSourceRefreshVersion] = useState(0);
   const [audioLibraryVisible, setAudioLibraryVisible] = useState(false);
-  const [voiceGraphVisible, setVoiceGraphVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [settingsGroup, setSettingsGroup] = useState<
     SettingsGroup | undefined
@@ -1348,18 +1345,6 @@ const NovelReaderApp: React.FC = () => {
 
   const handleAutoGenerateMissingSegment = useCallback(
     async (segmentIndex: number) => {
-      if (segments[segmentIndex]?.needsVoiceRegeneration) {
-        VideoPlayerController.pause();
-        const key = `${projectName}_${currentChapterIndex}_${segmentIndex}_voice_update`;
-        if (lastSegmentFailurePromptKeyRef.current !== key) {
-          lastSegmentFailurePromptKeyRef.current = key;
-          Alert.alert(
-            '音色分配待更新',
-            '请在“音色分配”中手动重新生成受影响片段。',
-          );
-        }
-        return;
-      }
       if (listenError) {
         const key = `${projectName}_${currentChapterIndex}_${listenError}`;
         if (lastSegmentFailurePromptKeyRef.current !== key) {
@@ -1467,8 +1452,7 @@ const NovelReaderApp: React.FC = () => {
   } = useAudioPlayer(
     segments,
     // 任务结束后不会再追加片段；失败片段由原生播放器跳过，不能一直等待。
-    (isGenerationComplete || taskPhase === 'done') &&
-      !segments.some(segment => segment.needsVoiceRegeneration),
+    isGenerationComplete || taskPhase === 'done',
     isListenMode ? listenState : 'idle',
     selectedBook && currentChapterIndex >= 0
       ? {
@@ -1487,44 +1471,6 @@ const NovelReaderApp: React.FC = () => {
     handleAutoGenerateMissingSegment,
     preparation ? preparation.autoPlay && !preparation.error : true,
   );
-
-  useEffect(() => {
-    let active = true;
-    const sub = DeviceEventEmitter.addListener(
-      'VoiceWeaverBindingsChanged',
-      event => {
-        if (event.projectName !== projectName) return;
-        void loadProject(projectName)
-          .then(project => {
-            if (!active) return;
-            const chapter = project.chapters[currentChapterIndex];
-            if (chapter) {
-              replaceSegments(chapter.segments);
-              updateListenRuntime(
-                'ready',
-                areListenSegmentsFullyPlayable(chapter.segments),
-                '',
-              );
-            }
-            void fetchGlobalBindings();
-          })
-          .catch(error => console.warn('[音色分配图] 刷新当前章节失败', error));
-      },
-    );
-    return () => {
-      active = false;
-      sub.remove();
-    };
-  }, [
-    projectName,
-    currentChapterIndex,
-    replaceSegments,
-    updateListenRuntime,
-    fetchGlobalBindings,
-  ]);
-  useEffect(() => {
-    setVoiceGraphVisible(false);
-  }, [projectName]);
 
   const completePreparation = useCallback(() => setPreparation(null), []);
   useEffect(() => {
@@ -2204,7 +2150,6 @@ const NovelReaderApp: React.FC = () => {
         ? {id: payload.selectedAudioId, mode: 1, emoWeight: 0.65}
         : normalizedBase.referenceAudio || null;
       normalizedBase.manualAssigned = true;
-      normalizedBase.assignmentSource = 'segment';
       normalizedBase.audioUrl = null;
       normalizedBase.cacheKey = createSegmentCacheToken();
       normalizedBase.localAudioUrl = null;
@@ -2241,7 +2186,6 @@ const NovelReaderApp: React.FC = () => {
                 ? cloneConfig(manualEmotionMap)
                 : undefined,
               manualAssigned: true,
-              assignmentSource: 'role',
               audioUrl: null,
               cacheKey: createSegmentCacheToken(),
               localAudioUrl: null,
@@ -2341,10 +2285,6 @@ const NovelReaderApp: React.FC = () => {
   }, [ensureListenGenerationContext]);
 
   const handleMenuItemClick = useCallback((id: string) => {
-    if (id === 'voiceGraph') {
-      setVoiceGraphVisible(true);
-      return;
-    }
     if (id === 'settings') {
       setSettingsGroup(undefined);
       setSettingsVisible(true);
@@ -2562,14 +2502,6 @@ const NovelReaderApp: React.FC = () => {
         visible={audioLibraryVisible}
         onClose={handleCloseAudioLibrary}
         onRecordsChanged={setAudioOptions}
-      />
-      <VoiceAssignmentGraph
-        visible={voiceGraphVisible}
-        projectName={projectName}
-        chapterIndex={currentChapterIndex}
-        playingIndex={currentSegIdx}
-        isPlaying={isPlaying}
-        onClose={() => setVoiceGraphVisible(false)}
       />
       <BookDetailModal
         visible={bookDetailVisible}

@@ -4,7 +4,6 @@ import {EngineConfig, ModelConfig} from './config';
 import {logModelFailure, logModelProgress, nativeCall} from './native';
 import {listAudio, updateAudio} from './repository';
 import {parseLlmResponse} from './llmStream';
-import {referenceLinks, resolveReference} from './referenceResolver';
 
 interface NativeResponse {
   status: number;
@@ -185,12 +184,23 @@ export async function generateSpeech(
   signal: AbortSignal,
   projectName?: string,
 ): Promise<string> {
-  const {reference, recordId, blocked} = resolveReference(segment, bindings);
-  if (blocked) {
+  const role = {
+    ...segment.autoEmotionAudioMap,
+    ...bindings[segment.role || ''],
+  };
+  const reference =
+    segment.referenceAudio ||
+    role[segment.emotion || 'neutral'] ||
+    (segment.missingEmotionPolicy === 'strict' ? undefined : role.neutral);
+  if (segment.manualAssigned && segment.referenceAudio === null) {
     throw new Error(`角色“${segment.role || '旁白'}”缺少当前情绪的参考音频。`);
   }
   const records = await listAudio();
-  const record = records.find(item => item.id === recordId);
+  const record = records.find(
+    item =>
+      item.id ===
+      (reference?.id || (reference?.mode === 3 ? role.neutral?.id : undefined)),
+  );
   if (!record) {
     throw new Error(
       reference?.id
@@ -283,13 +293,14 @@ export async function generateSpeech(
       signal,
     );
   } else {
-    const speakerId = referenceLinks(segment, bindings, provider)[0]?.audioId;
-    const base = records.find(item => item.id === speakerId);
-    if (!base) throw new Error('说话人参考录音已不存在，请重新绑定现有音色。');
+    const base = records.find(item => item.id === role.neutral?.id) || record;
     const files = [
       {
         name: 'spk_audio_file',
-        uri: base.url,
+        uri:
+          reference?.mode === 2 || reference?.mode === 3
+            ? base.url
+            : record.url,
         mime: base.mime,
       },
     ];

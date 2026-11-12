@@ -757,21 +757,12 @@ export const useAudioPlayer = (
             ? segment.cacheKey.trim()
             : 'nocache'
         }`,
-        // 已经开始播放的旧片段允许播完，其余待更新片段保持空地址并等待用户。
-        url: segment.needsVoiceRegeneration
-          ? isPlaying && index === currentSegIdx
-            ? segment.previousLocalAudioUrl || segment.previousAudioUrl || null
-            : null
-          : resolveSegmentPlaybackUrl(chapterMeta.assetId, index, segment),
-        generationError: segment.needsVoiceRegeneration
-          ? undefined
-          : segment.generationError,
-        playbackError: segment.needsVoiceRegeneration
-          ? undefined
-          : getSegmentPlaybackError(
-              segment.text,
-              getSegmentCacheEntry(chapterMeta.assetId, index, segment)?.errorCode,
-            ),
+        url: resolveSegmentPlaybackUrl(chapterMeta.assetId, index, segment),
+        generationError: segment.generationError,
+        playbackError: getSegmentPlaybackError(
+          segment.text,
+          getSegmentCacheEntry(chapterMeta.assetId, index, segment)?.errorCode,
+        ),
         title: `${chapterMeta.title}_${index + 1}`,
       }));
 
@@ -799,8 +790,6 @@ export const useAudioPlayer = (
       isGenerationComplete,
       resolveSegmentPlaybackUrl,
       segments,
-      isPlaying,
-      currentSegIdx,
     ],
   );
 
@@ -831,18 +820,8 @@ export const useAudioPlayer = (
       })
       .join('|');
     const generationState = isGenerationComplete ? 'done' : 'pending';
-    const voiceState = segments.some(segment => segment.needsVoiceRegeneration)
-      ? ':' + currentSegIdx + ':' + isPlaying
-      : '';
-    return `${assetId}|${generationState}|${queueSignature}${voiceState}`;
-  }, [
-    cacheEntries,
-    chapterMeta?.assetId,
-    isGenerationComplete,
-    segments,
-    currentSegIdx,
-    isPlaying,
-  ]);
+    return `${assetId}|${generationState}|${queueSignature}`;
+  }, [cacheEntries, chapterMeta?.assetId, isGenerationComplete, segments]);
 
   const stopPlayback = useCallback(() => {
     flushProgress();

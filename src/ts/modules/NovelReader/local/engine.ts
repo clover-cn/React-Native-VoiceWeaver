@@ -31,7 +31,6 @@ import {
 } from './repository';
 
 export interface TaskSnapshot {
-  currentSegmentIndex?: number;
   id: string;
   projectName: string;
   chapterIndex: number;
@@ -280,7 +279,6 @@ const publish = (task: Task) => {
     projectName: task.projectName,
     chapterIndex: task.chapterIndex,
     phase: task.phase,
-    currentSegmentIndex: task.currentSegmentIndex,
     segments: task.segments.map(item => ({...item})),
     error: task.error,
     failedIndexes: task.segments.flatMap((item, index) =>
@@ -472,7 +470,6 @@ async function refreshNarratorReferences(
           : narratorId
           ? {id: narratorId, mode: 1}
           : undefined,
-        assignmentSource: binding ? 'role' : 'auto',
         ...(binding ? {manualAssigned: true} : {}),
       };
     });
@@ -491,8 +488,7 @@ async function run(task: Task): Promise<void> {
     const cached = project.chapters[task.chapterIndex];
     if (
       cached?.contentHash === hash &&
-      (cached.configHash === configIdentity(task.config) ||
-        cached.segments.some(segment => segment.needsVoiceRegeneration))
+      cached.configHash === configIdentity(task.config)
     ) {
       task.segments = await validateSegmentFiles(cached.segments);
     }
@@ -617,16 +613,8 @@ async function run(task: Task): Promise<void> {
               index,
               missingEmotionPolicy: current.settings.missingEmotionPolicy,
               ...(manual || bound
-                ? {
-                    referenceAudio: manual || null,
-                    manualAssigned: true,
-                    assignmentSource: 'role' as const,
-                  }
-                : {
-                    assignmentSource: card.manualAssigned
-                      ? ('segment' as const)
-                      : ('auto' as const),
-                  }),
+                ? {referenceAudio: manual || null, manualAssigned: true}
+                : {}),
             };
           },
         );
@@ -639,7 +627,6 @@ async function run(task: Task): Promise<void> {
     for (let index = 0; index < task.segments.length; index++) {
       active(task);
       const segment = task.segments[index];
-      if (segment.needsVoiceRegeneration) continue;
       if (
         segment.audioUrl &&
         (await nativeCall<boolean>('exists', {uri: segment.audioUrl}))
@@ -647,8 +634,6 @@ async function run(task: Task): Promise<void> {
         continue;
       }
       try {
-        task.currentSegmentIndex = index;
-        publish(task);
         project = await loadProject(task.projectName);
         const startedAt = Date.now();
         logModelProgress(
@@ -688,7 +673,6 @@ async function run(task: Task): Promise<void> {
       await checkpoint(task, hash);
     }
     task.phase = 'done';
-    task.currentSegmentIndex = undefined;
     logModelProgress(
       `章节 ${task.chapterIndex + 1} 生成结束，成功=${
         task.segments.filter(item => item.audioUrl).length
@@ -873,18 +857,6 @@ export function cancelGeneration(
   }
   void rememberPending().catch(() => undefined);
 }
-/** 图形改绑仅停止会写回受影响章节的任务，其他章节继续生成。 */
-export function cancelVoiceAssignmentTasks(
-  projectName: string,
-  chapters: number[],
-): void {
-  const affected = new Set(chapters);
-  for (const task of tasks.values()) {
-    if (task.projectName === projectName && affected.has(task.chapterIndex)) {
-      cancelGeneration(projectName, task.id, '保存音色分配图');
-    }
-  }
-}
 export async function saveChapterEdits(
   projectName: string,
   chapterIndex: number,
@@ -915,7 +887,6 @@ export async function regenerateSegments(
   chapterIndex: number,
   indexes: number[],
   waitForActiveTask = false,
-  allowVoiceUpdate = false,
 ): Promise<ListenSegment[]> {
   const initialStamp = cancelStamp(projectName);
   const projectVersion = projectVersions.get(projectName) || 0;
@@ -948,12 +919,6 @@ export async function regenerateSegments(
   const entry = project.chapters[chapterIndex];
   if (!entry) {
     throw new Error('没有可重生成的章节。');
-  }
-  if (
-    !allowVoiceUpdate &&
-    indexes.some(index => entry.segments[index]?.needsVoiceRegeneration)
-  ) {
-    throw new Error('音色分配已修改，请在音色分配图中主动重新生成。');
   }
   const task: Task = {
     id: `edit_${Date.now()}`,
@@ -1001,8 +966,6 @@ export async function regenerateSegments(
         continue;
       }
       try {
-        task.currentSegmentIndex = index;
-        publish(task);
         const uri = await generateSpeech(
           segment,
           config,
@@ -1019,7 +982,6 @@ export async function regenerateSegments(
           localAudioUrl: uri,
           cacheState: 'ready',
           generationError: null,
-          needsVoiceRegeneration: false,
         };
       } catch (error) {
         active(task);
@@ -1033,7 +995,6 @@ export async function regenerateSegments(
       await checkpoint(task, entry.contentHash);
     }
     task.phase = 'done';
-    task.currentSegmentIndex = undefined;
     await checkpoint(task, entry.contentHash);
     return task.segments;
   };

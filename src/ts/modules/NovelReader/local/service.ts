@@ -6,11 +6,9 @@ import {
 import {loadConfig} from './config';
 import * as engine from './engine';
 import * as repository from './repository';
-import {voiceGraphService} from './voiceGraphService';
 
 /** 界面使用的端侧业务接口，不再经过 HTTP 路由。 */
 export const localService = {
-  voiceGraph: voiceGraphService,
   audioList: async () => ({success: true, list: await repository.listAudio()}),
   provider: async () => ({
     success: true,
@@ -142,7 +140,6 @@ export const localService = {
               autoEmotionAudioMap: update.emotionMap || undefined,
               autoAssignedVoiceActor: update.voiceActor,
               manualAssigned: true,
-              assignmentSource: 'role',
               audioUrl: null,
               localAudioUrl: null,
               generationError: null,
