@@ -31,6 +31,7 @@ export const stageFromTask = (phase: string): ListenPreparationStage | null => {
 };
 
 export interface ListenPreparation {
+  plain?: boolean;
   id: number;
   assetId: string;
   startedAt: number;

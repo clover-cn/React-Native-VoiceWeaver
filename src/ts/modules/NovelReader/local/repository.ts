@@ -26,6 +26,9 @@ export interface LocalChapter {
   taskId?: string;
 }
 export interface LocalProject {
+  listenMode?: 'plain' | 'drama';
+  articleReferenceAudioId?: string;
+  articleSnapshot?: {title: string; text: string; sourceUrl?: string; savedAt: number};
   prescans?: Record<string, PrescanRecord>;
   characters: Record<string, Character>;
   bindings: GlobalAudioBindings;

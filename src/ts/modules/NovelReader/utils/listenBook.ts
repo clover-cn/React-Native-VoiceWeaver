@@ -24,6 +24,9 @@ export const sanitizeListenProjectPart = (value?: string | null): string => {
 };
 
 export const buildListenProjectName = (book?: Book | null): string => {
+  if (book?.sourceType === 'local_article') {
+    return `reader_article_${createTextHash(book.bookUrl)}`;
+  }
   if (book?.sourceType === 'local_txt' && book.localBookId) {
     return `reader_local_${sanitizeListenProjectPart(book.localBookId)}`;
   }

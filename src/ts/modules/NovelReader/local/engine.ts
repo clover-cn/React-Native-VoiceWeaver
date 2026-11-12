@@ -8,7 +8,13 @@ import {
   createTextHash,
   normalizeChapterTextForRequest,
 } from '../utils/listenBook';
-import {EngineConfig, loadConfig, validateConfig} from './config';
+import {
+  EngineConfig,
+  loadConfig,
+  validateConfig,
+  validateTtsConfig,
+} from './config';
+import {buildPlainSegments} from '../utils/article';
 import {createCastingEngine} from './casting';
 import {
   nativeCall,
@@ -41,6 +47,8 @@ export interface TaskSnapshot {
   failedIndexes: number[];
 }
 interface Task extends TaskSnapshot {
+  plain?: boolean;
+  articleReferenceAudioId?: string;
   availability?: AvailabilityContext;
   controller: AbortController;
   config: EngineConfig;
@@ -61,6 +69,7 @@ async function taskAvailability(task: Task): Promise<AvailabilityContext> {
       chapterIndex: task.chapterIndex,
       environment: castingEnvironment(task.config),
       replacements: new Map(),
+      articleReferenceAudioId: task.articleReferenceAudioId,
     };
   }
   return task.availability;
@@ -281,14 +290,18 @@ export async function restorePendingGeneration(): Promise<void> {
     await generateChapter(item.projectName, item.chapterIndex, item.payload);
   }
 }
-const configIdentity = (config: EngineConfig) =>
+const configIdentity = (config: EngineConfig, plain = false, referenceAudioId?: string) =>
   createTextHash(
-    JSON.stringify({
-      llm: config.llm,
-      prescan: config.prescan,
-      provider: config.provider,
-      tts: config[config.provider],
-    }),
+    JSON.stringify(
+      plain
+        ? {mode: 'plain', version: 1, provider: config.provider, tts: config[config.provider], referenceAudioId}
+        : {
+            llm: config.llm,
+            prescan: config.prescan,
+            provider: config.provider,
+            tts: config[config.provider],
+          },
+    ),
   );
 const taskKey = (project: string, chapter: number) => `${project}:${chapter}`;
 const publish = (task: Task) => {
@@ -331,6 +344,9 @@ async function checkpoint(task: Task, contentHash: string): Promise<void> {
   active(task);
   await updateProject(task.projectName, project => {
     active(task);
+    if (task.plain && project.articleReferenceAudioId !== task.articleReferenceAudioId) {
+      throw new Error('文章参考音频已更改，请重新开始生成。');
+    }
     const previous = project.chapters[task.chapterIndex];
     if (previous?.taskId && previous.taskId !== task.id) {
       throw new Error('任务已被替换');
@@ -338,7 +354,7 @@ async function checkpoint(task: Task, contentHash: string): Promise<void> {
     project.chapters[task.chapterIndex] = {
       sourceText: task.payload.chapterText || previous?.sourceText,
       contentHash,
-      configHash: configIdentity(task.config),
+      configHash: configIdentity(task.config, task.plain, task.articleReferenceAudioId),
       segments: task.segments,
       phase: task.phase,
       taskId: task.id,
@@ -466,7 +482,11 @@ async function refreshNarratorReferences(
       records,
       castingEnvironment(task.config),
     );
-    const narratorId = casting.resolveNarratorAudioId(task.projectName);
+    const selectedId = task.plain ? task.articleReferenceAudioId : undefined;
+    if (selectedId && !records.some(record => record.id === selectedId && !record.disabled)) {
+      throw new Error('文章选择的参考音频已删除或禁用，请重新选择。');
+    }
+    const narratorId = selectedId || casting.resolveNarratorAudioId(task.projectName);
     project.casting = casting.snapshot().casting;
     task.segments = task.segments.map((segment, index) => {
       if (
@@ -483,12 +503,14 @@ async function refreshNarratorReferences(
         binding?.[segment.emotion || 'neutral'] || binding?.neutral;
       return {
         ...segment,
-        referenceAudio: binding
+        referenceAudio: selectedId
+          ? {id: selectedId, mode: 1}
+          : binding
           ? manual || null
           : narratorId
           ? {id: narratorId, mode: 1}
           : undefined,
-        ...(binding ? {manualAssigned: true} : {}),
+        ...(!selectedId && binding ? {manualAssigned: true} : {}),
       };
     });
   });
@@ -506,7 +528,7 @@ async function run(task: Task): Promise<void> {
     const cached = project.chapters[task.chapterIndex];
     if (
       cached?.contentHash === hash &&
-      cached.configHash === configIdentity(task.config)
+      cached.configHash === configIdentity(task.config, task.plain, task.articleReferenceAudioId)
     ) {
       task.segments = await validateSegmentFiles(cached.segments);
     }
@@ -516,6 +538,10 @@ async function run(task: Task): Promise<void> {
         current.chapters[task.chapterIndex].taskId = task.id;
       }
     });
+    if (!task.segments.length && task.plain) {
+      task.segments = buildPlainSegments(task.payload.chapterText);
+      await checkpoint(task, hash);
+    }
     if (!task.segments.length) {
       const config = task.config;
       const prescan = (
@@ -736,8 +762,15 @@ export async function generateChapter(
     throw new Error('正在清理音频，请稍后重试。');
   }
   const config = await loadConfig();
-  validateConfig(config, true);
-  await assertNarratorAvailable();
+  const project = await loadProject(projectName);
+  const plain = project.listenMode === 'plain';
+  const articleReferenceAudioId = plain ? project.articleReferenceAudioId : undefined;
+  if (plain) {
+    validateTtsConfig(config);
+  } else {
+    validateConfig(config, true);
+  }
+  await assertNarratorAvailable(projectName);
   // 取消必须覆盖仍在读取配置或检查录音、尚未登记到 tasks 的请求。
   assertStartAllowed(projectName, startStamp);
   const key = taskKey(projectName, chapterIndex);
@@ -755,7 +788,8 @@ export async function generateChapter(
   );
   if (
     existing &&
-    configIdentity(existing.config) === configIdentity(config) &&
+    configIdentity(existing.config, existing.plain, existing.articleReferenceAudioId) ===
+      configIdentity(config, plain, articleReferenceAudioId) &&
     createTextHash(
       normalizeChapterTextForRequest(existing.payload.chapterText),
     ) === hash
@@ -771,6 +805,8 @@ export async function generateChapter(
     chapterIndex,
     payload,
     config,
+    plain,
+    articleReferenceAudioId,
     controller: new AbortController(),
     version: 1,
     phase: 'queued',
@@ -822,7 +858,7 @@ export async function checkChapter(
   if (
     !entry ||
     (contentHash && entry.contentHash !== contentHash) ||
-    entry.configHash !== configIdentity(config)
+    entry.configHash !== configIdentity(config, project.listenMode === 'plain', project.articleReferenceAudioId)
   ) {
     return {
       exists: false,
@@ -916,7 +952,13 @@ export async function regenerateSegments(
     throw new Error('正在清理音频，请稍后重试。');
   }
   const config = await loadConfig();
-  validateConfig(config, true);
+  const plain = (await loadProject(projectName)).listenMode === 'plain';
+  if (plain) {
+    validateTtsConfig(config);
+  } else {
+    validateConfig(config, true);
+  }
+  await assertNarratorAvailable(projectName);
   assertStartAllowed(projectName, initialStamp);
   // 播放追上生成进度时等待原任务，自动补段不能取消整章连续生成。
   if (waitForActiveTask) {
@@ -945,10 +987,12 @@ export async function regenerateSegments(
     chapterIndex,
     payload: {chapterText: entry.sourceText || ''},
     config,
+    plain,
     controller: new AbortController(),
     version: 1,
     phase: 'generating',
     segments: entry.segments,
+    articleReferenceAudioId: plain ? project.articleReferenceAudioId : undefined,
     failedIndexes: [],
   };
   if (clearingAudio) {

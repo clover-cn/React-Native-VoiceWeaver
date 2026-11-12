@@ -18,6 +18,7 @@ import {AppImages} from '../../../../assets';
 interface NovelHomeProps {
   onNavigateSearch: () => void;
   onImportBook: () => void;
+  onImportArticle: () => void;
   onManageBookSources: () => void;
   onOpenSettings: () => void;
   onOpenAudioLibrary?: () => void;
@@ -63,6 +64,7 @@ const getTimeGreeting = (): {greeting: string; subGreeting: string} => {
 const NovelHome: React.FC<NovelHomeProps> = ({
   onNavigateSearch,
   onImportBook,
+  onImportArticle,
   onManageBookSources,
   onOpenSettings,
   onOpenAudioLibrary,
@@ -289,7 +291,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                             ? styles.sourceTagTextLocal
                             : styles.sourceTagTextOnline,
                         ]}>
-                        {isLocal ? '本地 TXT' : '网络源'}
+                        {book.contentType === 'article' ? '文章快照' : isLocal ? '本地 TXT' : '网络源'}
                       </Text>
                     </View>
                   </View>
@@ -309,7 +311,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                     <View style={styles.audioFeatBadge}>
                       <Text style={styles.audioFeatIcon}>🎙️</Text>
                       <Text style={styles.audioFeatText}>
-                        {isLocal ? '支持离线演播' : '多角色配音演播'}
+                        {book.contentType === 'article' ? '原文单音色朗读' : isLocal ? '支持离线演播' : '多角色配音演播'}
                       </Text>
                     </View>
                   </View>
@@ -396,6 +398,18 @@ const NovelHome: React.FC<NovelHomeProps> = ({
               <View style={styles.menuItemTextCol}>
                 <Text style={styles.menuItemTitle}>音色库与参考录音</Text>
                 <Text style={styles.menuItemSub}>管理演播声音与克隆音色</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuItem} activeOpacity={0.82}
+              disabled={isImporting} accessibilityRole="button" accessibilityLabel="导入文章"
+              onPress={() => { setIsFloatingMenuOpen(false); onImportArticle(); }}>
+              <View style={[styles.menuItemIconBg, styles.menuIconImport]}>
+                <Text style={styles.menuItemIconText}>📄</Text>
+              </View>
+              <View style={styles.menuItemTextCol}>
+                <Text style={styles.menuItemTitle}>导入文章</Text>
+                <Text style={styles.menuItemSub}>网页 / 本地 TXT / 粘贴文字，单音色朗读</Text>
               </View>
             </TouchableOpacity>
 

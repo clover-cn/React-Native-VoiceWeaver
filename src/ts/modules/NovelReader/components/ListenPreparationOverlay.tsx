@@ -122,8 +122,9 @@ export default function ListenPreparationOverlay({
     }
   }, [playing, p.expanded, onComplete]);
 
+  const steps = p.plain ? PREPARATION_STEPS.filter(step => step.key !== 'analyze' && step.key !== 'assign') : PREPARATION_STEPS;
   const stageTitle =
-    PREPARATION_STEPS.find(step => step.key === p.stage)?.title || '';
+    steps.find(step => step.key === p.stage)?.title || '';
   const title = p.error
     ? `${stageTitle}异常`
     : ready && !p.autoPlay
@@ -211,7 +212,7 @@ export default function ListenPreparationOverlay({
 
             {/* 精致步骤流程卡片 */}
             <View style={styles.stepsCard}>
-              {PREPARATION_STEPS.map(step => {
+              {steps.map(step => {
                 const current = step.key === p.stage;
                 const activeOpacity =
                   current && !p.error && !reduceMotion
@@ -223,8 +224,8 @@ export default function ListenPreparationOverlay({
                 const visited = p.visited.includes(step.key);
                 const skipped =
                   !visited &&
-                  PREPARATION_STEPS.findIndex(s => s.key === step.key) <
-                    PREPARATION_STEPS.findIndex(s => s.key === p.stage);
+                  steps.findIndex(s => s.key === step.key) <
+                    steps.findIndex(s => s.key === p.stage);
 
                 return (
                   <View
@@ -262,7 +263,7 @@ export default function ListenPreparationOverlay({
             </View>
 
             <Text style={styles.tip}>
-              {elapsed >= 30 && !ready && !p.error
+              {p.plain ? '正在用旁白音色朗读原文…' : elapsed >= 30 && !ready && !p.error
                 ? '初次解析大模型需稍作等待，你可以收起先继续阅读'
                 : '文字正在编织为沉浸式有声演播…'}
             </Text>

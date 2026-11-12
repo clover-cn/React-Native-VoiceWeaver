@@ -9,6 +9,7 @@ export interface AvailabilityContext {
   chapterIndex: number;
   environment?: object;
   replacements: Map<string, string>;
+  articleReferenceAudioId?: string;
 }
 
 /** 修复禁用引用；任务内复用替代声线，不改写用户的角色绑定。 */
@@ -32,6 +33,13 @@ export function availableSegment(
     (segment.missingEmotionPolicy === 'strict' ? undefined : role.neutral);
   const primaryId =
     reference?.id || (reference?.mode === 3 ? role.neutral?.id : undefined);
+  // 用户为文章指定的录音不可用时提示重选，避免自动替换成其他声线。
+  if (primaryId && primaryId === context?.articleReferenceAudioId) {
+    if (!records.some(record => record.id === primaryId && !record.disabled)) {
+      throw new Error('文章选择的参考音频已删除或禁用，请重新选择。');
+    }
+    return segment;
+  }
   const speakerId =
     provider === 'indextts2' && (reference?.mode === 2 || reference?.mode === 3)
       ? role.neutral?.id || primaryId

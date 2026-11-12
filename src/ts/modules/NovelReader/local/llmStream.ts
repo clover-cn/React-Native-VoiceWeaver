@@ -3,6 +3,12 @@ export function parseLlmResponse(text: string): string {
   const input = text.replace(/^\uFEFF/, '').trim();
   if (input.startsWith('{')) {
     const response = JSON.parse(input);
+    const reason = response.choices?.[0]?.finish_reason;
+    if (reason && reason !== 'stop') {
+      throw new Error(
+        '模型输出未正常完成，可能达到长度限制或被过滤，请减少输入内容。',
+      );
+    }
     const content = response.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       throw new Error('解析服务没有返回文本结果。');
