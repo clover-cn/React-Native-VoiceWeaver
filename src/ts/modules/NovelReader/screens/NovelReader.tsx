@@ -21,6 +21,7 @@ import {
   GestureResponderEvent,
   ViewToken,
   useWindowDimensions,
+  Image
 } from 'react-native';
 import {Chapter, ListenSegment} from '../types/reader';
 import ReaderHeader from '../components/ReaderHeader';
@@ -32,7 +33,7 @@ import SegmentEditorModal, {
 import ReaderCatalog from '../components/ReaderCatalog';
 import {AudioOption} from '../types/audio';
 import {buildListenSegmentFailureHint} from '../utils/listenBook';
-
+import {AppImages} from '../../../../assets';
 export type ReaderLoadingPhase = 'toc' | 'content';
 
 export interface ReaderLoadingState {
@@ -913,15 +914,33 @@ const NovelReader: React.FC<NovelReaderProps> = ({
         {readerLoading ? (
           <View style={styles.readerLoadingOverlay} pointerEvents="none">
             <View style={styles.readerLoadingPanel}>
-              <ActivityIndicator size="large" color="#007AFF" />
+              <View style={styles.readerLoadingIconContainer}>
+                <View style={styles.readerLoadingIconCircle}>
+                  <Image
+                    source={AppImages.logo}
+                    style={styles.readerLoadingIconLogo}
+                    resizeMode="cover"
+                  />
+                </View>
+                <View style={styles.readerLoadingSpinnerWrapper}>
+                  <ActivityIndicator size="small" color="#2563EB" />
+                </View>
+              </View>
               <Text style={styles.readerLoadingTitle}>
                 {readerLoading.title}
               </Text>
               {readerLoading.detail ? (
-                <Text style={styles.readerLoadingDetail} numberOfLines={2}>
-                  {readerLoading.detail}
-                </Text>
+                <View style={styles.readerLoadingDetailBadge}>
+                  <Text style={styles.readerLoadingDetail} numberOfLines={1}>
+                    {readerLoading.detail}
+                  </Text>
+                </View>
               ) : null}
+              <Text style={styles.readerLoadingHint}>
+                {readerLoading.phase === 'toc'
+                  ? '正在梳理章节目录…'
+                  : '正在编排正文版式…'}
+              </Text>
             </View>
           </View>
         ) : null}
@@ -1061,35 +1080,82 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    backgroundColor: 'rgba(244, 241, 232, 0.72)',
+    paddingHorizontal: 28,
+    backgroundColor: 'rgba(244, 241, 232, 0.65)',
   },
   readerLoadingPanel: {
-    minWidth: 188,
-    maxWidth: 280,
+    minWidth: 200,
+    maxWidth: 290,
     alignItems: 'center',
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 4},
+    borderRadius: 20,
+    backgroundColor: 'rgba(253, 251, 247, 0.96)',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 18,
+    shadowColor: '#292524',
+    shadowOffset: {width: 0, height: 6},
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  readerLoadingIconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  readerLoadingIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#93C5FD',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3B82F6',
+    shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  readerLoadingIconLogo: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 26,
+  },
+  readerLoadingSpinnerWrapper: {
+    marginTop: 8,
   },
   readerLoadingTitle: {
-    marginTop: 12,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1C1C1E',
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#292524',
     textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+  readerLoadingDetailBadge: {
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    backgroundColor: '#F5EFE6',
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: '#E7DFD5',
+    maxWidth: 220,
   },
   readerLoadingDetail: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#636366',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#78716C',
+    textAlign: 'center',
+  },
+  readerLoadingHint: {
+    marginTop: 8,
+    fontSize: 11,
+    color: '#A8A29E',
     textAlign: 'center',
   },
   segmentWrapper: {
