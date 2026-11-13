@@ -11,6 +11,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <vector>
+#include <functional>
+#include "ChapterAudioExport.h"
 
 namespace {
 struct Buffer { uint32_t index; OH_AVBuffer *value; };
@@ -55,8 +57,10 @@ std::vector<uint8_t> Header(std::vector<uint8_t> wav, int rate, int channels) {
     memcpy(wav.data()+36,"data",4); Put(wav,40,wav.size()-44,4); return wav;
 }
 // 保留采样率和声道，仅接受交错的 16 位 PCM；不静默误标其他解码输出。
-std::vector<uint8_t> Decode(int fd, int64_t size) {
-    Check(size > 0 && size <= 5*1024*1024);
+std::vector<uint8_t> Decode(int fd, int64_t size,
+    const std::function<void(const uint8_t *, size_t, int, int)> &sink = {},
+    const std::function<void()> &cancel = [] {}) {
+    Check(size > 0 && (sink || size <= 5*1024*1024));
     Session s;
     s.source = OH_AVSource_CreateWithFD(fd, 0, size); Check(s.source);
     OH_AVFormat *meta = OH_AVSource_GetSourceFormat(s.source); Check(meta);
@@ -89,19 +93,21 @@ std::vector<uint8_t> Decode(int fd, int64_t size) {
         try {
             bool eos = false;
             while (!eos) {
+                cancel();
                 Check(OH_AVDemuxer_ReadSampleBuffer(s.demuxer, track, buffer) == AV_ERR_OK);
                 OH_AVCodecBufferAttr attr{}; Check(OH_AVBuffer_GetBufferAttr(buffer,&attr) == AV_ERR_OK);
                 Check(attr.size >= 0 && attr.offset >= 0 && int64_t(attr.offset)+attr.size <= OH_AVBuffer_GetCapacity(buffer));
-                Check(wav.size()+attr.size <= 5*1024*1024 && wav.size()-44+attr.size <= int64_t(rate)*channels*2*20);
+                Check(sink || (wav.size()+attr.size <= 5*1024*1024 && wav.size()-44+attr.size <= int64_t(rate)*channels*2*20));
                 if (attr.size) {
                     auto data = OH_AVBuffer_GetAddr(buffer); Check(data);
-                    wav.insert(wav.end(),data+attr.offset,data+attr.offset+attr.size);
+                    if (sink) sink(data+attr.offset,attr.size,rate,channels);
+                    else wav.insert(wav.end(),data+attr.offset,data+attr.offset+attr.size);
                 }
                 eos = (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) != 0;
                 Check(eos || attr.size > 0);
             }
         } catch (...) { OH_AVBuffer_Destroy(buffer); throw; }
-        OH_AVBuffer_Destroy(buffer); return Header(std::move(wav),rate,channels);
+        OH_AVBuffer_Destroy(buffer); return sink ? std::vector<uint8_t>{} : Header(std::move(wav),rate,channels);
     }
     s.decoder = mime ? OH_AudioCodec_CreateByMime(mime, false) : nullptr;
     if (!s.decoder) { OH_AVFormat_Destroy(format); Check(false); }
@@ -118,10 +124,14 @@ std::vector<uint8_t> Decode(int fd, int64_t size) {
     bool sentEos = false, done = false; int32_t rate = 0, channels = 0;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (!done) {
+        cancel();
         Buffer b{}; bool output = false;
         {
             std::unique_lock<std::mutex> lock(s.mutex);
-            Check(s.ready.wait_until(lock, deadline, [&] { return s.failed || !s.outputs.empty() || (!sentEos && !s.inputs.empty()); }));
+            if (!s.ready.wait_for(lock, std::chrono::milliseconds(200), [&] { return s.failed || !s.outputs.empty() || (!sentEos && !s.inputs.empty()); })) {
+                Check(std::chrono::steady_clock::now() < deadline); continue;
+            }
+            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
             Check(!s.failed);
             output = !s.outputs.empty();
             auto &queue = output ? s.outputs : s.inputs; b = queue.front(); queue.pop_front();
@@ -138,20 +148,22 @@ std::vector<uint8_t> Decode(int fd, int64_t size) {
             OH_AVFormat_GetIntValue(desc, OH_MD_KEY_AUD_SAMPLE_RATE, &r);
             OH_AVFormat_GetIntValue(desc, OH_MD_KEY_AUD_CHANNEL_COUNT, &c);
             OH_AVFormat_GetIntValue(desc, OH_MD_KEY_AUDIO_SAMPLE_FORMAT, &sample);
+            OH_AVFormat_Destroy(desc);
             Check(sample == SAMPLE_S16LE && r > 0 && r <= 192000 && c > 0 && c <= 2);
             Check(rate == 0 || (rate == r && channels == c)); rate = r; channels = c;
             Check(attr.size >= 0 && attr.offset >= 0 && attr.offset + int64_t(attr.size) <= OH_AVBuffer_GetCapacity(b.value));
-            Check(wav.size() + attr.size <= 5*1024*1024);
-            Check(wav.size() - 44 + attr.size <= int64_t(rate)*channels*2*20);
+            Check(sink || wav.size() + attr.size <= 5*1024*1024);
+            Check(sink || wav.size() - 44 + attr.size <= int64_t(rate)*channels*2*20);
             if (attr.size) {
                 auto data = OH_AVBuffer_GetAddr(b.value); Check(data);
-                wav.insert(wav.end(), data + attr.offset, data + attr.offset + attr.size);
+                if (sink) sink(data+attr.offset,attr.size,rate,channels);
+                else wav.insert(wav.end(), data + attr.offset, data + attr.offset + attr.size);
             }
             done = (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) != 0;
             Check(OH_AudioCodec_FreeOutputBuffer(s.decoder, b.index) == AV_ERR_OK);
         }
     }
-    return Header(std::move(wav),rate,channels);
+    return sink ? std::vector<uint8_t>{} : Header(std::move(wav),rate,channels);
 }
 struct Job { napi_async_work work; napi_deferred deferred; int fd; int64_t size; std::vector<uint8_t> bytes; std::string error; };
 void Run(napi_env, void *p) {
@@ -181,6 +193,7 @@ napi_value Convert(napi_env env, napi_callback_info info) {
     napi_create_async_work(env,nullptr,name,Run,Complete,j,&j->work); napi_queue_async_work(env,j->work); return promise;
 }
 napi_value Init(napi_env env,napi_value exports) {
+    InitChapterExport(env, exports, [](int fd, int64_t size, const PcmConsumer &sink, const ExportCancel &cancel) { Decode(fd,size,sink,cancel); });
     napi_property_descriptor prop = {"convert",nullptr,Convert,nullptr,nullptr,nullptr,napi_default,nullptr};
     napi_define_properties(env,exports,1,&prop); return exports;
 }

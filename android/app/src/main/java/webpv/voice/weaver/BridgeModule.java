@@ -27,11 +27,25 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
   private final Object cacheLock = new Object();
   @ReactMethod
   public void voiceWeaver(String payload, Callback callback) {
+    try {
+      JSONObject p = new JSONObject(payload);
+      if (p.optString("operation").equals("exportSave")) {
+        String id = p.getString("id");
+        String[] info = ChapterAudioExport.saveInfo(id);
+        pick("audioExport", info[1], info[0], id, callback);
+        return;
+      }
+    } catch (Exception error) {
+      callback.invoke(json("success", false, "error", "导出任务不可用").toString()); return;
+    }
     io.execute(() -> {
       try {
         Object data = new VoiceWeaverLocal(getReactApplicationContext()).execute(new JSONObject(payload));
         callback.invoke(new JSONObject().put("success", true).put("data", data).toString());
       } catch (Exception error) {
+        if (error instanceof ChapterAudioExport.ExportError) {
+          callback.invoke(json("success", false, "error", error.getMessage()).toString()); return;
+        }
         callback.invoke("{\"success\":false,\"error\":\"端侧操作失败，请检查配置、网络或可用存储空间\"}");
       }
     });
@@ -79,7 +93,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
             data == null ||
             data.getData() == null
           ) {
-            cb.invoke(json("success", false, "cancelled", true).toString());
+            cb.invoke(kind.equals("audioExport") ? json("success", true, "data", false).toString() : json("success", false, "cancelled", true).toString());
             return;
           }
           Uri uri = data.getData();
@@ -193,6 +207,10 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
 
   private JSONObject readSelection(String kind, Uri uri, String text)
     throws Exception {
+    if (kind.equals("audioExport")) {
+      try { return json("success", true, "data", ChapterAudioExport.save(getReactApplicationContext(), text, uri)); }
+      catch (Exception error) { return json("success", false, "error", "保存音频失败，请检查目标位置及剩余空间"); }
+    }
     if (kind.equals("export")) {
       try (
         OutputStream output = getReactApplicationContext()
@@ -288,7 +306,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
         pickerKind = kind;
         exportText = content;
         Intent intent = new Intent(
-          kind.equals("export")
+          (kind.equals("export") || kind.equals("audioExport"))
             ? Intent.ACTION_CREATE_DOCUMENT
             : Intent.ACTION_OPEN_DOCUMENT
         )

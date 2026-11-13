@@ -9,6 +9,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { inspectReferenceAudio, ReferenceAudioInspectionError } from './ReferenceAudioInspector';
 import { convert } from 'libreference_wav.so';
+import { ChapterAudioExport, ChapterExportError, ChapterExportPayload } from './ChapterAudioExport';
 
 interface UploadPart { name: string; uri: string; mime: string }
 interface LocalPayload {
@@ -44,6 +45,7 @@ class StreamRequestError extends Error {}
 
 /** 原生文件和网络入口，参考音频与响应二进制不穿过 JS 桥。 */
 export class VoiceWeaverLocal {
+  private audioExport: ChapterAudioExport;
   private context: common.UIAbilityContext;
   private root: string;
   private calls: Map<string, http.HttpRequest> = new Map();
@@ -52,6 +54,7 @@ export class VoiceWeaverLocal {
   private configQueue: Promise<void> = Promise.resolve();
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+    this.audioExport = new ChapterAudioExport(context);
     this.root = context.filesDir + '/voiceweaver';
     if (!fs.accessSync(this.root)) { fs.mkdirSync(this.root); }
   }
@@ -157,6 +160,10 @@ export class VoiceWeaverLocal {
     try {
       const p: LocalPayload = JSON.parse(raw) as LocalPayload;
       operation = p.operation;
+      if (operation.startsWith('export')) {
+        const result = await this.audioExport.execute(JSON.parse(raw) as ChapterExportPayload);
+        return JSON.stringify({ success: true, data: result });
+      }
       let data: Object | null = null;
       switch (p.operation) {
         case 'loadConfig': case 'saveConfig': data = await this.serializedConfig(p); break;
@@ -183,7 +190,12 @@ export class VoiceWeaverLocal {
           data = 'file://' + target; break;
         }
         case 'stats': { let size = 0; for (const name of fs.listFileSync(this.root)) { if (name.startsWith('generated-')) { size += fs.statSync(this.path(name)).size; } } data = size; break; }
-        case 'clearGenerated': { let count = 0; for (const name of fs.listFileSync(this.root)) { if (name.startsWith('generated-')) { fs.unlinkSync(this.path(name)); count++; } } data = count; break; }
+        case 'clearGenerated': {
+          const names = fs.listFileSync(this.root).filter(name => name.startsWith('generated-'));
+          names.forEach(name => this.audioExport.assertMutable(this.path(name)));
+          for (const name of names) { fs.unlinkSync(this.path(name)); }
+          data = names.length; break;
+        }
         case 'deleteProject': {
           if (!/^project-[a-f0-9]{64}\.json$/.test(p.key)) { throw new Error('书籍标识无效'); }
           const prefix = 'generated-' + p.key.substring(8, 72) + '-';
@@ -196,12 +208,13 @@ export class VoiceWeaverLocal {
           for (const name of fs.listFileSync(this.root)) {
             if (name.startsWith(prefix)) { paths.add(this.path(name)); }
           }
+          for (const path of paths) { this.audioExport.assertMutable(path); }
           for (const path of paths) { if (fs.accessSync(path)) { fs.unlinkSync(path); } }
           const document = this.path(p.key);
           if (fs.accessSync(document)) { fs.unlinkSync(document); }
           break;
         }
-        case 'deleteAudio': { const path = this.owned(p.uri); if (fs.accessSync(path)) { fs.unlinkSync(path); } data = true; break; }
+        case 'deleteAudio': { const path = this.owned(p.uri); this.audioExport.assertMutable(path); if (fs.accessSync(path)) { fs.unlinkSync(path); } data = true; break; }
         case 'cancel': {
           const cancelStream = this.streamCancels.get(p.id);
           if (cancelStream) { cancelStream(); }
@@ -214,7 +227,7 @@ export class VoiceWeaverLocal {
       }
       return JSON.stringify({ success: true, data: data });
     } catch (error) {
-      if (error instanceof StreamRequestError || error instanceof ReferenceAudioInspectionError) {
+      if (error instanceof StreamRequestError || error instanceof ReferenceAudioInspectionError || error instanceof ChapterExportError) {
         return JSON.stringify({ success: false, error: error.message });
       }
       if (error instanceof ConfigStorageError) {

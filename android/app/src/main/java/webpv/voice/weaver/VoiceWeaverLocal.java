@@ -89,6 +89,15 @@ final class VoiceWeaverLocal {
     return source;
   }
   Object execute(JSONObject p) throws Exception {
+    ChapterAudioExport.initialize(context);
+    String op = p.getString("operation");
+    if (op.startsWith("export")) return ChapterAudioExport.execute(context, p);
+    if (op.equals("clearGenerated") || op.equals("deleteProject") || op.equals("deleteAudio")) {
+      synchronized (ChapterAudioExport.LOCK) { return executeInternal(p); }
+    }
+    return executeInternal(p);
+  }
+  private Object executeInternal(JSONObject p) throws Exception {
     String operation = p.getString("operation");
     switch (operation) {
       case "loadConfig": synchronized (configLock) { return config(p, false); }
@@ -116,6 +125,7 @@ final class VoiceWeaverLocal {
       case "stats": { long size = 0; File[] files = root.listFiles(); if (files != null) for (File f : files) if (f.getName().startsWith("generated-")) size += f.length(); return size; }
       case "clearGenerated": {
         int count = 0; File[] files = root.listFiles();
+        if (files != null) for (File f : files) if (f.getName().startsWith("generated-")) ChapterAudioExport.assertMutable(f);
         if (files != null) for (File f : files) if (f.getName().startsWith("generated-") && !AudioPlaybackService.usesFile(f) && f.delete()) count++;
         return count;
       }
@@ -132,13 +142,13 @@ final class VoiceWeaverLocal {
         }
         File[] entries = root.listFiles();
         if (entries != null) for (File target : entries) if (target.getName().startsWith(prefix)) targets.add(target);
-        for (File target : targets) if (AudioPlaybackService.usesFile(target)) throw new IOException("音频正在播放，请先停止播放");
+        for (File target : targets) { ChapterAudioExport.assertMutable(target); if (AudioPlaybackService.usesFile(target)) throw new IOException("音频正在播放，请先停止播放"); }
         for (File target : targets) if (target.exists() && !target.delete()) throw new IOException("清理书籍音频失败");
         File document = file(key);
         if (document.exists() && !document.delete()) throw new IOException("清理书籍资料失败");
         return JSONObject.NULL;
       }
-      case "deleteAudio": { File f = ownedAudio(p.getString("uri")); if (AudioPlaybackService.usesFile(f)) throw new IOException("音频正在播放"); return !f.exists() || f.delete(); }
+      case "deleteAudio": { File f = ownedAudio(p.getString("uri")); ChapterAudioExport.assertMutable(f); if (AudioPlaybackService.usesFile(f)) throw new IOException("音频正在播放"); return !f.exists() || f.delete(); }
       case "cancel": { String id = p.getString("id"); cancelledRequests.add(id); Call call = calls.get(id); if (call != null) call.cancel(); return JSONObject.NULL; }
       case "request": return request(p);
       default: throw new IOException("未知端侧操作");

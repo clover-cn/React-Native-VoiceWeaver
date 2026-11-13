@@ -30,6 +30,7 @@ interface ReaderFooterProps {
 
 // 模块级常量与工具函数 —— 单行 4 项，超出自动换行
 const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
+  {label: '下载本章语音', id: 'download'},
   {label: '定时关闭', id: 'sleep'},
   {label: '书源切换', id: 'source'},
   {label: '翻页模式', id: 'flip'},
@@ -242,7 +243,9 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
 
         {/* 快捷功能网格 */}
         <View style={styles.gridContainer}>
-          {MENU_ITEMS.map(item => (
+          {MENU_ITEMS.filter(
+            item => item.id !== 'download' || showChapterControls,
+          ).map(item => (
             <FooterMenuItem
               key={item.id}
               id={item.id}

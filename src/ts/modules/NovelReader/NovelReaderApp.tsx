@@ -1,4 +1,5 @@
 import {restorePendingGeneration} from './local/engine';
+import ChapterAudioExportModal from './components/ChapterAudioExportModal';
 import {assertNarratorAvailable} from './local/preflight';
 import SettingsScreen from './screens/SettingsScreen';
 import ArticleImportModal from './components/ArticleImportModal';
@@ -2313,7 +2314,12 @@ const NovelReaderApp: React.FC = () => {
     await ensureListenGenerationContext();
   }, [ensureListenGenerationContext]);
 
+  const [audioExportVisible, setAudioExportVisible] = useState(false);
   const handleMenuItemClick = useCallback((id: string) => {
+    if (id === 'download') {
+      setAudioExportVisible(true);
+      return;
+    }
     if (id === 'settings') {
       setSettingsGroup(undefined);
       setSettingsVisible(true);
@@ -2482,6 +2488,14 @@ const NovelReaderApp: React.FC = () => {
         </ActiveSegContext.Provider>
       )}
 
+      <ChapterAudioExportModal
+        visible={audioExportVisible}
+        bookName={selectedBook?.name || ''}
+        chapterTitle={chapterList[currentChapterIndex]?.title || ''}
+        segments={segments}
+        complete={isGenerationComplete}
+        onClose={() => setAudioExportVisible(false)}
+      />
       {viewState === 'reader' && preparation && (
         <ListenPreparationOverlay
           preparation={preparation}
