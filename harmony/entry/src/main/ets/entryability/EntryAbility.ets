@@ -7,12 +7,25 @@ import { Logger } from '../utils/Logger';
 import { Want } from '@kit.AbilityKit';
 import { WXLoginService } from 'aggregated_login';
 import AbilityConstant from '@ohos.app.ability.AbilityConstant';
+import { ReferenceRecorder } from '../TurboModule/ReferenceRecorder';
 
 export let preferences: dataPreferences.Preferences | null = null;
 
 const TAG = 'EntryAbility'
 
 export default class EntryAbility extends RNAbility {
+  onForeground(): void {
+    super.onForeground();
+    ReferenceRecorder.lifecycle(true);
+  }
+  onBackground(): void {
+    ReferenceRecorder.lifecycle(false);
+    super.onBackground();
+  }
+  onDestroy(): void {
+    ReferenceRecorder.lifecycle(false);
+    super.onDestroy();
+  }
   getPagePath() {
     return 'pages/Index';
   }

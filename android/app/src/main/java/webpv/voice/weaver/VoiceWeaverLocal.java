@@ -91,6 +91,7 @@ final class VoiceWeaverLocal {
   Object execute(JSONObject p) throws Exception {
     ChapterAudioExport.initialize(context);
     String op = p.getString("operation");
+    if (op.startsWith("recording")) return ReferenceRecorder.execute(context, p);
     if (op.startsWith("export")) return ChapterAudioExport.execute(context, p);
     if (op.equals("clearGenerated") || op.equals("deleteProject") || op.equals("deleteAudio")) {
       synchronized (ChapterAudioExport.LOCK) { return executeInternal(p); }

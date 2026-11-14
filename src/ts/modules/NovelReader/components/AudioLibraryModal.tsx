@@ -1,4 +1,6 @@
 import {localService} from '../local/service';
+import ReferenceRecordingModal from './ReferenceRecordingModal';
+import {RecordedAudio} from '../local/recording';
 import {hasNativeCapability} from '../../base/utils/nativeCapabilities';
 import React, {
   memo,
@@ -10,6 +12,7 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -51,6 +54,7 @@ interface AudioVoiceActorGroup {
 }
 
 interface SelectedAudioFile extends AudioNameFields {
+  recordingId?: string;
   durationMs: number;
   uri: string;
   fileName: string;
@@ -379,6 +383,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
     null,
   );
   const [uploading, setUploading] = useState(false);
+  const [recordingVisible, setRecordingVisible] = useState(false);
   const uploadInFlightRef = useRef(false);
   const selectionRequestRef = useRef(0);
   const selectingRef = useRef(false);
@@ -386,11 +391,43 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
   visibleRef.current = visible;
   const [selectionStatus, setSelectionStatus] = useState('');
   const closeLibrary = useCallback(() => {
+    if (uploadInFlightRef.current) {
+      return;
+    }
+    setRecordingVisible(false);
+    setUploadDraft(null);
     selectionRequestRef.current += 1;
     selectingRef.current = false;
     setSelectionStatus('');
     onClose();
   }, [onClose]);
+  useEffect(() => {
+    const recordingId = uploadDraft?.recordingId;
+    if (!recordingId) {
+      return;
+    }
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active' && !uploadInFlightRef.current) {
+        setUploadDraft(null);
+      }
+    });
+    return () => {
+      subscription.remove();
+      nativeCall('recordingRelease', {id: recordingId}).catch(() => {});
+    };
+  }, [uploadDraft?.recordingId]);
+  useEffect(() => {
+    if (!visible) {
+      setRecordingVisible(false);
+      if (!uploadInFlightRef.current) {
+        setUploadDraft(null);
+      }
+    }
+  }, [visible]);
+  const useRecording = (audio: RecordedAudio) => {
+    setUploadDraft({...audio, voiceActor: '', emotion: '', gender: ''});
+    setRecordingVisible(false);
+  };
   useEffect(() => {
     return () => {
       selectionRequestRef.current += 1;
@@ -791,7 +828,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
       await importAudio(uploadDraft.uri, validation.name);
       setUploadDraft(null);
       await fetchAudioList();
-      Alert.alert('上传成功', '参考录音已保存到本机。');
+      Alert.alert('保存成功', '参考录音已保存到本机。');
     } catch (err) {
       console.warn('[AudioLibraryModal] 上传音频失败', err, {
         uploadDraft: buildUploadDraftDebugInfo(uploadDraft),
@@ -825,6 +862,15 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             style={styles.secondaryBtn}
             onPress={fetchAudioList}>
             <Text style={styles.secondaryBtnText}>刷新列表</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            disabled={uploading || !!selectionStatus}
+            onPress={() => {
+              VideoSessionController.pauseNative();
+              setRecordingVisible(true);
+            }}>
+            <Text style={styles.secondaryBtnText}>现场录音</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.primaryBtn}
@@ -916,7 +962,7 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             />
           </View>
         </View>
-        {previewUri ? (
+        {previewUri && !recordingVisible ? (
           <PreviewPlayer uri={previewUri} />
         ) : (
           <View style={styles.missingPreview}>
@@ -1140,6 +1186,13 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
         </View>
       </Modal>
 
+      {recordingVisible && visible && (
+        <ReferenceRecordingModal
+          onClose={() => setRecordingVisible(false)}
+          onUse={useRecording}
+          renderPreview={uri => <PreviewPlayer uri={uri} />}
+        />
+      )}
       <Modal
         visible={!!uploadDraft}
         animationType="fade"
@@ -1156,7 +1209,9 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
             style={styles.uploadScroll}
             contentContainerStyle={styles.uploadDialog}
             keyboardShouldPersistTaps="handled">
-            <Text style={styles.uploadTitle}>上传音频</Text>
+            <Text style={styles.uploadTitle}>
+              {uploadDraft?.recordingId ? '保存现场录音' : '上传音频'}
+            </Text>
             <Text style={styles.uploadMeta}>
               文件：{uploadDraft?.fileName || '-'}
             </Text>
@@ -1252,7 +1307,9 @@ const AudioLibraryModal: React.FC<AudioLibraryModalProps> = ({
                 {uploading ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.uploadConfirmText}>确认上传</Text>
+                  <Text style={styles.uploadConfirmText}>
+                    {uploadDraft?.recordingId ? '保存到音色库' : '确认上传'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1561,10 +1618,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   previewWrap: {
-    marginBottom: 12,
+    width: '100%',
+    marginBottom: 8,
     borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: '#F2F2F7',
+    backgroundColor: '#FAF5ED',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
   },
   previewPlayer: {
     position: 'absolute',
@@ -1577,22 +1637,23 @@ const styles = StyleSheet.create({
   previewControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    width: '100%',
   },
   previewButton: {
-    minWidth: 56,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,122,255,0.12)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minWidth: 68,
+    borderRadius: 14,
+    backgroundColor: 'rgba(217, 119, 6, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
   previewButtonText: {
-    color: '#007AFF',
-    fontSize: 13,
+    color: '#D97706',
+    fontSize: 12,
     fontWeight: '700',
   },
   previewMeta: {
@@ -1601,18 +1662,20 @@ const styles = StyleSheet.create({
   previewTrack: {
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: '#E7DFD5',
     overflow: 'hidden',
   },
   previewFill: {
     height: '100%',
     borderRadius: 2,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#D97706',
   },
   previewTime: {
-    color: '#8E8E93',
-    fontSize: 12,
-    marginTop: 8,
+    color: '#8C857B',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 6,
+    fontVariant: ['tabular-nums'],
   },
   missingPreview: {
     borderRadius: 12,

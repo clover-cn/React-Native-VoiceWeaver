@@ -10,6 +10,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { inspectReferenceAudio, ReferenceAudioInspectionError } from './ReferenceAudioInspector';
 import { convert } from 'libreference_wav.so';
 import { ChapterAudioExport, ChapterExportError, ChapterExportPayload } from './ChapterAudioExport';
+import { ReferenceRecorder, RecordingError, RecordingPayload } from './ReferenceRecorder';
 
 interface UploadPart { name: string; uri: string; mime: string }
 interface LocalPayload {
@@ -54,6 +55,7 @@ export class VoiceWeaverLocal {
   private configQueue: Promise<void> = Promise.resolve();
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+    ReferenceRecorder.get(context);
     this.audioExport = new ChapterAudioExport(context);
     this.root = context.filesDir + '/voiceweaver';
     if (!fs.accessSync(this.root)) { fs.mkdirSync(this.root); }
@@ -160,6 +162,10 @@ export class VoiceWeaverLocal {
     try {
       const p: LocalPayload = JSON.parse(raw) as LocalPayload;
       operation = p.operation;
+      if (operation.startsWith('recording')) {
+        const result = await ReferenceRecorder.get(this.context).execute(JSON.parse(raw) as RecordingPayload);
+        return JSON.stringify({ success: true, data: result });
+      }
       if (operation.startsWith('export')) {
         const result = await this.audioExport.execute(JSON.parse(raw) as ChapterExportPayload);
         return JSON.stringify({ success: true, data: result });
@@ -227,7 +233,7 @@ export class VoiceWeaverLocal {
       }
       return JSON.stringify({ success: true, data: data });
     } catch (error) {
-      if (error instanceof StreamRequestError || error instanceof ReferenceAudioInspectionError || error instanceof ChapterExportError) {
+      if (error instanceof StreamRequestError || error instanceof ReferenceAudioInspectionError || error instanceof ChapterExportError || error instanceof RecordingError) {
         return JSON.stringify({ success: false, error: error.message });
       }
       if (error instanceof ConfigStorageError) {

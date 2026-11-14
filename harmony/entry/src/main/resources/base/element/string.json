@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "reason_reference_recording",
+      "value": "用于现场录制参考音频并保存到本机音色库"
+    },
+    {
       "name": "module_desc",
       "value": "module description"
     },

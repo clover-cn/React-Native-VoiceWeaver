@@ -43,7 +43,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
         Object data = new VoiceWeaverLocal(getReactApplicationContext()).execute(new JSONObject(payload));
         callback.invoke(new JSONObject().put("success", true).put("data", data).toString());
       } catch (Exception error) {
-        if (error instanceof ChapterAudioExport.ExportError) {
+        if (error instanceof ChapterAudioExport.ExportError || error instanceof ReferenceRecorder.RecordingError) {
           callback.invoke(json("success", false, "error", error.getMessage()).toString()); return;
         }
         callback.invoke("{\"success\":false,\"error\":\"端侧操作失败，请检查配置、网络或可用存储空间\"}");
@@ -63,6 +63,12 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
 
   public BridgeModule(ReactApplicationContext context) {
     super(context);
+    ReferenceRecorder.initialize(context);
+    context.addLifecycleEventListener(new LifecycleEventListener() {
+      @Override public void onHostResume() { ReferenceRecorder.lifecycle(true); }
+      @Override public void onHostPause() { ReferenceRecorder.lifecycle(false); }
+      @Override public void onHostDestroy() { ReferenceRecorder.lifecycle(false); }
+    });
     context.addActivityEventListener(
       new BaseActivityEventListener() {
         @Override
