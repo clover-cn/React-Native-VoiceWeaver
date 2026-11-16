@@ -1,4 +1,5 @@
 import React, {memo, useContext, useEffect, useState} from 'react';
+import {AppImages} from '../../../../assets';
 import {
   ActivityIndicator,
   Image,
@@ -95,7 +96,7 @@ const ListenPlaybackBar = memo((props: Props) => {
               </View>
             ) : (
               <View style={[styles.coverWrapper, styles.placeholder]}>
-                <Text style={styles.coverText}>听</Text>
+                <Image source={AppImages.defaultCover} style={styles.cover} resizeMode="cover" />
                 <View style={styles.coverSpine} />
               </View>
             )}

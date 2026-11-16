@@ -5,6 +5,8 @@
  */
 
 export const AppImages = {
+  // 文章和小说缺少封面时使用的默认图片
+  defaultCover: require('./icons/defCvrImg.png'),
   // 播放按钮图标
   play: require('./icons/play.png'),
   setting: require('./icons/setting.png'),

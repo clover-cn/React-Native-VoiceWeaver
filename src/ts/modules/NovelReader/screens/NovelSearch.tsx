@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {AppImages} from '../../../../assets';
 import {
   View,
   Text,
@@ -205,7 +206,7 @@ const NovelSearch: React.FC<NovelSearchProps> = ({
         </View>
       ) : (
         <View style={[styles.coverWrapper, styles.coverPlaceholder]}>
-          <Text style={styles.coverText}>{item.name[0]}</Text>
+          <Image source={AppImages.defaultCover} style={styles.coverImage} resizeMode="cover" />
           <View style={styles.coverSpine} />
         </View>
       )}

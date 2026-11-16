@@ -69,7 +69,6 @@ export class AVSessionCommandHandler {
 
 const APP_BUNDLE_NAME = 'webpv.voice.weaver';
 const ENTRY_ABILITY_NAME = 'EntryAbility';
-const DEFAULT_COVER_RAWFILE = 'assets/src/ts/rawfile/dev/media/icon/startIcon.png';
 
 export class AVSessionManager {
   private static instance: AVSessionManager = new AVSessionManager();
@@ -535,7 +534,7 @@ export class AVSessionManager {
     }
 
     try {
-      const resource = await getContext().resourceManager.getRawFileContent(DEFAULT_COVER_RAWFILE);
+      const resource = await getContext().resourceManager.getMediaContent($r('app.media.default_cover').id);
       const imageSource = image.createImageSource(resource.buffer as ArrayBuffer);
       this.defaultPixelMap = await imageSource.createPixelMap({
         desiredSize: {

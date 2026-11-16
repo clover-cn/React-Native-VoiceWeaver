@@ -175,9 +175,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                       styles.heroCoverWrapper,
                       styles.heroCoverPlaceholder,
                     ]}>
-                    <Text style={styles.heroCoverText}>
-                      {heroRecord.book.name[0]}
-                    </Text>
+                    <Image source={AppImages.defaultCover} style={styles.heroCoverImage} resizeMode="cover" />
                     <View style={styles.heroCoverSpine} />
                   </View>
                 )}
@@ -266,7 +264,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                   </View>
                 ) : (
                   <View style={[styles.coverWrapper, styles.coverPlaceholder]}>
-                    <Text style={styles.coverText}>{book.name[0]}</Text>
+                    <Image source={AppImages.defaultCover} style={styles.coverImage} resizeMode="cover" />
                     <View style={styles.coverSpine} />
                   </View>
                 )}

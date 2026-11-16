@@ -317,7 +317,11 @@ public final class AudioPlaybackService extends MediaSessionService {
       .setArtist(metadata.optString("author"))
       .setAlbumTitle(metadata.optString("album"));
     String artwork = metadata.optString("mediaImage");
-    if (!artwork.isEmpty()) builder.setArtworkUri(Uri.parse(artwork));
+    if (!artwork.trim().isEmpty()) {
+      builder.setArtworkUri(Uri.parse(artwork));
+    } else {
+      builder.setArtworkUri(Uri.parse("android.resource://" + getPackageName() + "/" + R.drawable.default_cover));
+    }
     return builder.build();
   }
 
