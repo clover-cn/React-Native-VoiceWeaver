@@ -182,7 +182,9 @@ final class VoiceWeaverLocal {
       }
       body = RequestBody.create(MediaType.parse("application/json"), text);
     }
-    builder.method(p.optString("method", "POST"), body);
+    String method = p.optString("method", "POST");
+    if (!method.equals("POST") && !method.equals("GET") && !method.equals("DELETE")) throw new IOException("不支持的请求方法");
+    builder.method(method, method.equals("GET") || method.equals("DELETE") ? null : body);
     boolean stream = p.optBoolean("stream");
     long timeout = p.optLong("timeout", 120000);
     OkHttpClient client = new OkHttpClient.Builder()

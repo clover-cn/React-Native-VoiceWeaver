@@ -22,6 +22,9 @@ export const stageFromTask = (phase: string): ListenPreparationStage | null => {
     case 'assigning':
       return 'assign';
     case 'generating':
+    case 'tts_queued':
+    case 'tts_running':
+    case 'tts_downloading':
       return 'generate';
     case 'done':
       return 'play';
@@ -31,6 +34,7 @@ export const stageFromTask = (phase: string): ListenPreparationStage | null => {
 };
 
 export interface ListenPreparation {
+  detail?: string;
   plain?: boolean;
   id: number;
   assetId: string;

@@ -87,7 +87,7 @@ export interface UseListenBookReturn {
     generationComplete?: boolean,
     phase?: string,
   ) => void;
-  cancelListenTask: (projectName?: string) => Promise<void>;
+  cancelListenTask: (projectName?: string, cancelRemote?: boolean) => Promise<void>;
 }
 
 export const useListenBook = (): UseListenBookReturn => {
@@ -148,13 +148,14 @@ export const useListenBook = (): UseListenBookReturn => {
     }
     return context.current.listener;
   }, []);
-  const cancelListenTask = useCallback(async (project?: string) => {
+  const cancelListenTask = useCallback(async (project?: string, cancelRemote = false) => {
     context.current.stopped = true;
     context.current.epoch++;
     cancelGeneration(
       project || context.current.project || undefined,
       undefined,
       '页面重置、章节切换或停止听书',
+      cancelRemote,
     );
     context.current.taskId = '';
     context.current.listener = createListenSessionId();

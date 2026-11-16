@@ -374,7 +374,9 @@ export class VoiceWeaverLocal {
     try {
       if (p.stream) { return await this.streamResponse(call, p, body, headers); }
       // 语音 JSON 中的 Base64 PCM 容易超过系统默认 5MB 接收限制。
-      const response = await call.request(p.url, { method: http.RequestMethod.POST, header: headers, extraData: body, expectDataType: http.HttpDataType.ARRAY_BUFFER, usingCache: false, maxLimit: 64 * 1024 * 1024, connectTimeout: p.timeout || 120000, readTimeout: p.timeout || 120000 });
+      if (p.method && !['POST', 'GET', 'DELETE'].includes(p.method)) { throw new Error('不支持的请求方法'); }
+      const method = p.method === 'GET' ? http.RequestMethod.GET : p.method === 'DELETE' ? http.RequestMethod.DELETE : http.RequestMethod.POST;
+      const response = await call.request(p.url, { method: method, header: headers, extraData: method === http.RequestMethod.POST ? body : undefined, expectDataType: http.HttpDataType.ARRAY_BUFFER, usingCache: false, maxLimit: 64 * 1024 * 1024, connectTimeout: p.timeout || 120000, readTimeout: p.timeout || 120000 });
       const status = response.responseCode;
       const responseHeaders = response.header as Record<string, string>;
       const result: LocalResult = { status: status, retryAfter: responseHeaders['Retry-After'] || responseHeaders['retry-after'] || '', text: '' };

@@ -1458,6 +1458,7 @@ const NovelReaderApp: React.FC = () => {
   const {
     isPlaying,
     startupStatus,
+    startupGenerationError,
     suppressAutoPlay,
     currentSegIdx,
     currentProgress,
@@ -1506,25 +1507,30 @@ const NovelReaderApp: React.FC = () => {
         return current;
       }
       const error =
-        listenState === 'error'
+        startupGenerationError
+          ? startupGenerationError
+          : listenState === 'error'
           ? listenError || '听书生成失败，请重试'
           : startupStatus === 'error'
-          ? '音频播放失败，请检查网络后重试'
+          ? '本地音频播放失败，请重试播放或重新生成该片段'
           : '';
       if (error) {
         return {
           ...(startupStatus === 'error'
-            ? advancePreparation(current, 'play')
+            ? advancePreparation(current, startupGenerationError ? 'generate' : 'play')
             : current),
           error,
         };
       }
       const stage = segments[0]?.audioUrl ? 'play' : stageFromTask(taskPhase);
-      return stage && stage !== current.stage
-        ? advancePreparation(current, stage)
-        : current;
+      const detail = current.stage !== 'play' && taskPhase.startsWith('tts_')
+        ? taskPhase === 'tts_queued' ? 'IndexTTS 排队中'
+          : taskPhase === 'tts_running' ? 'IndexTTS 合成中' : '正在下载音频'
+        : '';
+      const next = stage && stage !== current.stage ? advancePreparation(current, stage) : current;
+      return next.detail !== detail ? {...next, detail} : next;
     });
-  }, [listenState, listenError, startupStatus, taskPhase, segments]);
+  }, [listenState, listenError, startupStatus, startupGenerationError, taskPhase, segments]);
 
   // 定时关闭：到点 / 段落结束 / 章节结束时暂停。仅在 isPlaying=true 时触发，避免误暂停。
   // 用 ref 持有 isPlaying，使 onTrigger 引用不随播放状态变化（hook 内部已用
@@ -1996,7 +2002,8 @@ const NovelReaderApp: React.FC = () => {
   const handleStopListen = () => {
     cancelActiveChapterLoad();
     stopPlayback();
-    resetListen();
+    void cancelListenTask(projectName, true);
+    resetListen(true);
     setIsListenMode(false);
   };
 

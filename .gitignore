@@ -64,6 +64,11 @@ yarn-error.log
 # testing
 /coverage
 
+# Python 本地验证及 IndexTTS 运行数据
+__pycache__/
+*.pyc
+/voiceweaver_jobs/
+
 # Real-time file generation
 /android/app/build/
 /android/build/

@@ -34,6 +34,13 @@ export interface AudioReferenceConfig {
 }
 
 export interface ListenSegment {
+  indexTtsJob?: {
+    endpoint: string;
+    fingerprint: string;
+    clientRequestId: string;
+    jobId?: string;
+    status?: string;
+  };
   roleId?: string;
   gender?: string;
   textGender?: string;

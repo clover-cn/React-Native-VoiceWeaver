@@ -27,6 +27,7 @@ export interface EngineConfig {
     background: boolean;
   };
   advanced: {
+    indexTtsWaitHours: number;
     llmTimeout: number;
     ttsTimeout: number;
     coreMinChapters: number;
@@ -65,6 +66,7 @@ export const defaultConfig = (): EngineConfig => ({
   indextts2: {endpoint: '', apiKey: ''},
   generation: {prescanCount: 10, prefetchCount: 2, background: true},
   advanced: {
+    indexTtsWaitHours: 1,
     llmTimeout: 120000,
     ttsTimeout: 120000,
     coreMinChapters: 3,
@@ -83,6 +85,9 @@ export function validateTtsConfig(config: EngineConfig): void {
   const model = config[config.provider];
   if (!model.endpoint.trim()) {
     throw new ConfigurationError('请填写语音合成 API 地址。', 'tts');
+  }
+  if (config.provider === 'indextts2' && !/\/api\/tts\/upload\/?$/.test(model.endpoint)) {
+    throw new ConfigurationError('IndexTTS 完整端点必须以 /api/tts/upload 结尾。', 'tts');
   }
   if (config.provider !== 'indextts2') {
     if (!model.apiKey.trim()) {
@@ -117,10 +122,14 @@ export function validateConfig(
       throw new ConfigurationError('API Key 不能包含换行。', group);
     }
   }
+  if (config.indextts2.endpoint && !/\/api\/tts\/upload\/?$/.test(config.indextts2.endpoint)) {
+    throw new ConfigurationError('IndexTTS 完整端点必须以 /api/tts/upload 结尾。', 'tts');
+  }
   if (!endpointValid(config.siliconflow.uploadEndpoint)) {
     throw new ConfigurationError('音色上传地址无效。', 'tts');
   }
   for (const [name, value, min, max] of [
+    ['IndexTTS 任务等待小时数', config.advanced.indexTtsWaitHours, 1, 24],
     ['预扫描章节数', config.generation.prescanCount, 0, 100],
     ['预取章节数', config.generation.prefetchCount, 0, 20],
     ['解析超时', config.advanced.llmTimeout, 1000, 600000],

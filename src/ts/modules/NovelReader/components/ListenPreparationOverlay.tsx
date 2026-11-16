@@ -129,7 +129,7 @@ export default function ListenPreparationOverlay({
     ? `${stageTitle}异常`
     : ready && !p.autoPlay
     ? '演播就绪，点击播放'
-    : stageTitle;
+    : p.detail || stageTitle;
 
   if (!p.expanded) {
     return (

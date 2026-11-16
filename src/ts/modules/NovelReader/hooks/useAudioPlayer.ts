@@ -21,6 +21,7 @@ export interface AudioChapterMetadata {
 }
 
 export interface UseAudioPlayerReturn {
+  startupGenerationError: string;
   startupStatus: 'waiting' | 'buffering' | 'ready' | 'playing' | 'error';
   suppressAutoPlay: () => void;
   isPlaying: boolean;
@@ -1173,6 +1174,7 @@ export const useAudioPlayer = (
       ? resume.index
       : 0;
   return {
+    startupGenerationError: segments[startupIndex]?.generationError || '',
     suppressAutoPlay,
     startupStatus:
       startupFailed ||

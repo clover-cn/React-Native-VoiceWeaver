@@ -23,7 +23,8 @@ import {
   writeDocument,
   logModelProgress,
 } from './native';
-import {callLlm, generateSpeech} from './providers';
+import {callLlm, generateSpeech, cancelIndexTtsJob} from './providers';
+import {IndexTtsPending} from './indexTtsJobs';
 import {parsePrompt, prescanPrompt} from './prompts';
 import {assertNarratorAvailable} from './preflight';
 import {AvailabilityContext} from './audioAvailability';
@@ -216,7 +217,7 @@ export const waitForGenerationIdle = async (): Promise<void> => {
   await new Promise<void>(resolve => idleListeners.add(resolve));
 };
 DeviceEventEmitter.addListener('VoiceWeaverCancelGeneration', () =>
-  cancelGeneration(undefined, undefined, '原生通知栏或后台服务取消'),
+  cancelGeneration(undefined, undefined, '原生通知栏或后台服务取消', true),
 );
 AppState.addEventListener('change', state => {
   if (state !== 'active') {
@@ -566,7 +567,9 @@ async function run(task: Task): Promise<void> {
       cached?.contentHash === hash &&
       cached.configHash === configIdentity(task.config, task.plain, task.articleReferenceAudioId)
     ) {
-      task.segments = await validateSegmentFiles(cached.segments);
+      task.segments = (await validateSegmentFiles(cached.segments)).map(segment =>
+        segment.audioUrl ? segment : {...segment, generationError: null},
+      );
     }
     await updateProject(task.projectName, current => {
       active(task);
@@ -715,6 +718,7 @@ async function run(task: Task): Promise<void> {
       }
       try {
         project = await loadProject(task.projectName);
+        segment.generationError = null;
         const startedAt = Date.now();
         logModelProgress(
           `章节 ${task.chapterIndex + 1} 片段 ${index + 1}/${
@@ -728,6 +732,10 @@ async function run(task: Task): Promise<void> {
           task.controller.signal,
           task.projectName,
           await taskAvailability(task),
+          async phase => {
+            if (phase) { task.phase = phase; }
+            await checkpoint(task, hash);
+          },
         );
         active(task);
         logModelProgress(
@@ -750,6 +758,13 @@ async function run(task: Task): Promise<void> {
           localAudioUrl: null,
           generationError: error instanceof Error ? error.message : '生成失败',
         };
+        if (error instanceof IndexTtsPending) {
+          task.phase = 'paused';
+          task.paused = true;
+          task.error = error.message;
+          await checkpoint(task, hash);
+          return;
+        }
       }
       await checkpoint(task, hash);
     }
@@ -820,7 +835,7 @@ export async function generateChapter(
     task =>
       taskKey(task.projectName, task.chapterIndex) === key &&
       !task.controller.signal.aborted &&
-      !['done', 'error', 'cancelled'].includes(task.phase),
+      !['done', 'error', 'cancelled', 'paused'].includes(task.phase),
   );
   if (
     existing &&
@@ -889,7 +904,7 @@ export async function checkChapter(
     item =>
       item.projectName === projectName &&
       item.chapterIndex === chapterIndex &&
-      !['done', 'error', 'cancelled'].includes(item.phase),
+      !['done', 'error', 'cancelled', 'paused'].includes(item.phase),
   );
   if (
     !entry ||
@@ -919,6 +934,7 @@ export function cancelGeneration(
   projectName?: string,
   id?: string,
   reason = '页面操作或任务替换',
+  cancelRemote = false,
 ): void {
   if (!id) {
     if (projectName) {
@@ -942,6 +958,13 @@ export function cancelGeneration(
         reason,
       });
       task.controller.abort();
+      if (cancelRemote) {
+        for (const segment of task.segments) {
+          void cancelIndexTtsJob(segment, task.config).catch(error => {
+            logModelProgress(`远端取消未确认，任务可能仍在执行：${String(error)}`);
+          });
+        }
+      }
       task.phase = 'cancelled';
       publish(task);
     }
@@ -1083,6 +1106,7 @@ export async function regenerateSegments(
         continue;
       }
       try {
+        segment.generationError = null;
         const uri = await generateSpeech(
           segment,
           config,
@@ -1092,6 +1116,10 @@ export async function regenerateSegments(
           task.controller.signal,
           task.projectName,
           await taskAvailability(task),
+          async phase => {
+            if (phase) { task.phase = phase; }
+            await checkpoint(task, entry.contentHash);
+          },
         );
         active(task);
         task.segments[index] = {
@@ -1109,6 +1137,13 @@ export async function regenerateSegments(
           localAudioUrl: null,
           generationError: error instanceof Error ? error.message : '生成失败',
         };
+        if (error instanceof IndexTtsPending) {
+          task.phase = 'paused';
+          task.paused = true;
+          task.error = error.message;
+          await checkpoint(task, entry.contentHash);
+          return task.segments;
+        }
       }
       await checkpoint(task, entry.contentHash);
     }

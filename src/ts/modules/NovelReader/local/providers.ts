@@ -8,6 +8,7 @@ import {parseLlmResponse} from './llmStream';
 import {designPrompt, usesVoiceDesign} from './voiceDesign';
 import {diagnosticLog} from './native';
 import {registerLogSecrets} from './logSafety';
+import {generateIndexTtsJob, indexTtsJobsEndpoint, ModelHttpError, SpeechCheckpoint} from './indexTtsJobs';
 
 interface NativeResponse {
   status: number;
@@ -30,7 +31,7 @@ function responseErrorDetail(result: NativeResponse, payload: object): string {
   let detail = '';
   try {
     const body = JSON.parse(text);
-    const message = body?.error?.message || body?.message || body?.error;
+    const message = body?.error?.message || body?.message || body?.detail || body?.error;
     detail = typeof message === 'string' ? message : '';
   } catch (_) {
     return '对端返回非 JSON 错误正文，请检查中转站或入口代理日志。';
@@ -77,6 +78,7 @@ export async function modelRequest(
   signal: AbortSignal,
   stage = '',
   beforeAttempt?: () => Promise<void>,
+  retryTransport = false,
 ): Promise<NativeResponse> {
   if (signal.aborted) {
     throw new Error('任务已取消');
@@ -102,7 +104,7 @@ export async function modelRequest(
       result = await nativeCall<NativeResponse>('request', {id, ...payload});
     } catch (error) {
       // 原生超时也走一次有限重试，取消和其他异常直接保留。
-      if (signal.aborted || !/timeout|timed out|超时/i.test(String(error))) {
+      if (signal.aborted || (!retryTransport && !/timeout|timed out|超时/i.test(String(error)))) {
         throw error;
       }
       diagnosticLog('WARN', 'request.timeout', {id, stage, error: String(error)});
@@ -142,7 +144,7 @@ export async function modelRequest(
             )}`;
       const message = stage ? `[${stage}] ${failure}` : failure;
       logModelFailure(message);
-      throw new Error(message);
+      throw new ModelHttpError(message, result.status);
     }
     diagnosticLog('INFO', 'request.done', {id, stage, model, status: result.status, elapsedMs: Date.now() - startedAt});
     return result;
@@ -211,7 +213,9 @@ export async function callLlm(
   }
 }
 
-class AudioAvailabilityChanged extends Error {}
+class AudioAvailabilityChanged extends Error {
+  name = 'AudioAvailabilityChanged';
+}
 
 /** 禁用状态在上传或重试等待期间改变时，重新选音后再发送请求。 */
 export async function generateSpeech(
@@ -221,6 +225,7 @@ export async function generateSpeech(
   signal: AbortSignal,
   projectName?: string,
   availability?: AvailabilityContext,
+  checkpoint?: SpeechCheckpoint,
 ): Promise<string> {
   const startedAt = Date.now();
   const context = {
@@ -233,7 +238,7 @@ export async function generateSpeech(
   };
   diagnosticLog('INFO', 'speech.start', context);
   try {
-    const uri = await generateSpeechInternal(segment, config, bindings, signal, projectName, availability);
+    const uri = await generateSpeechInternal(segment, config, bindings, signal, projectName, availability, checkpoint);
     diagnosticLog('INFO', 'speech.done', {...context, elapsedMs: Date.now() - startedAt});
     return uri;
   } catch (error) {
@@ -250,6 +255,7 @@ async function generateSpeechInternal(
   signal: AbortSignal,
   projectName?: string,
   availability?: AvailabilityContext,
+  checkpoint?: SpeechCheckpoint,
 ): Promise<string> {
   if (usesVoiceDesign(segment)) {
     const mimo = config.mimoTTS;
@@ -292,6 +298,7 @@ async function generateSpeechInternal(
         signal,
         projectName,
         availability,
+        checkpoint,
       );
     } catch (error) {
       if (!(error instanceof AudioAvailabilityChanged)) {
@@ -309,6 +316,7 @@ async function generateAvailableSpeech(
   signal: AbortSignal,
   projectName?: string,
   availability?: AvailabilityContext,
+  checkpoint?: SpeechCheckpoint,
 ): Promise<string> {
   const records = await listAudio();
   const prepared = availableSegment(
@@ -363,7 +371,7 @@ async function generateAvailableSpeech(
       ) {
         throw new AudioAvailabilityChanged();
       }
-    });
+    }, config.provider === 'indextts2');
   const model = config[provider];
   const common = {
     url: model.endpoint,
@@ -481,19 +489,29 @@ async function generateAvailableSpeech(
       );
       fields.emo_alpha = '0.6';
     }
-    result = await speechRequest(
-      {
-        ...common,
-        extension: '.wav',
-        headers: model.apiKey ? {Authorization: `Bearer ${model.apiKey}`} : {},
-        fields,
-        files,
-      },
-      signal,
+    result = await generateIndexTtsJob(
+      segment, model.endpoint,
+      model.apiKey ? {Authorization: `Bearer ${model.apiKey}`} : {},
+      fields, files, projectName ? createTextHash(projectName) : undefined,
+      config.advanced.indexTtsWaitHours || 1, signal, speechRequest, checkpoint,
     );
   }
   if (!result.uri) {
     throw new Error('语音生成没有返回本地文件。');
   }
   return result.uri;
+}
+
+/** 显式取消才通知服务器；后台暂停和章节切换继续保留任务。 */
+export async function cancelIndexTtsJob(segment: ListenSegment, config: EngineConfig): Promise<void> {
+  const job = segment.indexTtsJob;
+  if (!job || job.status === 'succeeded') { return; }
+  if (indexTtsJobsEndpoint(config.indextts2.endpoint) !== job.endpoint) {
+    throw new Error('任务服务地址已更改，无法确认旧服务上的取消，请在旧服务中检查任务。');
+  }
+  const headers = config.indextts2.apiKey ? {Authorization: `Bearer ${config.indextts2.apiKey}`} : {};
+  await modelRequest({
+    url: job.endpoint.replace(/\/jobs$/, '/requests') + '/' + encodeURIComponent(job.clientRequestId),
+    method: 'DELETE', timeout: 30000, headers,
+  }, new AbortController().signal, '取消 IndexTTS 任务', undefined, true);
 }

@@ -509,6 +509,8 @@ export default function SettingsScreen({
                       '语音生成超时（毫秒）',
                       true,
                     )}
+                    {field('advanced', 'indexTtsWaitHours', 'IndexTTS 任务等待上限（小时，1–24）', true)}
+                    <Text style={styles.hint}>IndexTTS 每次网络请求等待 30 秒，长任务单独计时；中断后恢复原任务。</Text>
                     {field(
                       'advanced',
                       'coreMinChapters',
