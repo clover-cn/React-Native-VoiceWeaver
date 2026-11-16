@@ -1,3 +1,4 @@
+import {roleDisplayName} from '../utils/roleDisplayName';
 import React, {
   memo,
   useCallback,
@@ -181,7 +182,7 @@ const SegmentRow = memo(
             isActive && styles.paragraphActiveText,
           ]}>
           {!isNarration && (
-            <Text style={styles.roleTagInline}>{item.role} </Text>
+            <Text style={styles.roleTagInline}>{roleDisplayName(item.role)} </Text>
           )}
           {item.text}
         </Text>

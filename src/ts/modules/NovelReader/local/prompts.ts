@@ -1,8 +1,19 @@
-/** 保留原有解析约束和角色预扫描输出格式。 */
+/** 配音推断不冒充原文事实，职业只作为弱线索。 */
+const voiceRules = `
+【角色身份与配音档案】
+有无姓名与重要性无关，无名重要人物不能自动归为 temporary。
+gender 只记录原文性别事实（male|female|unknown）。castingGender 是配音建议：先依据明确性别，其次可靠称谓及代词，最后可结合职业和故事背景弱推断；例如古代普通狱卒可建议 male、公司前台可建议 female，均不得覆盖明确证据。无法推断填 unknown，由系统作配音默认。
+同时输出 genderSource（explicit|context|occupation|unknown）及 genderEvidence 简短依据。职业推断时 gender 保留 unknown。
+每个角色生成 voiceDescription（不超过150字）：听感年龄、音高、声线质感、共鸣、口音；缺少依据的项目采用保守设计默认，不声称是小说事实。不要把临时情绪写入固定音色，已知角色复用已有描述。
+通用职业称谓不建立全书唯一别名：同场景的同一人使用同一标准名，不同场景且无同一人证据时分别建档，无名角色使用 未命名_章节号_场景号_称谓_序号，不能把所有狱卒合并。已知角色身份有明确证据时才沿用其标准名；揭示姓名时继续使用已有标准名，并将真名加入 aliases，保持身份和声音连续。
+对白不能漏掉临时角色，也不能改写对白台词。
+`;
+/** 保留原有解析约束并补充配音字段。 */
 export const parsePrompt = (characterContext: string) => `
       你是一个小说对话结构化提取助手。
       目标：将用户提供的长文本按对话和旁白进行拆解。
       ${characterContext}
+      ${voiceRules}
       【强制步骤：主角识别（必须执行）】
       在处理文本前，必须先确定“我”指代的主角是谁，按以下优先级：
       1. 如果【已知角色及别名映射】中存在别名为“我”的角色 → 直接使用该角色
@@ -42,6 +53,7 @@ export const parsePrompt = (characterContext: string) => `
       要求返回的格式为严格的 JSON 对象（不要包装在 Markdown 代码块里，只有 JSON 字符串）。
       JSON 对象包含两个字段：
       {
+        "characters": [{"standardName":"标准角色名","gender":"unknown","castingGender":"male|female|unknown","genderSource":"explicit|context|occupation|unknown","genderEvidence":"依据","voiceDescription":"固定音色描述","aliases":[]}],
         "dialogues": [
           {
              "type": "narration" | "dialogue",
@@ -49,6 +61,8 @@ export const parsePrompt = (characterContext: string) => `
              "text": "提取的文本内容（注意：1. 严格执行上述'仅替换我，不替换他/她'的规则；2. 旁白如果以动作描写结尾且直接引出后续对话，请在语境末尾自动补全发音引导词，比如'，开口问道：'，以此实现听觉平滑）",
              "emotion": "该句话的情绪（旁白必须为 'neutral'。如果是对话，必须从以下情绪选择： happy, angry, sad, fearful, disgusted, melancholy, surprised, neutral(平静) 英文发音情绪标识之一, 如果情绪没有匹配上默认使用 'neutral'）",
              "gender": "仅对 dialogue 必填：male|female|unknown；旁白固定填写 unknown"
+             ,"castingGender": "male|female|unknown",
+             "speechStyle": "本句表演指令，不包含改写的台词"
           }
         ],
         "detectedAliases": {
@@ -61,6 +75,7 @@ export const prescanPrompt = (characterContext: string) => `
   你是一个专业的小说角色分析与指代消解专家。
   任务：阅读传入的章节窗口，提取角色全局映射和角色生命周期信息。
   本项目之前已出现的角色有：${characterContext}
+  ${voiceRules}
 
   【重点要求】
   1. 发现真名：有些角色初期以特征代称（如"白裙姑娘", "黑衣人"）出场，但在后续章节揭示了真名（如"陈艺"）。你需要将这些特征代称作为"别名"（aliases）绑定到她的真名下。
@@ -87,6 +102,10 @@ export const prescanPrompt = (characterContext: string) => `
       {
         "standardName": "角色的真名或标准名（如：陈艺、江桥，如果实在没名字填：未命名_白裙姑娘）",
         "gender": "male | female | unknown",
+        "castingGender": "male | female | unknown",
+        "genderSource": "explicit | context | occupation | unknown",
+        "genderEvidence": "简短依据",
+        "voiceDescription": "固定音色描述，不含临时情绪",
         "aliases": ["仅限文中明确叫出口的称呼、或者不知道真名时的固定指代，严禁包含比喻或临时形容词"],
         "description": "简短描述该角色的身份或外貌特征，不超过30字"
       }

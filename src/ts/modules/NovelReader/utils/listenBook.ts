@@ -1,4 +1,5 @@
 import {Book, ListenSegment} from '../types/reader';
+import {safeLogText} from '../local/logSafety';
 
 const CryptoJS = require('crypto-js');
 
@@ -70,13 +71,11 @@ export const buildListenSegmentFailureHint = (
 ): string => {
   if (isReferenceAudioAssignmentError(message)) {
     // 保留底层具体原因，便于区分缺少情绪录音、绑定失效等问题。
-    const detail = String(message || '')
-      .trim()
-      .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [已隐藏]')
-      .replace(/\bsk-[A-Za-z0-9_-]+/g, '[已隐藏]');
+    const detail = safeLogText(String(message || '').trim());
     return `${detail}\n请长按段落检查参考音频配置后重试。`;
   }
-  return '该段落音频生成失败，请长按段落检查参考音频配置后重试。';
+  const detail = safeLogText(String(message || '').trim());
+  return `${detail || '该段落音频生成失败。'}\n可在设置的本地存储中查看诊断日志，或长按段落重试。`;
 };
 
 export interface ListenRegenerateSegmentPayload {

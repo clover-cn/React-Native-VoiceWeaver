@@ -34,6 +34,17 @@ export interface AudioReferenceConfig {
 }
 
 export interface ListenSegment {
+  roleId?: string;
+  gender?: string;
+  textGender?: string;
+  castingGender?: string;
+  genderSource?: string;
+  genderEvidence?: string;
+  voiceDescription?: string;
+  speechStyle?: string;
+  synthesisMode?: 'reference' | 'voiceDesign';
+  voiceDesignFallback?: boolean;
+  voiceProfileVersion?: number;
   missingEmotionPolicy?: 'strict' | 'fallback_neutral';
   index?: number;
   type: 'narration' | 'dialogue';

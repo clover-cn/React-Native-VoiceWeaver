@@ -1,6 +1,7 @@
 import {AudioOption} from '../types/audio';
 import {GlobalAudioBindings, ListenSegment} from '../types/reader';
 import {createCastingEngine} from './casting';
+import {usesVoiceDesign} from './voiceDesign';
 
 export interface AvailabilityContext {
   casting: object;
@@ -20,6 +21,9 @@ export function availableSegment(
   provider: string,
   context?: AvailabilityContext,
 ): ListenSegment {
+  if (usesVoiceDesign(segment)) {
+    return segment;
+  }
   if (segment.manualAssigned && segment.referenceAudio === null) {
     return segment;
   }

@@ -5,6 +5,9 @@ import {logModelFailure, logModelProgress, nativeCall} from './native';
 import {listAudio, updateAudio} from './repository';
 import {availableSegment, AvailabilityContext} from './audioAvailability';
 import {parseLlmResponse} from './llmStream';
+import {designPrompt, usesVoiceDesign} from './voiceDesign';
+import {diagnosticLog} from './native';
+import {registerLogSecrets} from './logSafety';
 
 interface NativeResponse {
   status: number;
@@ -79,6 +82,12 @@ export async function modelRequest(
     throw new Error('任务已取消');
   }
   const id = `request_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const startedAt = Date.now();
+  const request = payload as {headers?: Record<string, string>; body?: string; audio?: boolean; referenceUri?: string};
+  registerLogSecrets(request.headers);
+  let model = '';
+  try { model = JSON.parse(request.body || '{}').model || ''; } catch (_) {}
+  diagnosticLog('INFO', 'request.start', {id, stage, model, audio: request.audio, reference: Boolean(request.referenceUri)});
   const abort = () => {
     void nativeCall('cancel', {id}).catch(() => undefined);
   };
@@ -88,8 +97,19 @@ export async function modelRequest(
     if (signal.aborted) {
       throw new Error('任务已取消');
     }
-    let result = await nativeCall<NativeResponse>('request', {id, ...payload});
+    let result: NativeResponse;
+    try {
+      result = await nativeCall<NativeResponse>('request', {id, ...payload});
+    } catch (error) {
+      // 原生超时也走一次有限重试，取消和其他异常直接保留。
+      if (signal.aborted || !/timeout|timed out|超时/i.test(String(error))) {
+        throw error;
+      }
+      diagnosticLog('WARN', 'request.timeout', {id, stage, error: String(error)});
+      result = {status: 504};
+    }
     if (!signal.aborted && (result.status === 429 || result.status >= 500)) {
+      diagnosticLog('WARN', 'request.retry', {id, stage, status: result.status, attempt: 1});
       const value = result.retryAfter || '';
       const retryAfter = /^\d+$/.test(value)
         ? Number(value) * 1000
@@ -124,7 +144,11 @@ export async function modelRequest(
       logModelFailure(message);
       throw new Error(message);
     }
+    diagnosticLog('INFO', 'request.done', {id, stage, model, status: result.status, elapsedMs: Date.now() - startedAt});
     return result;
+  } catch (error) {
+    diagnosticLog('ERROR', 'request.failed', {id, stage, model, elapsedMs: Date.now() - startedAt, cancelled: signal.aborted, error: String(error)});
+    throw error;
   } finally {
     signal.removeEventListener('abort', abort);
   }
@@ -198,6 +222,67 @@ export async function generateSpeech(
   projectName?: string,
   availability?: AvailabilityContext,
 ): Promise<string> {
+  const startedAt = Date.now();
+  const context = {
+    project: projectName, chapter: availability ? availability.chapterIndex + 1 : undefined,
+    segment: (segment.index ?? -1) + 1, role: segment.role, roleId: segment.roleId,
+    emotion: segment.emotion, provider: usesVoiceDesign(segment) ? 'mimoTTS' : config.provider,
+    mode: segment.synthesisMode || 'reference', manual: segment.manualAssigned,
+    referenceId: segment.referenceAudio?.id,
+    textHash: createTextHash(segment.text), textLength: segment.text.length,
+  };
+  diagnosticLog('INFO', 'speech.start', context);
+  try {
+    const uri = await generateSpeechInternal(segment, config, bindings, signal, projectName, availability);
+    diagnosticLog('INFO', 'speech.done', {...context, elapsedMs: Date.now() - startedAt});
+    return uri;
+  } catch (error) {
+    diagnosticLog('ERROR', 'speech.failed', {...context, elapsedMs: Date.now() - startedAt,
+      cancelled: signal.aborted, error: String(error)});
+    throw error;
+  }
+}
+
+async function generateSpeechInternal(
+  segment: ListenSegment,
+  config: EngineConfig,
+  bindings: GlobalAudioBindings,
+  signal: AbortSignal,
+  projectName?: string,
+  availability?: AvailabilityContext,
+): Promise<string> {
+  if (usesVoiceDesign(segment)) {
+    const mimo = config.mimoTTS;
+    if (!mimo?.endpoint?.trim() || !mimo.apiKey?.trim()) {
+      throw new Error('路人文本设计音色缺少 MiMo 配置，请在语音设置中填写共用的 MiMo API 地址和密钥。');
+    }
+    if (!Number.isInteger(mimo.sampleRate) || mimo.sampleRate < 8000 || mimo.sampleRate > 96000) {
+      throw new Error('路人 MiMo PCM 采样率需为 8000–96000 的整数。');
+    }
+    const result = await modelRequest({
+      url: mimo.endpoint,
+      timeout: config.advanced.ttsTimeout,
+      audio: true,
+      pcm: true,
+      sampleRate: mimo.sampleRate,
+      ...(projectName ? {owner: createTextHash(projectName)} : {}),
+      headers: {'api-key': mimo.apiKey, 'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: segment.voiceDesignFallback ? 'mimo-v2.5-tts' : 'mimo-v2.5-tts-voicedesign',
+        messages: [
+          {role: 'user', content: designPrompt(segment)},
+          {role: 'assistant', content: segment.text},
+        ],
+        audio: {format: 'pcm16', optimize_text_preview: false,
+          ...(segment.voiceDesignFallback ? {voice: 'mimo_default'} : {})},
+        stream: false,
+      }),
+    }, signal, `语音 ${segment.role || '旁白'} / 片段 ${(segment.index ?? -1) + 1}`);
+    if (!result.uri) {
+      throw new Error('路人文本设计音色没有返回本地音频，请重试本句。');
+    }
+    return result.uri;
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await generateAvailableSpeech(
@@ -269,7 +354,7 @@ async function generateAvailableSpeech(
     usedIds.push(role.neutral?.id || record.id);
   }
   const speechRequest = (payload: object, requestSignal: AbortSignal) =>
-    modelRequest(payload, requestSignal, '', async () => {
+    modelRequest(payload, requestSignal, `语音 ${segment.role || '旁白'} / 片段 ${(segment.index ?? -1) + 1}`, async () => {
       const latest = await listAudio();
       if (
         usedIds.some(

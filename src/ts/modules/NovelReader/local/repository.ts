@@ -11,6 +11,13 @@ export interface LocalAudio extends AudioOption {
   siliconVoices?: Record<string, string>;
 }
 export interface Character {
+  id?: string;
+  castingGender?: string;
+  genderSource?: string;
+  genderEvidence?: string;
+  voiceDescription?: string;
+  voiceProfileVersion?: number;
+  synthesisMode?: 'reference' | 'voiceDesign';
   name: string;
   aliases: string[];
   description?: string;

@@ -15,6 +15,7 @@ import {
   validateTtsConfig,
 } from './config';
 import {buildPlainSegments} from '../utils/article';
+import {castingGender, prepareVoiceDesign} from './voiceDesign';
 import {createCastingEngine} from './casting';
 import {
   nativeCall,
@@ -297,6 +298,8 @@ const configIdentity = (config: EngineConfig, plain = false, referenceAudioId?: 
         ? {mode: 'plain', version: 1, provider: config.provider, tts: config[config.provider], referenceAudioId}
         : {
             llm: config.llm,
+            voiceDesignVersion: 1,
+            mimoTTS: config.mimoTTS,
             prescan: config.prescan,
             provider: config.provider,
             tts: config[config.provider],
@@ -373,7 +376,12 @@ function mergeCharacters(project: LocalProject, value: any): void {
     project.characters[name] = {
       ...previous,
       name,
-      gender: character.gender,
+      id: previous?.id || createTextHash(name),
+      gender: ['male', 'female'].includes(character.gender) ? character.gender : previous?.gender || 'unknown',
+      castingGender: character.castingGender || previous?.castingGender,
+      genderSource: character.genderSource || previous?.genderSource,
+      genderEvidence: character.genderEvidence || previous?.genderEvidence,
+      voiceDescription: previous?.voiceDescription || (typeof character.voiceDescription === 'string' ? character.voiceDescription.slice(0, 500) : undefined),
       description: character.description,
       aliases: [
         ...new Set([
@@ -412,8 +420,21 @@ function normalizeCards(value: any, project: LocalProject): ListenSegment[] {
     throw new Error('解析结果缺少有效对白。');
   }
   const aliases = new Map<string, string>();
+  const ambiguousAliases = new Set<string>();
   for (const character of Object.values(project.characters)) {
     for (const alias of character.aliases) {
+      if (ambiguousAliases.has(alias)) {
+        continue;
+      }
+      if (aliases.has(alias) && aliases.get(alias) !== character.name) {
+        aliases.delete(alias);
+        ambiguousAliases.add(alias);
+        continue;
+      }
+      // 通用职业不能成为跨场景的全局唯一别名。
+      if (/^(狱卒|掌柜|司机|前台|服务员|导购|路人|士兵|守卫)$/.test(alias)) {
+        continue;
+      }
       aliases.set(alias, character.name);
     }
   }
@@ -443,12 +464,27 @@ function normalizeCards(value: any, project: LocalProject): ListenSegment[] {
     if (!narration && !project.characters[role]) {
       project.characters[role] = {
         name: role,
+        id: createTextHash(role),
         aliases: [],
         gender: item.gender || 'unknown',
+        castingGender: item.castingGender,
+        genderSource: item.genderSource || 'unknown',
+        genderEvidence: item.genderEvidence,
+        voiceDescription: typeof item.voiceDescription === 'string' ? item.voiceDescription.slice(0, 500) : undefined,
       };
     }
     return {
       ...item,
+      roleId: narration ? 'narrator' : project.characters[role]?.id || createTextHash(role),
+      speechStyle: typeof item.speechStyle === 'string' ? item.speechStyle.slice(0, 300) : undefined,
+      gender: narration ? 'unknown' : ['male', 'female'].includes(item.gender) ? item.gender : project.characters[role]?.gender || 'unknown',
+      textGender: item.gender || project.characters[role]?.gender || 'unknown',
+      castingGender: narration ? undefined : castingGender({
+        gender: ['male', 'female'].includes(item.gender) ? item.gender : project.characters[role]?.gender,
+        castingGender: item.castingGender || project.characters[role]?.castingGender,
+      }),
+      genderSource: item.genderSource || project.characters[role]?.genderSource || 'systemDefault',
+      genderEvidence: item.genderEvidence || project.characters[role]?.genderEvidence,
       index,
       role,
       emotion:
@@ -614,7 +650,7 @@ async function run(task: Task): Promise<void> {
       const parsed = await callLlm(
         config.llm,
         parsePrompt(JSON.stringify(project.characters)),
-        task.payload.chapterText,
+        `当前章节号：${task.chapterIndex + 1}\n${task.payload.chapterText}`,
         config.advanced.llmTimeout,
         task.controller.signal,
         '当前章节正文解析',
@@ -652,14 +688,14 @@ async function run(task: Task): Promise<void> {
               : overrideId
               ? {id: overrideId, mode: 1}
               : undefined;
-            return {
+            return prepareVoiceDesign({
               ...card,
               index,
               missingEmotionPolicy: current.settings.missingEmotionPolicy,
               ...(manual || bound
                 ? {referenceAudio: manual || null, manualAssigned: true}
                 : {}),
-            };
+            }, current.characters[card.role || '']);
           },
         );
       });
@@ -981,6 +1017,22 @@ export async function regenerateSegments(
   if (!entry) {
     throw new Error('没有可重生成的章节。');
   }
+  // 旧章节重试时补齐新分流；已有音频与人工绑定不受影响。
+  const retryCasting = createCastingEngine(
+    {casting: project.casting, settings: project.settings},
+    await listAudio(), castingEnvironment(config),
+  );
+  const retryCards = plain ? entry.segments : retryCasting.autoAssignReferenceAudios({
+    parsedCards: entry.segments, projectName, provider: config.provider, chapterIndex,
+  }).cards;
+  entry.segments = entry.segments.map((segment, index) => {
+    if (!indexes.includes(index) || segment.manualAssigned || plain) {
+      return segment;
+    }
+    return prepareVoiceDesign({
+      ...segment, voiceAllocationType: retryCards[index]?.voiceAllocationType,
+    }, project.characters[segment.role || '']);
+  });
   const task: Task = {
     id: `edit_${Date.now()}`,
     projectName,
@@ -1020,6 +1072,8 @@ export async function regenerateSegments(
     await updateProject(projectName, current => {
       active(task);
       current.chapters[chapterIndex].taskId = task.id;
+      current.characters = project.characters;
+      current.casting = retryCasting.snapshot().casting;
     });
     await refreshNarratorReferences(task, indexes);
     for (const index of [...new Set(indexes)]) {

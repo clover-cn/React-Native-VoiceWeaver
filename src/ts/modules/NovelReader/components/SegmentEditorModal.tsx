@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {roleDisplayName} from '../utils/roleDisplayName';
 import {
   Modal,
   Platform,
@@ -125,6 +126,9 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
   const audioDropdownData = useMemo(
     () => [
       {label: '清除手动指定', value: '__clear__'},
+      ...(segment?.synthesisMode === 'voiceDesign'
+        ? [{label: '本句使用 MiMo 默认音色继续', value: '__mimo_default__'}]
+        : []),
       ...audioOptions
         .filter(item => !item.disabled)
         .map(item => ({
@@ -132,14 +136,17 @@ const SegmentEditorModal: React.FC<SegmentEditorModalProps> = ({
           value: item.id,
         })),
     ],
-    [audioOptions],
+    [audioOptions, segment?.synthesisMode],
   );
 
   const roleDropdownData = useMemo(
     () => [
       {label: '旁白', value: '旁白'},
-      ...availableRoles.map(item => ({
-        label: item,
+      ...availableRoles.map((item, index) => ({
+        label: roleDisplayName(item) + (availableRoles.some((other, i) =>
+          i !== index && roleDisplayName(other) === roleDisplayName(item))
+          ? `（角色${availableRoles.slice(0, index + 1).filter(other => roleDisplayName(other) === roleDisplayName(item)).length}）`
+          : ''),
         value: item,
       })),
     ],

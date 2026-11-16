@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { DiagnosticLog } from './DiagnosticLog';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { huks } from '@kit.UniversalKeystoreKit';
@@ -173,6 +174,9 @@ export class VoiceWeaverLocal {
       let data: Object | null = null;
       switch (p.operation) {
         case 'loadConfig': case 'saveConfig': data = await this.serializedConfig(p); break;
+        case 'logAppend': new DiagnosticLog(this.context).append(p.text); break;
+        case 'logRead': data = new DiagnosticLog(this.context).view(); break;
+        case 'logExport': data = await new DiagnosticLog(this.context).save(); break;
         case 'background': await GenerationBackground.update(this.context, 'generation', p.enabled); break;
         case 'read': { const path = this.path(p.key); data = fs.accessSync(path) ? util.TextDecoder.create('utf-8').decodeWithStream(this.read(path)) : null; break; }
         case 'write': this.atomic(this.path(p.key), new util.TextEncoder().encodeInto(p.text)); break;
@@ -248,6 +252,22 @@ export class VoiceWeaverLocal {
       hilog.error(0x0fff, 'VoiceWeaverLocal', '端侧操作失败 operation=%{public}s code=%{public}d', operation, safeCode);
       if (operation === 'request' && safeCode === 2300023) {
         return JSON.stringify({ success: false, error: '模型响应接收失败（2300023），可能超过响应大小限制或请求已中止，请检查响应大小和生成日志。' });
+      }
+      if (operation === 'request') {
+        let detail = String((error as BusinessError).message || '模型请求或音频响应解析失败');
+        try {
+          const request: LocalPayload = JSON.parse(raw) as LocalPayload;
+          const headers = request.headers || {};
+          for (const key of Object.keys(headers)) {
+            if (/key|token|authorization|secret/i.test(key) && headers[key]) {
+              detail = detail.split(headers[key]).join('[已隐藏]');
+              const token = headers[key].replace(/^Bearer\s+/i, '');
+              if (token) { detail = detail.split(token).join('[已隐藏]'); }
+            }
+          }
+        } catch (_) {}
+        detail = detail.replace(/https?:\/\/[^\s]+/gi, '[地址已隐藏]').replace(/sk-[\w-]+/g, '[已隐藏]').slice(0, 500);
+        return JSON.stringify({success: false, error: '模型请求失败（错误码 ' + safeCode + '）：' + detail});
       }
       return JSON.stringify({ success: false, error: '端侧操作失败（错误码 ' + safeCode + '），请检查配置、网络或可用存储空间' });
     }

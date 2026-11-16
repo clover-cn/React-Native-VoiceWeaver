@@ -2025,6 +2025,12 @@ const NovelReaderApp: React.FC = () => {
           role: segment.role,
           emotion: segment.emotion || 'neutral',
           text: segment.text || '',
+          synthesisMode: segment.synthesisMode,
+          voiceDesignFallback: segment.voiceDesignFallback,
+          voiceDescription: segment.voiceDescription,
+          voiceProfileVersion: segment.voiceProfileVersion,
+          speechStyle: segment.speechStyle,
+          voiceAllocationType: segment.voiceAllocationType,
           referenceAudio: getReferenceAudioConfig(segment),
           autoEmotionAudioMap: segment.autoEmotionAudioMap || undefined,
           autoAssignedVoiceActor: segment.autoAssignedVoiceActor || null,
@@ -2145,6 +2151,21 @@ const NovelReaderApp: React.FC = () => {
       }
 
       const currentSegment = segments[index];
+      if (currentSegment.synthesisMode === 'voiceDesign' &&
+          (payload.selectedAudioId === '__mimo_default__' || payload.selectedAudioId === null)) {
+        const next = segments.map((segment, i) => i === index ? {
+          ...segment, synthesisMode: 'voiceDesign' as const,
+          role: payload.role || segment.role, emotion: payload.emotion || 'neutral',
+          voiceDesignFallback: payload.selectedAudioId === '__mimo_default__', manualAssigned: false,
+          audioUrl: null, localAudioUrl: null, generationError: null,
+          cacheState: 'idle' as const, cacheKey: createSegmentCacheToken(),
+        } : segment);
+        stopPlayback();
+        await persistChapterEdits(next, [index]);
+        replaceSegments(next);
+        await autoRegenerateAfterSegmentEdit([index], null);
+        return;
+      }
       const normalizedBase = normalizeSegment(
         {
           ...currentSegment,

@@ -29,6 +29,13 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
   public void voiceWeaver(String payload, Callback callback) {
     try {
       JSONObject p = new JSONObject(payload);
+      if (p.optString("operation").equals("logExport")) {
+        io.execute(() -> {
+          try { pick("diagnosticExport", "text/plain", "voiceweaver-diagnostics.txt", DiagnosticLog.snapshot(getReactApplicationContext()), callback); }
+          catch (Exception error) { callback.invoke(json("success", false, "error", "读取诊断日志失败").toString()); }
+        });
+        return;
+      }
       if (p.optString("operation").equals("exportSave")) {
         String id = p.getString("id");
         String[] info = ChapterAudioExport.saveInfo(id);
@@ -46,7 +53,26 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
         if (error instanceof ChapterAudioExport.ExportError || error instanceof ReferenceRecorder.RecordingError) {
           callback.invoke(json("success", false, "error", error.getMessage()).toString()); return;
         }
-        callback.invoke("{\"success\":false,\"error\":\"端侧操作失败，请检查配置、网络或可用存储空间\"}");
+        String detail = error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
+        try {
+          JSONObject headers = new JSONObject(payload).optJSONObject("headers");
+          if (headers != null) {
+            java.util.Iterator<String> keys = headers.keys();
+            while (keys.hasNext()) {
+              String key = keys.next();
+              if (key.toLowerCase(java.util.Locale.ROOT).matches(".*(key|token|authorization|secret).*")) {
+                String secret = headers.optString(key);
+                if (!secret.isEmpty()) {
+                  detail = detail.replace(secret, "[已隐藏]");
+                  String token = secret.replaceFirst("(?i)^Bearer\\s+", "");
+                  if (!token.isEmpty()) detail = detail.replace(token, "[已隐藏]");
+                }
+              }
+            }
+          }
+        } catch (Exception ignored) {}
+        detail = detail.replaceAll("https?://[^\\s]+", "[地址已隐藏]").replaceAll("sk-[A-Za-z0-9_-]+", "[已隐藏]");
+        callback.invoke(json("success", false, "error", detail.substring(0, Math.min(500, detail.length()))).toString());
       }
     });
   }
@@ -99,7 +125,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
             data == null ||
             data.getData() == null
           ) {
-            cb.invoke(kind.equals("audioExport") ? json("success", true, "data", false).toString() : json("success", false, "cancelled", true).toString());
+            cb.invoke((kind.equals("audioExport") || kind.equals("diagnosticExport")) ? json("success", true, "data", false).toString() : json("success", false, "cancelled", true).toString());
             return;
           }
           Uri uri = data.getData();
@@ -217,7 +243,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
       try { return json("success", true, "data", ChapterAudioExport.save(getReactApplicationContext(), text, uri)); }
       catch (Exception error) { return json("success", false, "error", "保存音频失败，请检查目标位置及剩余空间"); }
     }
-    if (kind.equals("export")) {
+    if (kind.equals("export") || kind.equals("diagnosticExport")) {
       try (
         OutputStream output = getReactApplicationContext()
           .getContentResolver()
@@ -312,7 +338,7 @@ public final class BridgeModule extends ReactContextBaseJavaModule {
         pickerKind = kind;
         exportText = content;
         Intent intent = new Intent(
-          (kind.equals("export") || kind.equals("audioExport"))
+          (kind.equals("export") || kind.equals("audioExport") || kind.equals("diagnosticExport"))
             ? Intent.ACTION_CREATE_DOCUMENT
             : Intent.ACTION_OPEN_DOCUMENT
         )

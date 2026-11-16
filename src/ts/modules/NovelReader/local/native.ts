@@ -1,7 +1,35 @@
 import {BridgeTurboModule} from '../../../../../turboModules';
+import {AppState} from 'react-native';
+import {safeLogText} from './logSafety';
+
+let pendingLogs: string[] = [];
+let logTimer: ReturnType<typeof setTimeout> | undefined;
+let logWrites: Promise<void> = Promise.resolve();
+
+/** 日志写入失败不递归记日志，也不影响配音任务。 */
+export function flushDiagnosticLogs(): Promise<void> {
+  if (logTimer) { clearTimeout(logTimer); logTimer = undefined; }
+  const text = pendingLogs.join('');
+  pendingLogs = [];
+  if (!text) { return logWrites; }
+  logWrites = logWrites.catch(() => undefined).then(async () => {
+    await nativeCall('logAppend', {text}).catch(() => undefined);
+  });
+  return logWrites;
+}
+
+export function diagnosticLog(level: string, event: string, detail: object | string): void {
+  const entry = `${new Date().toISOString()} [${level}] ${event} ${safeLogText(typeof detail === 'string' ? detail : JSON.stringify(detail))}\n`;
+  pendingLogs.push(entry);
+  if (pendingLogs.length >= 8) { void flushDiagnosticLogs(); }
+  else if (!logTimer) { logTimer = setTimeout(() => { void flushDiagnosticLogs(); }, 1000); }
+}
+AppState.addEventListener('change', state => { if (state !== 'active') { void flushDiagnosticLogs(); } });
 
 /** 仅接收已脱敏的错误摘要，同时输出到调试控制台和原生日志。 */
 export function logModelFailure(message: string): void {
+  message = safeLogText(message);
+  diagnosticLog('ERROR', 'model.failure', message);
   console.warn('[VoiceWeaverLocal] 模型请求失败', message);
   try {
     BridgeTurboModule?.hiLog?.('warn', 'VoiceWeaverLocal', message);
@@ -12,6 +40,7 @@ export function logModelFailure(message: string): void {
 
 /** 仅记录阶段与计数等运行信息，不包含小说正文、请求头或密钥。 */
 export function logModelProgress(message: string): void {
+  diagnosticLog('INFO', 'model.progress', message);
   console.log('[VoiceWeaverLocal] 生成进度', message);
   try {
     BridgeTurboModule?.hiLog?.('info', 'VoiceWeaverLocal', message);

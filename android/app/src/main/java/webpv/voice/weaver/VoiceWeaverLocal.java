@@ -101,6 +101,8 @@ final class VoiceWeaverLocal {
   private Object executeInternal(JSONObject p) throws Exception {
     String operation = p.getString("operation");
     switch (operation) {
+      case "logAppend": DiagnosticLog.append(context, p.getString("text")); return JSONObject.NULL;
+      case "logRead": return DiagnosticLog.view(context);
       case "loadConfig": synchronized (configLock) { return config(p, false); }
       case "saveConfig": synchronized (configLock) { return config(p, true); }
       case "background": {

@@ -145,7 +145,7 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
           emotions: {},
         };
       }
-      const g = normalizeGender(item.gender);
+      const g = normalizeGender(item.castingGender || item.gender);
       stats[item.role][g] += 1;
       stats[item.role].dialogueCount += 1;
       const emotion = normalizeEmotion(item.emotion);
@@ -560,7 +560,7 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
       const chapter = group.chapterStats[0];
       chapter.dialogueCount += 1;
       chapter.mentionCount += 1;
-      const gender = normalizeGender(item.gender);
+      const gender = normalizeGender(item.castingGender || item.gender);
       if (gender !== 'unknown') {
         group.gender = gender;
       }
@@ -831,11 +831,13 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
     casting,
     actorPool,
     readerSettings = DEFAULT_READER_SETTINGS,
+    roleClassifications = {},
   ) {
     const output = [];
 
     for (const item of cards || []) {
       const card = {...item};
+      card.voiceAllocationType = roleClassifications[card.role] || card.voiceAllocationType;
 
       if (card.type === 'narration' || card.role === '旁白') {
         if (casting.narratorAudioId) {
@@ -1063,6 +1065,11 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
 
     for (const role of orderedRoles) {
       const roleClass = roleClassifications[role];
+      // 临时角色交由文本设计音色，不再占用参考音频池。
+      if (roleClass === 'temporary' && !finalRoleAssignments[role]?.manualOverride) {
+        delete finalRoleAssignments[role];
+        continue;
+      }
       const roleStats = getRoleStats(casting, role);
       const roleGender = roleGenders[role] || roleStats?.gender || 'unknown';
       const currentAssignment = finalRoleAssignments[role] || null;
@@ -1169,6 +1176,7 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
         casting,
         actorPool,
         readerSettings,
+        roleClassifications,
       ),
       autoCasting: {
         enabled: true,
