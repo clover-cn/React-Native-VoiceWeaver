@@ -8,23 +8,55 @@ let logWrites: Promise<void> = Promise.resolve();
 
 /** 日志写入失败不递归记日志，也不影响配音任务。 */
 export function flushDiagnosticLogs(): Promise<void> {
-  if (logTimer) { clearTimeout(logTimer); logTimer = undefined; }
+  if (logTimer) {
+    clearTimeout(logTimer);
+    logTimer = undefined;
+  }
   const text = pendingLogs.join('');
   pendingLogs = [];
-  if (!text) { return logWrites; }
-  logWrites = logWrites.catch(() => undefined).then(async () => {
-    await nativeCall('logAppend', {text}).catch(() => undefined);
-  });
+  if (!text) {
+    return logWrites;
+  }
+  logWrites = logWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await nativeCall('logAppend', {text}).catch(() => undefined);
+    });
   return logWrites;
 }
 
-export function diagnosticLog(level: string, event: string, detail: object | string): void {
-  const entry = `${new Date().toISOString()} [${level}] ${event} ${safeLogText(typeof detail === 'string' ? detail : JSON.stringify(detail))}\n`;
-  pendingLogs.push(entry);
-  if (pendingLogs.length >= 8) { void flushDiagnosticLogs(); }
-  else if (!logTimer) { logTimer = setTimeout(() => { void flushDiagnosticLogs(); }, 1000); }
+/** 清空待写缓冲与端侧诊断日志文件。 */
+export async function clearDiagnosticLogs(): Promise<void> {
+  if (logTimer) {
+    clearTimeout(logTimer);
+    logTimer = undefined;
+  }
+  pendingLogs = [];
+  await nativeCall('logClear');
 }
-AppState.addEventListener('change', state => { if (state !== 'active') { void flushDiagnosticLogs(); } });
+
+export function diagnosticLog(
+  level: string,
+  event: string,
+  detail: object | string,
+): void {
+  const entry = `${new Date().toISOString()} [${level}] ${event} ${safeLogText(
+    typeof detail === 'string' ? detail : JSON.stringify(detail),
+  )}\n`;
+  pendingLogs.push(entry);
+  if (pendingLogs.length >= 8) {
+    void flushDiagnosticLogs();
+  } else if (!logTimer) {
+    logTimer = setTimeout(() => {
+      void flushDiagnosticLogs();
+    }, 1000);
+  }
+}
+AppState.addEventListener('change', state => {
+  if (state !== 'active') {
+    void flushDiagnosticLogs();
+  }
+});
 
 /** 仅接收已脱敏的错误摘要，同时输出到调试控制台和原生日志。 */
 export function logModelFailure(message: string): void {

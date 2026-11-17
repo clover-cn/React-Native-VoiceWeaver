@@ -103,6 +103,7 @@ final class VoiceWeaverLocal {
     switch (operation) {
       case "logAppend": DiagnosticLog.append(context, p.getString("text")); return JSONObject.NULL;
       case "logRead": return DiagnosticLog.view(context);
+      case "logClear": DiagnosticLog.clear(context); return JSONObject.NULL;
       case "loadConfig": synchronized (configLock) { return config(p, false); }
       case "saveConfig": synchronized (configLock) { return config(p, true); }
       case "background": {

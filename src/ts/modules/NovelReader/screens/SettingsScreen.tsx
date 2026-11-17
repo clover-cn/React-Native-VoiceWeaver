@@ -23,10 +23,9 @@ import {
   validateConfig,
   validateTtsConfig,
 } from '../local/config';
-import {nativeCall, flushDiagnosticLogs} from '../local/native';
 import {callLlm, generateSpeech} from '../local/providers';
 import {listAudio} from '../local/repository';
-import {clearGeneratedAudio, isGenerationBusy} from '../local/engine';
+import LocalStorageSection from '../components/LocalStorageSection';
 
 interface Props {
   canClearStorage: boolean;
@@ -70,18 +69,7 @@ export default function SettingsScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(false);
-  const [size, setSize] = useState(0);
   const [preview, setPreview] = useState('');
-  const [logs, setLogs] = useState<{text: string; bytes: number; path: string} | null>(null);
-  const readLogs = async () => {
-    setBusy(true);
-    try {
-      await flushDiagnosticLogs();
-      setLogs(await nativeCall('logRead'));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '读取日志失败，请确认已安装新版应用。');
-    } finally { setBusy(false); }
-  };
   const dirty = JSON.stringify(config) !== saved;
   useEffect(() => {
     if (!visible) {
@@ -109,13 +97,6 @@ export default function SettingsScreen({
           setLoading(false);
         }
       });
-    nativeCall<number>('stats')
-      .then(value => {
-        if (live) {
-          setSize(value);
-        }
-      })
-      .catch(() => undefined);
     return () => {
       live = false;
     };
@@ -421,13 +402,18 @@ export default function SettingsScreen({
                 {modelFields(config.provider)}
                 {config.provider !== 'mimoTTS' && (
                   <>
-                    <Text style={styles.label}>MiMo 共用配置（用于路人配音）</Text>
+                    <Text style={styles.label}>
+                      MiMo 共用配置（用于路人配音）
+                    </Text>
                     {field('mimoTTS', 'endpoint', 'MiMo API 完整端点')}
                     {field('mimoTTS', 'apiKey', 'MiMo API Key')}
                     {field('mimoTTS', 'sampleRate', 'MiMo PCM 采样率', true)}
                   </>
                 )}
-                <Text style={styles.hint}>路人自动使用文本设计模型，与 MiMo 克隆配音共用 API 地址、Key 和采样率，无需参考录音，关闭文本润色。</Text>
+                <Text style={styles.hint}>
+                  路人自动使用文本设计模型，与 MiMo 克隆配音共用 API 地址、Key
+                  和采样率，无需参考录音，关闭文本润色。
+                </Text>
                 {config.provider === 'mimoTTS' && (
                   <>
                     {field(
@@ -509,8 +495,16 @@ export default function SettingsScreen({
                       '语音生成超时（毫秒）',
                       true,
                     )}
-                    {field('advanced', 'indexTtsWaitHours', 'IndexTTS 任务等待上限（小时，1–24）', true)}
-                    <Text style={styles.hint}>IndexTTS 每次网络请求等待 30 秒，长任务单独计时；中断后恢复原任务。</Text>
+                    {field(
+                      'advanced',
+                      'indexTtsWaitHours',
+                      'IndexTTS 任务等待上限（小时，1–24）',
+                      true,
+                    )}
+                    <Text style={styles.hint}>
+                      IndexTTS 每次网络请求等待 30
+                      秒，长任务单独计时；中断后恢复原任务。
+                    </Text>
                     {field(
                       'advanced',
                       'coreMinChapters',
@@ -540,65 +534,12 @@ export default function SettingsScreen({
               </>
             )}
             {group === 'storage' && (
-              <>
-                <Text style={styles.label}>诊断日志（最多 5 MB，自动保留最近记录）</Text>
-                <TouchableOpacity style={styles.button} disabled={busy} onPress={() => { void readLogs(); }}>
-                  <Text style={styles.link}>{logs ? '刷新日志' : '查看诊断日志'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.button} disabled={busy} onPress={async () => {
-                  setBusy(true);
-                  try {
-                    await flushDiagnosticLogs();
-                    const savedLog = await nativeCall<boolean>('logExport');
-                    if (savedLog !== false) { Alert.alert('导出完成', '诊断日志已保存为 TXT 文件。'); }
-                  } catch (e) { setError(e instanceof Error ? e.message : '日志导出失败'); }
-                  finally { setBusy(false); }
-                }}>
-                  <Text style={styles.link}>导出日志为 TXT</Text>
-                </TouchableOpacity>
-                {logs && <>
-                  <Text style={styles.hint}>位置：{logs.path}{'\n'}当前 {(logs.bytes / 1024).toFixed(1)} KB；下方显示最近 128 KB，导出包含全部保留记录。</Text>
-                  <ScrollView style={{maxHeight: 360}} nestedScrollEnabled>
-                    <Text selectable style={styles.hint}>{logs.text || '暂无日志。请重新生成出错段落后刷新。'}</Text>
-                  </ScrollView>
-                </>}
-                <Text style={styles.label}>
-                  生成音频占用：{(size / 1024 / 1024).toFixed(1)} MB
-                </Text>
-                <TouchableOpacity
-                  style={styles.button}
-                  disabled={busy}
-                  onPress={() =>
-                    Alert.alert(
-                      '清理生成音频',
-                      '将清理本机生成音频，参考录音和阅读进度保留。请先停止播放与生成。',
-                      [
-                        {text: '取消', style: 'cancel'},
-                        {
-                          text: '清理',
-                          style: 'destructive',
-                          onPress: async () => {
-                            if (!canClearStorage || isGenerationBusy()) {
-                              setError('请先停止播放和生成任务，再清理音频。');
-                              return;
-                            }
-                            setBusy(true);
-                            try {
-                              await clearGeneratedAudio();
-                              setSize(await nativeCall<number>('stats'));
-                            } catch (_) {
-                              setError('清理失败，请停止播放与生成后重试。');
-                            } finally {
-                              setBusy(false);
-                            }
-                          },
-                        },
-                      ],
-                    )
-                  }>
-                  <Text style={styles.link}>清理生成音频</Text>
-                </TouchableOpacity>
-              </>
+              <LocalStorageSection
+                canClearStorage={canClearStorage}
+                busy={busy}
+                setBusy={setBusy}
+                setError={setError}
+              />
             )}
             {dirty && !!saved && (
               <Text style={styles.hint}>有未保存的修改</Text>

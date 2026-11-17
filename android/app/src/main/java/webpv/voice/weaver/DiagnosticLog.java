@@ -41,4 +41,10 @@ final class DiagnosticLog {
   static synchronized String snapshot(Context context) throws Exception {
     return new String(tail(file(context), LIMIT), StandardCharsets.UTF_8);
   }
+  static synchronized void clear(Context context) throws Exception {
+    File target = file(context);
+    if (target.exists()) {
+      target.delete();
+    }
+  }
 }

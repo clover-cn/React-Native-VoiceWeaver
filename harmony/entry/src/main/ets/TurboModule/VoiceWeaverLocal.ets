@@ -177,6 +177,7 @@ export class VoiceWeaverLocal {
         case 'logAppend': new DiagnosticLog(this.context).append(p.text); break;
         case 'logRead': data = new DiagnosticLog(this.context).view(); break;
         case 'logExport': data = await new DiagnosticLog(this.context).save(); break;
+        case 'logClear': new DiagnosticLog(this.context).clear(); break;
         case 'background': await GenerationBackground.update(this.context, 'generation', p.enabled); break;
         case 'read': { const path = this.path(p.key); data = fs.accessSync(path) ? util.TextDecoder.create('utf-8').decodeWithStream(this.read(path)) : null; break; }
         case 'write': this.atomic(this.path(p.key), new util.TextEncoder().encodeInto(p.text)); break;

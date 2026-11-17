@@ -50,4 +50,9 @@ export class DiagnosticLog {
     finally { fs.closeSync(target); }
     return true;
   }
+  clear(): void {
+    if (fs.accessSync(this.path)) {
+      fs.unlinkSync(this.path);
+    }
+  }
 }
