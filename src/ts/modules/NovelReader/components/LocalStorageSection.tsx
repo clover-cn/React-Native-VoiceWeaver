@@ -349,7 +349,7 @@ export default function LocalStorageSection({
                 onChangeText={setSearchQuery}
                 autoCapitalize="none"
                 autoCorrect={false}
-                clearButtonMode="while-editing"
+                clearButtonMode="never"
               />
               {!!searchQuery && (
                 <TouchableOpacity
