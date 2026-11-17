@@ -26,6 +26,7 @@ import {
 import {callLlm, generateSpeech} from '../local/providers';
 import {listAudio} from '../local/repository';
 import LocalStorageSection from '../components/LocalStorageSection';
+import TtsSettingsSection from '../components/TtsSettingsSection';
 
 interface Props {
   canClearStorage: boolean;
@@ -377,72 +378,13 @@ export default function SettingsScreen({
               </>
             )}
             {group === 'tts' && (
-              <>
-                {(['siliconflow', 'mimoTTS', 'indextts2'] as const).map(
-                  provider => (
-                    <TouchableOpacity
-                      key={provider}
-                      style={styles.row}
-                      onPress={() =>
-                        setConfig(current => ({...current, provider}))
-                      }>
-                      <Text style={styles.label}>
-                        {provider === 'mimoTTS'
-                          ? 'Mimo'
-                          : provider === 'siliconflow'
-                          ? 'SiliconFlow'
-                          : 'IndexTTS2'}
-                      </Text>
-                      <Text style={styles.link}>
-                        {config.provider === provider ? '✓' : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  ),
-                )}
-                {modelFields(config.provider)}
-                {config.provider !== 'mimoTTS' && (
-                  <>
-                    <Text style={styles.label}>
-                      MiMo 共用配置（用于路人配音）
-                    </Text>
-                    {field('mimoTTS', 'endpoint', 'MiMo API 完整端点')}
-                    {field('mimoTTS', 'apiKey', 'MiMo API Key')}
-                    {field('mimoTTS', 'sampleRate', 'MiMo PCM 采样率', true)}
-                  </>
-                )}
-                <Text style={styles.hint}>
-                  路人自动使用文本设计模型，与 MiMo 克隆配音共用 API 地址、Key
-                  和采样率，无需参考录音，关闭文本润色。
-                </Text>
-                {config.provider === 'mimoTTS' && (
-                  <>
-                    {field(
-                      'mimoTTS',
-                      'stylePrompt',
-                      'Mimo 风格指令（可选）',
-                      false,
-                      true,
-                    )}
-                    <Text style={styles.hint}>
-                      可留空，不额外指定朗读风格。
-                    </Text>
-                    {field('mimoTTS', 'sampleRate', 'Mimo PCM 采样率', true)}
-                  </>
-                )}
-                {config.provider === 'siliconflow' &&
-                  field('siliconflow', 'uploadEndpoint', '音色上传完整端点')}
-                {config.provider === 'indextts2' && (
-                  <Text style={styles.hint}>
-                    连接你自己的 IndexTTS2 模型服务，模型不在手机运行。
-                  </Text>
-                )}
-                <TouchableOpacity
-                  style={styles.button}
-                  onPress={() => test(true)}
-                  disabled={busy}>
-                  <Text style={styles.link}>测试语音</Text>
-                </TouchableOpacity>
-              </>
+              <TtsSettingsSection
+                config={config}
+                update={update}
+                setConfig={setConfig}
+                onTest={() => test(true)}
+                busy={busy}
+              />
             )}
             {group === 'generation' && (
               <>
