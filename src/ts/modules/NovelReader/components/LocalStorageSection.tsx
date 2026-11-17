@@ -99,7 +99,6 @@ export default function LocalStorageSection({
   const [audioSize, setAudioSize] = useState(0);
   const [activeLevel, setActiveLevel] = useState<LogLevel>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showPath, setShowPath] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   // 初始化加载音频占用和诊断日志
@@ -292,157 +291,165 @@ export default function LocalStorageSection({
 
   const logKb = logs ? (logs.bytes / 1024).toFixed(1) : '0.0';
   const audioMb = (audioSize / 1024 / 1024).toFixed(1);
+  const hasLogs = (logs?.bytes || 0) > 0 && parsedLines.length > 0;
 
   return (
     <View style={styles.container}>
       {/* 卡片 1：诊断日志模块 */}
       <View style={styles.card}>
+        {/* 卡片头部：左侧标题与副标题，右侧容量与刷新操作 */}
         <View style={styles.cardHeader}>
           <View style={styles.headerLeft}>
             <View style={styles.iconTag}>
               <Text style={styles.iconTagText}>LOG</Text>
             </View>
-            <View>
+            <View style={styles.headerTitles}>
               <Text style={styles.cardTitle}>运行诊断日志</Text>
-              <Text style={styles.cardSubtitle}>
-                上限 5 MB · 自动轮转保留最新记录
+              <Text style={styles.cardSubtitle} numberOfLines={1}>
+                存储上限 5 MB
               </Text>
             </View>
           </View>
-          <View style={styles.badge}>
-            <View
-              style={[
-                styles.statusDot,
-                logs?.bytes ? styles.statusDotActive : styles.statusDotInactive,
-              ]}
-            />
-            <Text style={styles.badgeText}>{logKb} KB</Text>
+          <View style={styles.headerRight}>
+            <View style={styles.badge}>
+              <View
+                style={[
+                  styles.statusDot,
+                  hasLogs ? styles.statusDotActive : styles.statusDotInactive,
+                ]}
+              />
+              <Text style={styles.badgeText}>{logKb} KB</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.refreshBtn}
+              disabled={busy || loadingLogs}
+              activeOpacity={0.7}
+              onPress={() => {
+                readLogs();
+              }}>
+              {loadingLogs ? (
+                <ActivityIndicator size="small" color="#B45309" />
+              ) : (
+                <Text style={styles.refreshBtnText}>刷新</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* 操作工具栏 */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionBtnPrimary]}
-            disabled={busy || loadingLogs}
-            onPress={() => {
-              readLogs();
-            }}>
-            {loadingLogs ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <Text style={styles.actionBtnPrimaryText}>刷新</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionBtn}
-            disabled={busy || !logs?.bytes}
-            onPress={handleCopyLogs}>
-            <Text
-              style={[
-                styles.actionBtnText,
-                !logs?.bytes && styles.actionBtnTextDisabled,
-              ]}>
-              复制全部
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionBtn}
-            disabled={busy || !logs?.bytes}
-            onPress={() => {
-              handleExportLogs();
-            }}>
-            <Text
-              style={[
-                styles.actionBtnText,
-                !logs?.bytes && styles.actionBtnTextDisabled,
-              ]}>
-              导出 TXT
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionBtnDanger]}
-            disabled={busy || !logs?.bytes}
-            onPress={handleClearLogs}>
-            <Text
-              style={[
-                styles.actionBtnDangerText,
-                !logs?.bytes && styles.actionBtnTextDisabled,
-              ]}>
-              清空日志
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* 过滤 Tabs 与搜索框 */}
-        <View style={styles.filterSection}>
-          <View style={styles.tabsRow}>
-            {(
-              [
-                {key: 'ALL', label: `全部 (${counts.ALL})`},
-                {key: 'ERROR', label: `错误 (${counts.ERROR})`},
-                {key: 'WARN', label: `警告 (${counts.WARN})`},
-                {key: 'INFO', label: `信息 (${counts.INFO})`},
-              ] as const
-            ).map(tab => {
-              const active = activeLevel === tab.key;
-              const isError = tab.key === 'ERROR' && counts.ERROR > 0;
-              return (
+        {/* 仅在有日志时呈现轻量化的搜索与分级 Chips，避免无日志时堆叠控件产生拥挤感 */}
+        {hasLogs && (
+          <View style={styles.filterSection}>
+            {/* 紧凑搜索栏 */}
+            <View style={styles.searchBar}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="搜索事件、模型名、关键词..."
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+                autoCorrect={false}
+                clearButtonMode="while-editing"
+              />
+              {!!searchQuery && (
                 <TouchableOpacity
-                  key={tab.key}
-                  style={[
-                    styles.tabItem,
-                    active && styles.tabItemActive,
-                    isError && !active && styles.tabItemErrorOutline,
-                  ]}
-                  onPress={() => setActiveLevel(tab.key)}>
-                  <Text
-                    style={[
-                      styles.tabItemText,
-                      active && styles.tabItemTextActive,
-                      isError && !active && styles.tabItemTextError,
-                    ]}>
-                    {tab.label}
-                  </Text>
+                  onPress={() => setSearchQuery('')}
+                  hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+                  <Text style={styles.searchClear}>✕</Text>
                 </TouchableOpacity>
-              );
-            })}
-          </View>
+              )}
+            </View>
 
-          {/* 关键词搜索框 */}
-          <View style={styles.searchBar}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="搜索事件、模型名、错误关键词..."
-              placeholderTextColor="#9CA3AF"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCapitalize="none"
-              autoCorrect={false}
-              clearButtonMode="while-editing"
-            />
-            {!!searchQuery && (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-                <Text style={styles.searchClear}>✕</Text>
-              </TouchableOpacity>
-            )}
+            {/* 轻量分级 Chips */}
+            <View style={styles.tabsRow}>
+              {(
+                [
+                  {key: 'ALL', label: `全部 (${counts.ALL})`},
+                  {key: 'ERROR', label: `错误 (${counts.ERROR})`},
+                  {key: 'WARN', label: `警告 (${counts.WARN})`},
+                  {key: 'INFO', label: `信息 (${counts.INFO})`},
+                ] as const
+              ).map(tab => {
+                const active = activeLevel === tab.key;
+                const isError = tab.key === 'ERROR' && counts.ERROR > 0;
+                return (
+                  <TouchableOpacity
+                    key={tab.key}
+                    style={[
+                      styles.tabItem,
+                      active && styles.tabItemActive,
+                      isError && !active && styles.tabItemErrorOutline,
+                    ]}
+                    onPress={() => setActiveLevel(tab.key)}>
+                    <Text
+                      style={[
+                        styles.tabItemText,
+                        active && styles.tabItemTextActive,
+                        isError && !active && styles.tabItemTextError,
+                      ]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
-        </View>
+        )}
 
-        {/* 现代终端风格日志视窗 */}
+        {/* 现代终端风格日志视窗，内置专业控制台工具栏（复制、导出、清空） */}
         <View style={styles.terminalContainer}>
           <View style={styles.terminalHeader}>
-            <View style={styles.terminalDots}>
-              <View style={[styles.terminalDot, styles.dotRed]} />
-              <View style={[styles.terminalDot, styles.dotYellow]} />
-              <View style={[styles.terminalDot, styles.dotGreen]} />
+            <View style={styles.terminalHeaderLeft}>
+              <View style={styles.terminalDots}>
+                <View style={[styles.terminalDot, styles.dotRed]} />
+                <View style={[styles.terminalDot, styles.dotYellow]} />
+                <View style={[styles.terminalDot, styles.dotGreen]} />
+              </View>
             </View>
-            <Text style={styles.terminalFormat}>UTF-8</Text>
+
+            {/* 控制台内置操作组，极简集成，无需在外部排布大按钮 */}
+            <View style={styles.terminalActions}>
+              <TouchableOpacity
+                disabled={!hasLogs || busy}
+                onPress={handleCopyLogs}
+                hitSlop={{top: 8, bottom: 8, left: 6, right: 6}}>
+                <Text
+                  style={[
+                    styles.termActionText,
+                    !hasLogs && styles.termActionDisabled,
+                  ]}>
+                  复制
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.termDivider}>|</Text>
+              <TouchableOpacity
+                disabled={!hasLogs || busy}
+                onPress={() => {
+                  handleExportLogs();
+                }}
+                hitSlop={{top: 8, bottom: 8, left: 6, right: 6}}>
+                <Text
+                  style={[
+                    styles.termActionText,
+                    !hasLogs && styles.termActionDisabled,
+                  ]}>
+                  导出
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.termDivider}>|</Text>
+              <TouchableOpacity
+                disabled={!hasLogs || busy}
+                onPress={handleClearLogs}
+                hitSlop={{top: 8, bottom: 8, left: 6, right: 6}}>
+                <Text
+                  style={[
+                    styles.termActionDanger,
+                    !hasLogs && styles.termActionDisabled,
+                  ]}>
+                  清空
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <ScrollView
@@ -520,6 +527,9 @@ export default function LocalStorageSection({
               <Text style={styles.cardSubtitle}>预取与合成的离线音频片段</Text>
             </View>
           </View>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{audioMb} MB</Text>
+          </View>
         </View>
 
         <View style={styles.audioStorageBox}>
@@ -577,6 +587,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flex: 1,
+    marginRight: 8,
+  },
+  headerTitles: {
+    flex: 1,
   },
   iconTag: {
     width: 38,
@@ -607,14 +621,19 @@ const styles = StyleSheet.create({
     color: '#78716C',
     marginTop: 2,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F5F5F4',
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 12,
-    gap: 6,
+    gap: 5,
   },
   statusDot: {
     width: 6,
@@ -628,50 +647,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#9CA3AF',
   },
   badgeText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#44403C',
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  actionBtn: {
-    flex: 1,
-    backgroundColor: '#F5F5F4',
-    paddingVertical: 10,
-    borderRadius: 10,
+  refreshBtn: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E7E5E4',
   },
-  actionBtnPrimary: {
-    backgroundColor: '#B45309',
-    borderColor: '#92400E',
-  },
-  actionBtnPrimaryText: {
-    color: '#FFFFFF',
-    fontSize: 13,
+  refreshBtnText: {
+    fontSize: 12,
     fontWeight: '600',
-  },
-  actionBtnText: {
-    color: '#44403C',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  actionBtnTextDisabled: {
-    color: '#A8A29E',
-  },
-  actionBtnDanger: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  actionBtnDangerText: {
-    color: '#DC2626',
-    fontSize: 13,
-    fontWeight: '600',
+    color: '#B45309',
   },
   filterSection: {
     marginBottom: 12,
@@ -679,12 +671,13 @@ const styles = StyleSheet.create({
   },
   tabsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
   },
   tabItem: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
     backgroundColor: '#F5F5F4',
   },
   tabItemActive: {
@@ -696,7 +689,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF2F2',
   },
   tabItemText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
     color: '#57534E',
   },
@@ -715,12 +708,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E7E5E4',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    height: 38,
+    paddingHorizontal: 9,
+    height: 34,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     color: '#1C1917',
     paddingVertical: 0,
   },
@@ -737,21 +730,27 @@ const styles = StyleSheet.create({
     borderColor: '#27272A',
   },
   terminalHeader: {
-    height: 34,
+    height: 36,
     backgroundColor: '#27272A',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 12,
   },
+  terminalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
   terminalDots: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 5,
   },
   terminalDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   dotRed: {
     backgroundColor: '#EF4444',
@@ -762,10 +761,29 @@ const styles = StyleSheet.create({
   dotGreen: {
     backgroundColor: '#10B981',
   },
-  terminalFormat: {
-    fontSize: 10,
-    color: '#71717A',
+  terminalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  termActionText: {
+    fontSize: 11,
+    color: '#D4D4D8',
     fontWeight: '500',
+    fontFamily: monoFont,
+  },
+  termActionDanger: {
+    fontSize: 11,
+    color: '#F87171',
+    fontWeight: '600',
+    fontFamily: monoFont,
+  },
+  termActionDisabled: {
+    color: '#52525B',
+  },
+  termDivider: {
+    fontSize: 10,
+    color: '#3F3F46',
   },
   terminalScroll: {
     maxHeight: 340,
@@ -882,8 +900,14 @@ const styles = StyleSheet.create({
     color: '#78716C',
     lineHeight: 18,
   },
+  actionBtn: {
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   clearAudioBtn: {
     backgroundColor: '#FFF1F2',
+    borderWidth: 1,
     borderColor: '#FECDD3',
     paddingVertical: 12,
   },
