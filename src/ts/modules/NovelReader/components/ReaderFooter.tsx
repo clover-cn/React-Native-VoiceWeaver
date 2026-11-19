@@ -6,9 +6,11 @@ import {
   StyleSheet,
   ActivityIndicator,
   SafeAreaView,
+  Image,
 } from 'react-native';
 import {PlaybackProgressContext} from '../contexts/ActiveSegContext';
 import PlaybackRateControl from './PlaybackRateControl';
+import {AppImages} from '../../../../assets';
 
 interface ReaderFooterProps {
   showChapterControls: boolean;
@@ -30,7 +32,7 @@ interface ReaderFooterProps {
   onOpenPreparation?: () => void;
 }
 
-// 模块级常量与工具函数 —— 单行 4 项，超出自动换行
+// 模块级常量：6 项功能，3 列 × 2 行完美对称
 const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
   {label: '下载本章语音', id: 'download'},
   {label: '重新生成', id: 'regenerate'},
@@ -40,19 +42,74 @@ const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
   {label: '书籍详情', id: 'info'},
 ];
 
-// 统一温润有声意象：
-// 🎧 耳机替代老式麦克风（更具聆听陪伴感）
-// 🌙 柔和月亮替代红白秒表（传达睡前伴眠定时心智）
-// 🌐 网络地球替代蓝块箭头（更具书源规则质感）
-// 📖 书卷替代单页纸
-// ℹ️ 详情信息
-const MENU_ICONS: Record<string, string> = {
-  audio: '🎧',
-  regenerate: '🔄',
-  sleep: '🌙',
-  source: '🌐',
-  flip: '📖',
-  info: 'ℹ️',
+/** 1. 下载语音：精致单色下载箭头与托盘 */
+const DownloadAudioIcon = memo(() => (
+  <View style={styles.iconBox}>
+    <View style={styles.downloadStem} />
+    <View style={styles.downloadArrow} />
+    <View style={styles.downloadBase} />
+  </View>
+));
+
+/** 2. 重新生成：单色琥珀暖金双向循环箭头 */
+const RegenerateIcon = memo(() => (
+  <Image
+    source={AppImages.refresh}
+    style={styles.refreshIconImg}
+    resizeMode="contain"
+  />
+));
+
+/** 3. 定时关闭：优雅纯净弦月 */
+const SleepTimerIcon = memo(() => (
+  <View style={styles.iconBox}>
+    <View style={styles.moonCrescent} />
+  </View>
+));
+
+/** 4. 书源切换：单色经纬线框地球仪 */
+const SourceGlobeIcon = memo(() => (
+  <View style={styles.globeBox}>
+    <View style={styles.globeEquator} />
+    <View style={styles.globeMeridian} />
+  </View>
+));
+
+/** 5. 翻页模式：单色对称开卷书册 */
+const FlipBookIcon = memo(() => (
+  <View style={styles.bookBox}>
+    <View style={[styles.bookPage, styles.bookPageLeft]} />
+    <View style={styles.bookSpine} />
+    <View style={[styles.bookPage, styles.bookPageRight]} />
+  </View>
+));
+
+/** 6. 书籍详情：单色圆环信息 i */
+const InfoDetailIcon = memo(() => (
+  <View style={styles.infoBox}>
+    <View style={styles.infoDot} />
+    <View style={styles.infoStem} />
+  </View>
+));
+
+/** 统一分发高质感单色琥珀图标 */
+const renderMenuIcon = (id: string) => {
+  switch (id) {
+    case 'download':
+      return <DownloadAudioIcon />;
+    case 'regenerate':
+      return <RegenerateIcon />;
+    case 'sleep':
+      return <SleepTimerIcon />;
+    case 'source':
+      return <SourceGlobeIcon />;
+    case 'flip':
+      return <FlipBookIcon />;
+    case 'info':
+      return <InfoDetailIcon />;
+    default:
+      return <DownloadAudioIcon />;
+  }
 };
 
 const formatTime = (seconds: number): string => {
@@ -128,10 +185,12 @@ const FooterMenuItem: React.FC<FooterMenuItemProps> = memo(
           {isLoading ? (
             <ActivityIndicator size="small" color="#D97706" />
           ) : (
-            <Text style={styles.gridIconText}>{MENU_ICONS[id] || '⚙️'}</Text>
+            renderMenuIcon(id)
           )}
         </View>
-        <Text style={styles.gridLabelText}>{label}</Text>
+        <Text style={styles.gridLabelText} numberOfLines={1}>
+          {label}
+        </Text>
       </TouchableOpacity>
     );
   },
@@ -492,11 +551,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'flex-start',
     marginBottom: 20,
+    marginHorizontal: -4,
   },
   gridItem: {
-    width: '25%', // 每行 4 项等宽排列，超出自动换行
+    width: '33.33%', // 3 列 × 2 行，完美对称
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
   },
   gridIconCircle: {
     width: 48,
@@ -507,20 +567,139 @@ const styles = StyleSheet.create({
     borderColor: '#EFE8DE',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 7,
     shadowColor: '#1C1917',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  gridIconText: {
-    fontSize: 20,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
   },
   gridLabelText: {
-    fontSize: 11,
-    color: '#57534E',
+    fontSize: 12,
+    color: '#44403C',
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  iconBox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadStem: {
+    width: 2,
+    height: 8,
+    backgroundColor: '#B45309',
+    borderRadius: 1,
+  },
+  downloadArrow: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 4.5,
+    borderRightWidth: 4.5,
+    borderTopWidth: 5.5,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#B45309',
+    marginTop: -1,
+  },
+  downloadBase: {
+    width: 15,
+    height: 1.8,
+    backgroundColor: '#B45309',
+    borderRadius: 1,
+    marginTop: 2.5,
+  },
+  refreshIconImg: {
+    width: 20,
+    height: 20,
+    tintColor: '#B45309',
+  },
+  moonCrescent: {
+    width: 17,
+    height: 17,
+    borderRadius: 8.5,
+    borderLeftWidth: 2.2,
+    borderBottomWidth: 2.2,
+    borderTopWidth: 0.5,
+    borderRightWidth: 0,
+    borderColor: '#B45309',
+    transform: [{rotate: '-45deg'}],
+  },
+  globeBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#B45309',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  globeEquator: {
+    position: 'absolute',
+    width: '100%',
+    height: 1.5,
+    backgroundColor: '#B45309',
+  },
+  globeMeridian: {
+    width: 8,
+    height: '100%',
+    borderRadius: 4,
+    borderWidth: 1.2,
+    borderColor: '#B45309',
+  },
+  bookBox: {
+    width: 20,
+    height: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bookPage: {
+    flex: 1,
+    height: 16,
+    borderWidth: 1.5,
+    borderColor: '#B45309',
+    backgroundColor: 'transparent',
+  },
+  bookPageLeft: {
+    borderTopLeftRadius: 3,
+    borderBottomLeftRadius: 3,
+    borderRightWidth: 0,
+  },
+  bookPageRight: {
+    borderTopRightRadius: 3,
+    borderBottomRightRadius: 3,
+    borderLeftWidth: 0,
+  },
+  bookSpine: {
+    width: 1.8,
+    height: 16,
+    backgroundColor: '#B45309',
+  },
+  infoBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#B45309',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 1.5,
+  },
+  infoDot: {
+    width: 2.2,
+    height: 2.2,
+    borderRadius: 1.1,
+    backgroundColor: '#B45309',
+    marginBottom: 1.5,
+  },
+  infoStem: {
+    width: 2,
+    height: 6.5,
+    borderRadius: 1,
+    backgroundColor: '#B45309',
   },
   chapterControlRow: {
     flexDirection: 'row',
