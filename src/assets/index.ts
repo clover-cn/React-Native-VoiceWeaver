@@ -16,6 +16,8 @@ export const AppImages = {
   delete: require('./icons/delete_icon.png'),
   logo: require('./icons/logo.png'),
   searchIcon: require('./icons/search_icon.png'),
+  refreshWhiteIcon: require('./icons/refresh_white_icon.png'),
+  menuIcon: require('./icons/menu_icon.png'),
 };
 
 export default AppImages;

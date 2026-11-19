@@ -193,7 +193,7 @@ const ListenPlaybackBar = memo((props: Props) => {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : failed ? (
-              <Text style={styles.retryIcon}>↻</Text>
+              <Image source={AppImages.refreshWhiteIcon} style={styles.retryIcon} />
             ) : (
               <PlaybackGlyph isPlaying={props.isPlaying} />
             )}
@@ -205,7 +205,8 @@ const ListenPlaybackBar = memo((props: Props) => {
             onPress={props.onOpenCatalog}
             style={styles.action}
             activeOpacity={0.75}>
-            <Text style={styles.actionIcon}>☷</Text>
+            {/* <Text style={styles.actionIcon}>☷</Text> */}
+            <Image source={AppImages.menuIcon} style={styles.menuIcon} />
           </TouchableOpacity>
         </View>
         {props.listenState === 'ready' && <SegmentProgress />}
@@ -304,7 +305,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionIcon: {fontSize: 22, color: '#78716C'},
   nextIcon: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -331,8 +331,8 @@ const styles = StyleSheet.create({
   },
   disabled: {opacity: 0.3},
   play: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: 22,
     backgroundColor: '#D97706', // 琥珀暖金
     alignItems: 'center',
@@ -344,7 +344,14 @@ const styles = StyleSheet.create({
     elevation: 4,
     marginHorizontal: 4,
   },
-  retryIcon: {color: '#FFFFFF', fontSize: 20, fontWeight: '700'},
+  retryIcon: {
+    width: 15,
+    height: 15,
+  },
+  menuIcon:{
+    width: 20,
+    height: 20,
+  },
   playTriangle: {
     width: 0,
     height: 0,
