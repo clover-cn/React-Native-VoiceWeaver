@@ -258,23 +258,23 @@ async function generateSpeechInternal(
   checkpoint?: SpeechCheckpoint,
 ): Promise<string> {
   if (usesVoiceDesign(segment)) {
-    const mimo = config.mimoTTS;
-    if (!mimo?.endpoint?.trim() || !mimo.apiKey?.trim()) {
-      throw new Error('路人文本设计音色缺少 MiMo 配置，请在语音设置中填写共用的 MiMo API 地址和密钥。');
+    const voiceDesign = config.bystander;
+    if (!voiceDesign.endpoint.trim() || !voiceDesign.apiKey.trim()) {
+      throw new Error('请在「路人配音 → 文本生成」中填写 MiMo API 地址和密钥。');
     }
-    if (!Number.isInteger(mimo.sampleRate) || mimo.sampleRate < 8000 || mimo.sampleRate > 96000) {
+    if (!Number.isInteger(voiceDesign.sampleRate) || voiceDesign.sampleRate < 8000 || voiceDesign.sampleRate > 96000) {
       throw new Error('路人 MiMo PCM 采样率需为 8000–96000 的整数。');
     }
     const result = await modelRequest({
-      url: mimo.endpoint,
+      url: voiceDesign.endpoint,
       timeout: config.advanced.ttsTimeout,
       audio: true,
       pcm: true,
-      sampleRate: mimo.sampleRate,
+      sampleRate: voiceDesign.sampleRate,
       ...(projectName ? {owner: createTextHash(projectName)} : {}),
-      headers: {'api-key': mimo.apiKey, 'Content-Type': 'application/json'},
+      headers: {'api-key': voiceDesign.apiKey, 'Content-Type': 'application/json'},
       body: JSON.stringify({
-        model: segment.voiceDesignFallback ? 'mimo-v2.5-tts' : config.bystander.model.trim(),
+        model: segment.voiceDesignFallback ? 'mimo-v2.5-tts' : voiceDesign.model.trim(),
         messages: [
           {role: 'user', content: designPrompt(segment)},
           {role: 'assistant', content: segment.text},

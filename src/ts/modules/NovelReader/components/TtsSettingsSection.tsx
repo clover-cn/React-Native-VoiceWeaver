@@ -11,6 +11,7 @@ import {
 import {
   BystanderMode,
   DEFAULT_BYSTANDER_MODEL,
+  DEFAULT_MIMO_ENDPOINT,
   EngineConfig,
   TtsProvider,
 } from '../local/config';
@@ -176,6 +177,11 @@ export default function TtsSettingsSection({
   busy,
 }: Props) {
   const currentProvider = config.provider;
+  const updateBystander = (fields: Partial<EngineConfig['bystander']>) =>
+    setConfig(previous => ({
+      ...previous,
+      bystander: {...previous.bystander, ...fields},
+    }));
   const currentProviderInfo = TTS_PROVIDERS.find(
     p => p.key === currentProvider,
   ) || {
@@ -412,12 +418,7 @@ export default function TtsSettingsSection({
                 accessibilityRole="radio"
                 accessibilityState={{checked: selected}}
                 style={[styles.bystanderMode, selected && styles.providerCardSelected]}
-                onPress={() =>
-                  setConfig(previous => ({
-                    ...previous,
-                    bystander: {...previous.bystander, mode: value},
-                  }))
-                }>
+                onPress={() => updateBystander({mode: value})}>
                 <Text style={[styles.providerName, selected && styles.providerNameSelected]}>
                   {label}
                 </Text>
@@ -436,47 +437,30 @@ export default function TtsSettingsSection({
               label="路人配音模型"
               value={config.bystander.model}
               placeholder={DEFAULT_BYSTANDER_MODEL}
-              onChangeText={model =>
-                setConfig(previous => ({
-                  ...previous,
-                  bystander: {...previous.bystander, model},
-                }))
+              onChangeText={model => updateBystander({model})}
+            />
+            <FormInputItem
+              label="路人配音 API 完整端点"
+              value={config.bystander.endpoint}
+              placeholder={DEFAULT_MIMO_ENDPOINT}
+              onChangeText={endpoint => updateBystander({endpoint})}
+            />
+            <FormInputItem
+              label="路人配音 API Key"
+              value={config.bystander.apiKey}
+              placeholder="sk-..."
+              isApiKey
+              onChangeText={apiKey => updateBystander({apiKey})}
+            />
+            <FormInputItem
+              label="路人配音 PCM 采样率"
+              value={config.bystander.sampleRate}
+              placeholder="24000"
+              numeric
+              onChangeText={text =>
+                updateBystander({sampleRate: text === '' ? Number.NaN : Number(text)})
               }
             />
-            {currentProvider === 'mimoTTS' ? (
-              <Text style={styles.cardSubtitle}>
-                API 地址、密钥和采样率使用上方的 MiMo 配置。
-              </Text>
-            ) : (
-              <>
-                <FormInputItem
-                  label="MiMo API 完整端点"
-                  value={config.mimoTTS.endpoint}
-                  placeholder="https://api.xiaomimimo.com/v1/chat/completions"
-                  onChangeText={text => update('mimoTTS', 'endpoint', text)}
-                />
-                <FormInputItem
-                  label="MiMo API Key"
-                  value={config.mimoTTS.apiKey}
-                  placeholder="sk-..."
-                  isApiKey
-                  onChangeText={text => update('mimoTTS', 'apiKey', text)}
-                />
-                <FormInputItem
-                  label="MiMo PCM 采样率"
-                  value={config.mimoTTS.sampleRate}
-                  placeholder="24000"
-                  numeric
-                  onChangeText={text =>
-                    update(
-                      'mimoTTS',
-                      'sampleRate',
-                      text === '' ? Number.NaN : Number(text),
-                    )
-                  }
-                />
-              </>
-            )}
           </>
         )}
       </View>

@@ -3,6 +3,7 @@ import {nativeCall} from './native';
 export type TtsProvider = 'siliconflow' | 'mimoTTS' | 'indextts2';
 export type BystanderMode = 'voiceDesign' | 'audioPool';
 export const DEFAULT_BYSTANDER_MODEL = 'mimo-v2.5-tts-voicedesign';
+export const DEFAULT_MIMO_ENDPOINT = 'https://api.xiaomimimo.com/v1/chat/completions';
 export type SettingsGroup =
   | 'llm'
   | 'prescan'
@@ -23,7 +24,7 @@ export interface EngineConfig {
   siliconflow: ModelConfig & {uploadEndpoint: string};
   mimoTTS: ModelConfig & {stylePrompt: string; sampleRate: number};
   indextts2: {endpoint: string; apiKey: string};
-  bystander: {mode: BystanderMode; model: string};
+  bystander: ModelConfig & {mode: BystanderMode; sampleRate: number};
   generation: {
     prescanCount: number;
     prefetchCount: number;
@@ -60,14 +61,20 @@ export const defaultConfig = (): EngineConfig => ({
     model: '',
   },
   mimoTTS: {
-    endpoint: 'https://api.xiaomimimo.com/v1/chat/completions',
+    endpoint: DEFAULT_MIMO_ENDPOINT,
     apiKey: '',
     model: 'mimo-v2.5-tts-voiceclone',
     stylePrompt: '',
     sampleRate: 24000,
   },
   indextts2: {endpoint: '', apiKey: ''},
-  bystander: {mode: 'voiceDesign', model: DEFAULT_BYSTANDER_MODEL},
+  bystander: {
+    mode: 'voiceDesign',
+    endpoint: DEFAULT_MIMO_ENDPOINT,
+    apiKey: '',
+    model: DEFAULT_BYSTANDER_MODEL,
+    sampleRate: 24000,
+  },
   generation: {prescanCount: 10, prefetchCount: 2, background: true},
   advanced: {
     indexTtsWaitHours: 1,
@@ -117,6 +124,7 @@ export function validateConfig(
     ['tts', config.siliconflow],
     ['tts', config.mimoTTS],
     ['tts', config.indextts2],
+    ['tts', config.bystander],
   ] as const;
   for (const [group, model] of models) {
     if (model.endpoint && !endpointValid(model.endpoint)) {
@@ -134,6 +142,10 @@ export function validateConfig(
   }
   if (!endpointValid(config.siliconflow.uploadEndpoint)) {
     throw new ConfigurationError('音色上传地址无效。', 'tts');
+  }
+  const bystanderRate = config.bystander.sampleRate;
+  if (!Number.isInteger(bystanderRate) || bystanderRate < 8000 || bystanderRate > 96000) {
+    throw new ConfigurationError('路人配音 PCM 采样率需为 8000–96000 的整数。', 'tts');
   }
   for (const [name, value, min, max] of [
     ['IndexTTS 任务等待小时数', config.advanced.indexTtsWaitHours, 1, 24],
@@ -187,7 +199,9 @@ export async function loadConfig(): Promise<EngineConfig> {
   if (!text) {
     return defaultConfig();
   }
-  const saved = JSON.parse(text) as EngineConfig;
+  const saved = JSON.parse(text) as Omit<EngineConfig, 'bystander'> & {
+    bystander?: Partial<EngineConfig['bystander']>;
+  };
   const defaults = defaultConfig();
   const config: EngineConfig = {
     ...defaults,
@@ -197,7 +211,14 @@ export async function loadConfig(): Promise<EngineConfig> {
     siliconflow: {...defaults.siliconflow, ...saved.siliconflow},
     mimoTTS: {...defaults.mimoTTS, ...saved.mimoTTS},
     indextts2: {...defaults.indextts2, ...saved.indextts2},
-    bystander: {...defaults.bystander, ...saved.bystander},
+    // 旧配置共用 MiMo 连接参数，首次加载时用已有值预填独立配置。
+    bystander: {
+      ...defaults.bystander,
+      endpoint: saved.mimoTTS?.endpoint ?? defaults.bystander.endpoint,
+      apiKey: saved.mimoTTS?.apiKey ?? defaults.bystander.apiKey,
+      sampleRate: saved.mimoTTS?.sampleRate ?? defaults.bystander.sampleRate,
+      ...saved.bystander,
+    },
     generation: {...defaults.generation, ...saved.generation},
     advanced: {...defaults.advanced, ...saved.advanced},
   };

@@ -916,8 +916,7 @@ export async function generateChapter(
   if (
     existing &&
     (plain ||
-      (existing.config.bystander.mode === config.bystander.mode &&
-        existing.config.bystander.model === config.bystander.model)) &&
+      JSON.stringify(existing.config.bystander) === JSON.stringify(config.bystander)) &&
     configIdentity(existing.config, existing.plain, existing.articleReferenceAudioId) ===
       configIdentity(config, plain, articleReferenceAudioId) &&
     createTextHash(
