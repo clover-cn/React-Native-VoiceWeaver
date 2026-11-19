@@ -131,7 +131,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
           style={styles.searchBar}
           onPress={onNavigateSearch}
           activeOpacity={0.85}>
-          <Text style={styles.searchIcon}>🎙️</Text>
+          <Image source={AppImages.searchIcon} style={styles.searchIcon} />
           <Text style={styles.searchPlaceholder}>
             搜索你想听的小说、角色或作者…
           </Text>
@@ -307,7 +307,6 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                   {/* 替换原先难看生硬的技术URL，注入听书专属属性 */}
                   <View style={styles.recordMetaRow}>
                     <View style={styles.audioFeatBadge}>
-                      <Text style={styles.audioFeatIcon}>🎙️</Text>
                       <Text style={styles.audioFeatText}>
                         {book.contentType === 'article' ? '原文单音色朗读' : isLocal ? '支持离线演播' : '多角色配音演播'}
                       </Text>
@@ -581,8 +580,9 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   searchIcon: {
-    fontSize: 16,
     marginRight: 10,
+    width: 15,
+    height: 15,
   },
   searchPlaceholder: {
     color: '#A8A29E',
@@ -907,10 +907,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 0.5,
     borderColor: '#EFE8DE',
-  },
-  audioFeatIcon: {
-    fontSize: 10,
-    marginRight: 4,
   },
   audioFeatText: {
     fontSize: 10,

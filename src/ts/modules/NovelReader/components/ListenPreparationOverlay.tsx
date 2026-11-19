@@ -131,22 +131,9 @@ export default function ListenPreparationOverlay({
     ? '演播就绪，点击播放'
     : p.detail || stageTitle;
 
+  // 方案A：收起状态下不在全局强行悬浮横条，进度展示已无缝收归 Mini 播放条与控制面板
   if (!p.expanded) {
-    return (
-      <TouchableOpacity
-        accessibilityRole="button"
-        style={styles.banner}
-        onPress={p.error || !ready ? onExpand : onPlay}
-        activeOpacity={0.85}>
-        <Text style={styles.bannerIcon}>🎙️</Text>
-        <Text style={styles.bannerText}>
-          {p.error ? '听书准备异常，点击查看' : title}
-        </Text>
-        <Text style={styles.bannerAction}>
-          {ready && !p.error ? '开始演播 ›' : '展开进度 ›'}
-        </Text>
-      </TouchableOpacity>
-    );
+    return null;
   }
 
   return (
@@ -452,39 +439,5 @@ const styles = StyleSheet.create({
     color: '#78716C',
     fontSize: 13,
     fontWeight: '600',
-  },
-  banner: {
-    position: 'absolute',
-    bottom: 90,
-    left: 16,
-    right: 16,
-    borderRadius: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#FAF5ED',
-    borderWidth: 1,
-    borderColor: '#EFE8DE',
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#1C1917',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  bannerIcon: {
-    fontSize: 16,
-    marginRight: 8,
-  },
-  bannerText: {
-    color: '#44403C',
-    fontSize: 13,
-    fontWeight: '600',
-    flex: 1,
-  },
-  bannerAction: {
-    color: '#B45309',
-    fontSize: 12,
-    fontWeight: '700',
   },
 });

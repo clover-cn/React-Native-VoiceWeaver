@@ -1,7 +1,8 @@
-import React, {memo, useContext, useEffect, useState} from 'react';
+import React, {memo, useContext, useEffect, useRef, useState} from 'react';
 import {AppImages} from '../../../../assets';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Platform,
   StyleSheet,
@@ -24,6 +25,8 @@ interface Props {
   onNextSegment: () => void;
   onOpenControls: () => void;
   onOpenCatalog: () => void;
+  /** 点击展开当前章节演播生成的详细进度面板 */
+  onOpenPreparation?: () => void;
 }
 
 /** 只订阅当前段落进度，避免高频刷新书籍信息和操作按钮。 */
@@ -71,6 +74,31 @@ const ListenPlaybackBar = memo((props: Props) => {
     : props.isPlaying
     ? '暂停演播'
     : '继续演播';
+
+  // 顶部 2px 琥珀流光微进度呼吸动画
+  const pulseAnim = useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    if (!loading) {
+      return;
+    }
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.35,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [loading, pulseAnim]);
+
   return (
     <View
       style={[
@@ -78,6 +106,17 @@ const ListenPlaybackBar = memo((props: Props) => {
         Platform.OS !== 'android' && styles.nonAndroidBottomInset,
       ]}>
       <View style={styles.card}>
+        {/* 卡片顶边缘微型流动进度线 */}
+        {loading && (
+          <View style={styles.topProgressBarContainer}>
+            <Animated.View
+              style={[
+                styles.topProgressBarFill,
+                {opacity: pulseAnim},
+              ]}
+            />
+          </View>
+        )}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.book}
@@ -104,13 +143,28 @@ const ListenPlaybackBar = memo((props: Props) => {
               <Text numberOfLines={1} style={styles.title}>
                 {props.bookName}
               </Text>
-              <Text numberOfLines={1} style={styles.subtitle}>
-                {loading
-                  ? props.listenPhase || '正在准备音频…'
-                  : failed
-                  ? '音频生成失败，点击重试'
-                  : props.chapterTitle}
-              </Text>
+              <View style={styles.subtitleRow}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.subtitle, loading && styles.subtitleLoading]}>
+                  {loading
+                    ? props.listenPhase || '正在准备音频…'
+                    : failed
+                    ? '音频生成失败，点击重试'
+                    : props.chapterTitle}
+                </Text>
+                {loading && props.onOpenPreparation && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="查看生成进度详情"
+                    style={styles.progressBadge}
+                    onPress={props.onOpenPreparation}
+                    hitSlop={{top: 8, bottom: 8, left: 6, right: 6}}
+                    activeOpacity={0.75}>
+                    <Text style={styles.progressBadgeText}>进度 ›</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </TouchableOpacity>
 
@@ -164,6 +218,8 @@ const styles = StyleSheet.create({
   safeArea: {paddingHorizontal: 14, paddingBottom: 10},
   nonAndroidBottomInset: {paddingBottom: 28},
   card: {
+    position: 'relative',
+    overflow: 'hidden',
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     padding: 10,
@@ -174,6 +230,20 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 14,
     elevation: 8,
+  },
+  topProgressBarContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2.5,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(217, 119, 6, 0.1)',
+  },
+  topProgressBarFill: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#D97706',
   },
   row: {flexDirection: 'row', alignItems: 'center'},
   book: {flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center'},
@@ -202,7 +272,32 @@ const styles = StyleSheet.create({
   coverText: {fontSize: 20, fontWeight: '800', color: '#F59E0B'},
   info: {flex: 1, minWidth: 0, marginLeft: 10},
   title: {fontSize: 15, fontWeight: '700', color: '#1C1917'},
-  subtitle: {fontSize: 12, color: '#78716C', marginTop: 4},
+  subtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  subtitle: {fontSize: 12, color: '#78716C', flexShrink: 1},
+  subtitleLoading: {
+    color: '#B45309',
+    fontWeight: '500',
+  },
+  progressBadge: {
+    marginLeft: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 1.5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(217, 119, 6, 0.12)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(217, 119, 6, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressBadgeText: {
+    fontSize: 10,
+    color: '#B45309',
+    fontWeight: '700',
+  },
   action: {
     width: 42,
     height: 44,

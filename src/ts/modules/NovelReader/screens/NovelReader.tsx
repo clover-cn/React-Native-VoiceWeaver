@@ -73,6 +73,8 @@ interface NovelReaderProps {
   onSelectChapter: (index: number) => void;
   onMenuItemClick: (id: string) => void;
   loadingMenuItemId?: string | null;
+  /** 点击展开当前章节演播生成的详细进度面板 */
+  onOpenPreparation?: () => void;
 }
 
 interface SegmentRowProps {
@@ -660,6 +662,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   onSelectChapter,
   onMenuItemClick,
   loadingMenuItemId,
+  onOpenPreparation,
 }) => {
   const {height: windowHeight} = useWindowDimensions();
   const [showOverlay, setShowOverlay] = useState(false);
@@ -961,6 +964,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
           onNextSegment={handleNextSegment}
           onOpenControls={toggleOverlay}
           onOpenCatalog={() => setCatalogVisible(true)}
+          onOpenPreparation={onOpenPreparation}
         />
       )}
 
@@ -1006,6 +1010,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
             onNextChapter={onNextChapter}
             onMenuItemClick={onMenuItemClick}
             loadingMenuItemId={loadingMenuItemId}
+            onOpenPreparation={onOpenPreparation}
           />
         </Animated.View>
       </Animated.View>

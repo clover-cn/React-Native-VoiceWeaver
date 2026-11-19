@@ -15,6 +15,7 @@ export const AppImages = {
   back: require('./icons/back_icon.png'),
   delete: require('./icons/delete_icon.png'),
   logo: require('./icons/logo.png'),
+  searchIcon: require('./icons/search_icon.png'),
 };
 
 export default AppImages;

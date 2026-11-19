@@ -26,6 +26,8 @@ interface ReaderFooterProps {
   onNextChapter: () => void;
   onMenuItemClick?: (itemIdentifier: string) => void;
   loadingMenuItemId?: string | null;
+  /** 点击展开当前章节演播生成的详细进度面板 */
+  onOpenPreparation?: () => void;
 }
 
 // 模块级常量与工具函数 —— 单行 4 项，超出自动换行
@@ -152,6 +154,7 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
   onNextChapter,
   onMenuItemClick,
   loadingMenuItemId,
+  onOpenPreparation,
 }) => {
   const handleMenuPress = useCallback(
     (id: string) => {
@@ -173,12 +176,27 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
         );
       case 'loading':
         return (
-          <View style={styles.loadingControl}>
+          <TouchableOpacity
+            style={styles.loadingControl}
+            onPress={onOpenPreparation}
+            activeOpacity={onOpenPreparation ? 0.75 : 1}
+            disabled={!onOpenPreparation}
+            accessibilityRole={onOpenPreparation ? 'button' : undefined}
+            accessibilityLabel={
+              onOpenPreparation
+                ? `${listenPhaseText || '正在解析并生成演播音频'}，点击查看生成进度`
+                : undefined
+            }>
             <ActivityIndicator size="small" color="#D97706" />
-            <Text style={styles.loadingText}>
+            <Text style={styles.loadingText} numberOfLines={1}>
               {listenPhaseText || '正在解析并生成演播音频…'}
             </Text>
-          </View>
+            {onOpenPreparation && (
+              <View style={styles.loadingActionBadge}>
+                <Text style={styles.loadingActionText}>展开进度 ›</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         );
       case 'ready':
         return (
@@ -407,17 +425,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 9,
     backgroundColor: '#FAF5ED',
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#EFE8DE',
+    shadowColor: '#1C1917',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   loadingText: {
     fontSize: 12,
     color: '#B45309',
     fontWeight: '600',
+    maxWidth: 220,
+  },
+  loadingActionBadge: {
+    backgroundColor: 'rgba(217, 119, 6, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: 'rgba(217, 119, 6, 0.25)',
+  },
+  loadingActionText: {
+    fontSize: 11,
+    color: '#B45309',
+    fontWeight: '700',
   },
   miniProgressContainer: {
     flexDirection: 'row',

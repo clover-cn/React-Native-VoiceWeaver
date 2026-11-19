@@ -2561,6 +2561,14 @@ const NovelReaderApp: React.FC = () => {
               onOpenSegmentEditor={handleOpenSegmentEditor}
               loadingMenuItemId={loadingMenuItemId}
               onMenuItemClick={handleMenuItemClick}
+              onOpenPreparation={
+                preparation
+                  ? () =>
+                      setPreparation(current =>
+                        current ? {...current, expanded: true} : current,
+                      )
+                  : undefined
+              }
             />
           </PlaybackProgressContext.Provider>
         </ActiveSegContext.Provider>
