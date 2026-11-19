@@ -1,5 +1,6 @@
 import type {ListenSegment} from '../types/reader';
 import type {Character} from './repository';
+import type {BystanderMode} from './config';
 
 /** 文本事实与配音设计分开保存；未知性别只在配音层采用男性兜底。 */
 export function castingGender(value: {gender?: string; castingGender?: string}): string {
@@ -10,9 +11,16 @@ export function castingGender(value: {gender?: string; castingGender?: string}):
 }
 
 /** 同一角色固定音色，只将本句情绪作为临时表演指令。 */
-export function prepareVoiceDesign(segment: ListenSegment, character?: Character): ListenSegment {
+export function prepareVoiceDesign(
+  segment: ListenSegment,
+  mode: BystanderMode,
+  character?: Character,
+): ListenSegment {
   if (segment.type !== 'dialogue' || segment.manualAssigned) {
     return {...segment, synthesisMode: 'reference'};
+  }
+  if (mode === 'audioPool') {
+    return {...segment, synthesisMode: 'reference', voiceDesignFallback: undefined};
   }
   if (segment.voiceAllocationType !== 'temporary' && character?.synthesisMode !== 'voiceDesign') {
     return segment;

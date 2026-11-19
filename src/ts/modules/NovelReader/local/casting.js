@@ -854,15 +854,14 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
       }
 
       const roleCasting = casting.roleAssignments[card.role];
-      if (!roleCasting || !roleCasting.voiceActor) {
-        delete card.referenceAudio;
-        output.push(card);
-        continue;
-      }
-
-      const actor = actorPool[roleCasting.voiceActor];
+      const actor = actorPool[roleCasting?.voiceActor];
       if (!actor) {
         delete card.referenceAudio;
+        delete card.autoAssignedVoiceActor;
+        delete card.autoEmotionAudioMap;
+        delete card.voicePool;
+        delete card.sharedVoice;
+        delete card.referenceAudioFallback;
         output.push(card);
         continue;
       }
@@ -1022,9 +1021,14 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
 
     const finalRoleAssignments = {};
     const activeUsage = new Map();
+    const usesAudioPool = environment.bystanderMode === 'audioPool';
+    const usesTextVoice = (role, assignment) =>
+      !usesAudioPool &&
+      roleClassifications[role] === 'temporary' &&
+      !assignment?.manualOverride;
     Object.entries(previousAssignments).forEach(([role, config]) => {
       const actor = actorPool[config.voiceActor];
-      if (!actor) {
+      if (!actor || usesTextVoice(role, config)) {
         return;
       }
       const expectedGender =
@@ -1065,9 +1069,8 @@ export function createCastingEngine(state, audioRecords, environment = {}) {
 
     for (const role of orderedRoles) {
       const roleClass = roleClassifications[role];
-      // 临时角色交由文本设计音色，不再占用参考音频池。
-      if (roleClass === 'temporary' && !finalRoleAssignments[role]?.manualOverride) {
-        delete finalRoleAssignments[role];
+      // 文本生成模式下，自动分配的临时角色不占用参考音频池。
+      if (usesTextVoice(role, finalRoleAssignments[role])) {
         continue;
       }
       const roleStats = getRoleStats(casting, role);

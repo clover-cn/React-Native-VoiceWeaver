@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -303,7 +304,9 @@ export default function SettingsScreen({
         ) : (
           <ScrollView
             contentContainerStyle={styles.content}
-            keyboardShouldPersistTaps="handled">
+            keyboardShouldPersistTaps={
+              String(Platform.OS) === 'harmony' ? 'always' : 'handled'
+            }>
             {!!error && (
               <Text accessibilityRole="alert" style={styles.error}>
                 {error}

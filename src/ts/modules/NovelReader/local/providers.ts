@@ -274,7 +274,7 @@ async function generateSpeechInternal(
       ...(projectName ? {owner: createTextHash(projectName)} : {}),
       headers: {'api-key': mimo.apiKey, 'Content-Type': 'application/json'},
       body: JSON.stringify({
-        model: segment.voiceDesignFallback ? 'mimo-v2.5-tts' : 'mimo-v2.5-tts-voicedesign',
+        model: segment.voiceDesignFallback ? 'mimo-v2.5-tts' : config.bystander.model.trim(),
         messages: [
           {role: 'user', content: designPrompt(segment)},
           {role: 'assistant', content: segment.text},

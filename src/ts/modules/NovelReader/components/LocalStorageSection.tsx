@@ -26,6 +26,7 @@ interface Props {
 }
 
 type LogLevel = 'ALL' | 'ERROR' | 'WARN' | 'INFO';
+const LOG_PAGE_SIZE = 40;
 
 interface ParsedLogLine {
   id: string;
@@ -99,6 +100,7 @@ export default function LocalStorageSection({
   const [audioSize, setAudioSize] = useState(0);
   const [activeLevel, setActiveLevel] = useState<LogLevel>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [logPage, setLogPage] = useState(0);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   // 初始化加载音频占用和诊断日志
@@ -124,6 +126,7 @@ export default function LocalStorageSection({
           path: string;
         }>('logRead');
         setLogs(data);
+        setLogPage(0);
       } catch (e) {
         setError(
           e instanceof Error
@@ -245,49 +248,47 @@ export default function LocalStorageSection({
     );
   };
 
-  // 解析与过滤日志
-  const {parsedLines, counts} = useMemo(() => {
-    if (!logs?.text) {
-      return {
-        parsedLines: [],
-        counts: {ALL: 0, ERROR: 0, WARN: 0, INFO: 0},
-      };
-    }
-    const lines = logs.text.split('\n').filter(l => l.trim().length > 0);
-    const parsed: ParsedLogLine[] = [];
-    const stats = {ALL: lines.length, ERROR: 0, WARN: 0, INFO: 0};
-
-    for (let i = 0; i < lines.length; i++) {
-      const item = parseLogLine(lines[i], i);
-      parsed.push(item);
-      if (item.level === 'ERROR') {
-        stats.ERROR++;
-      } else if (item.level === 'WARN') {
-        stats.WARN++;
-      } else if (item.level === 'INFO') {
-        stats.INFO++;
+  const parsedLines = useMemo(
+    () =>
+      (logs?.text || '')
+        .split('\n')
+        .filter(line => line.trim())
+        .map(parseLogLine),
+    [logs?.text],
+  );
+  const {counts, matchingLines} = useMemo(() => {
+    const totals = {ALL: parsedLines.length, ERROR: 0, WARN: 0, INFO: 0};
+    const byLevel: Record<LogLevel, ParsedLogLine[]> = {
+      ALL: [],
+      ERROR: [],
+      WARN: [],
+      INFO: [],
+    };
+    const query = searchQuery.trim().toLowerCase();
+    for (const item of parsedLines) {
+      if (item.level !== 'OTHER') {
+        totals[item.level]++;
+      }
+      if (!query || item.raw.toLowerCase().includes(query)) {
+        byLevel.ALL.push(item);
+        if (item.level !== 'OTHER') {
+          byLevel[item.level].push(item);
+        }
       }
     }
-
-    return {parsedLines: parsed, counts: stats};
-  }, [logs?.text]);
-
-  const displayedLines = useMemo(() => {
-    return parsedLines.filter(item => {
-      if (activeLevel !== 'ALL' && item.level !== activeLevel) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const query = searchQuery.trim().toLowerCase();
-        return (
-          item.raw.toLowerCase().includes(query) ||
-          item.event.toLowerCase().includes(query) ||
-          item.message.toLowerCase().includes(query)
-        );
-      }
-      return true;
-    });
-  }, [parsedLines, activeLevel, searchQuery]);
+    return {counts: totals, matchingLines: byLevel};
+  }, [parsedLines, searchQuery]);
+  const selectedLines = matchingLines[activeLevel];
+  const pageCount = Math.max(1, Math.ceil(selectedLines.length / LOG_PAGE_SIZE));
+  const page = Math.min(logPage, pageCount - 1);
+  const displayedLines = selectedLines.slice(
+    page * LOG_PAGE_SIZE,
+    (page + 1) * LOG_PAGE_SIZE,
+  );
+  const changeSearch = (query: string) => {
+    setSearchQuery(query);
+    setLogPage(0);
+  };
 
   const logKb = logs ? (logs.bytes / 1024).toFixed(1) : '0.0';
   const audioMb = (audioSize / 1024 / 1024).toFixed(1);
@@ -346,14 +347,14 @@ export default function LocalStorageSection({
                 placeholder="搜索事件、模型名、关键词..."
                 placeholderTextColor="#9CA3AF"
                 value={searchQuery}
-                onChangeText={setSearchQuery}
+                onChangeText={changeSearch}
                 autoCapitalize="none"
                 autoCorrect={false}
                 clearButtonMode="never"
               />
               {!!searchQuery && (
                 <TouchableOpacity
-                  onPress={() => setSearchQuery('')}
+                  onPress={() => changeSearch('')}
                   hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
                   <Text style={styles.searchClear}>✕</Text>
                 </TouchableOpacity>
@@ -380,7 +381,11 @@ export default function LocalStorageSection({
                       active && styles.tabItemActive,
                       isError && !active && styles.tabItemErrorOutline,
                     ]}
-                    onPress={() => setActiveLevel(tab.key)}>
+                    accessibilityState={{selected: active}}
+                    onPress={() => {
+                      setActiveLevel(tab.key);
+                      setLogPage(0);
+                    }}>
                     <Text
                       style={[
                         styles.tabItemText,
@@ -453,6 +458,7 @@ export default function LocalStorageSection({
           </View>
 
           <ScrollView
+            key={`${activeLevel}:${page}`}
             style={styles.terminalScroll}
             nestedScrollEnabled
             showsVerticalScrollIndicator
@@ -505,6 +511,35 @@ export default function LocalStorageSection({
               })
             )}
           </ScrollView>
+          {pageCount > 1 && (
+            <View style={styles.logPagination}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={page === 0}
+                onPress={() => setLogPage(page - 1)}>
+                <Text
+                  style={[
+                    styles.termActionText,
+                    page === 0 && styles.termActionDisabled,
+                  ]}>
+                  上一页
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.logPageLabel}>第 {page + 1} / {pageCount} 页</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={page === pageCount - 1}
+                onPress={() => setLogPage(page + 1)}>
+                <Text
+                  style={[
+                    styles.termActionText,
+                    page === pageCount - 1 && styles.termActionDisabled,
+                  ]}>
+                  下一页
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         <Text style={styles.cardHint}>
@@ -791,6 +826,19 @@ const styles = StyleSheet.create({
   },
   terminalScrollContent: {
     padding: 12,
+  },
+  logPagination: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#27272A',
+  },
+  logPageLabel: {
+    color: '#A1A1AA',
+    fontSize: 12,
   },
   emptyContainer: {
     paddingVertical: 40,

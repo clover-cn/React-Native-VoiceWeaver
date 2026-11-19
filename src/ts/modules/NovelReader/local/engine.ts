@@ -497,6 +497,7 @@ function normalizeCards(value: any, project: LocalProject): ListenSegment[] {
   });
 }
 const castingEnvironment = (config: EngineConfig) => ({
+  bystanderMode: config.bystander.mode,
   PRESCAN_CHAPTER_COUNT: config.generation.prescanCount,
   VOICE_ALLOCATION_CORE_MIN_CHAPTERS: config.advanced.coreMinChapters,
   VOICE_ALLOCATION_CORE_MIN_DIALOGUE_COUNT: config.advanced.coreMinDialogues,
@@ -504,6 +505,38 @@ const castingEnvironment = (config: EngineConfig) => ({
   VOICE_ALLOCATION_TEMPORARY_MAX_DIALOGUE_COUNT:
     config.advanced.temporaryMaxDialogues,
 });
+
+/** 用当前配音方式重新选音，仅更新待生成的自动对白。 */
+function prepareRetriedDialogue(
+  segment: ListenSegment,
+  card: ListenSegment,
+  config: EngineConfig,
+  character?: LocalProject['characters'][string],
+): ListenSegment {
+  const allocation = card.voiceAllocationType || segment.voiceAllocationType;
+  const refreshReference =
+    config.bystander.mode === 'audioPool' &&
+    (allocation === 'temporary' || segment.synthesisMode === 'voiceDesign');
+  return prepareVoiceDesign(
+    {
+      ...segment,
+      voiceAllocationType: allocation,
+      ...(refreshReference
+        ? {
+            referenceAudio: card.referenceAudio,
+            autoAssignedVoiceActor: card.autoAssignedVoiceActor,
+            autoEmotionAudioMap: card.autoEmotionAudioMap,
+            voicePool: card.voicePool,
+            sharedVoice: card.sharedVoice,
+            referenceAudioFallback: card.referenceAudioFallback,
+            missingEmotionPolicy: card.missingEmotionPolicy,
+          }
+        : {}),
+    },
+    config.bystander.mode,
+    character,
+  );
+}
 
 /** 失败片段重试时刷新旁白引用；保留已完成音频及显式手动绑定。 */
 async function refreshNarratorReferences(
@@ -577,6 +610,49 @@ async function run(task: Task): Promise<void> {
         current.chapters[task.chapterIndex].taskId = task.id;
       }
     });
+    if (task.segments.length && !task.plain) {
+      const mode = task.config.bystander.mode;
+      // 复用已生成的音频，仅按新设置处理尚未完成的对白。
+      const needsUpdate = task.segments.map(
+        segment =>
+          !segment.audioUrl &&
+          !segment.manualAssigned &&
+          segment.type === 'dialogue' &&
+          (mode === 'audioPool'
+            ? segment.synthesisMode === 'voiceDesign'
+            : segment.synthesisMode !== 'voiceDesign' &&
+              (segment.voiceAllocationType === 'temporary' ||
+                project.characters[segment.role || '']?.synthesisMode === 'voiceDesign')),
+      );
+      if (needsUpdate.some(Boolean)) {
+        const records = await listAudio();
+        await updateProject(task.projectName, current => {
+          active(task);
+          const casting = createCastingEngine(
+            {casting: current.casting, settings: current.settings},
+            records,
+            castingEnvironment(task.config),
+          );
+          const {cards} = casting.autoAssignReferenceAudios({
+            parsedCards: task.segments,
+            projectName: task.projectName,
+            provider: task.config.provider,
+            chapterIndex: task.chapterIndex,
+          });
+          current.casting = casting.snapshot().casting;
+          task.segments = task.segments.map((segment, index) =>
+            needsUpdate[index]
+              ? prepareRetriedDialogue(
+                  segment,
+                  cards[index],
+                  task.config,
+                  current.characters[segment.role || ''],
+                )
+              : segment,
+          );
+        });
+      }
+    }
     if (!task.segments.length && task.plain) {
       task.segments = buildPlainSegments(task.payload.chapterText);
       await checkpoint(task, hash);
@@ -698,7 +774,7 @@ async function run(task: Task): Promise<void> {
               ...(manual || bound
                 ? {referenceAudio: manual || null, manualAssigned: true}
                 : {}),
-            }, current.characters[card.role || '']);
+            }, config.bystander.mode, current.characters[card.role || '']);
           },
         );
       });
@@ -839,6 +915,9 @@ export async function generateChapter(
   );
   if (
     existing &&
+    (plain ||
+      (existing.config.bystander.mode === config.bystander.mode &&
+        existing.config.bystander.model === config.bystander.model)) &&
     configIdentity(existing.config, existing.plain, existing.articleReferenceAudioId) ===
       configIdentity(config, plain, articleReferenceAudioId) &&
     createTextHash(
@@ -1049,12 +1128,20 @@ export async function regenerateSegments(
     parsedCards: entry.segments, projectName, provider: config.provider, chapterIndex,
   }).cards;
   entry.segments = entry.segments.map((segment, index) => {
-    if (!indexes.includes(index) || segment.manualAssigned || plain) {
+    if (
+      !indexes.includes(index) ||
+      segment.manualAssigned ||
+      plain ||
+      segment.type !== 'dialogue'
+    ) {
       return segment;
     }
-    return prepareVoiceDesign({
-      ...segment, voiceAllocationType: retryCards[index]?.voiceAllocationType,
-    }, project.characters[segment.role || '']);
+    return prepareRetriedDialogue(
+      segment,
+      retryCards[index],
+      config,
+      project.characters[segment.role || ''],
+    );
   });
   const task: Task = {
     id: `edit_${Date.now()}`,

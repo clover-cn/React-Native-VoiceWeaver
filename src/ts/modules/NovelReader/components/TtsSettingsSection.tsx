@@ -8,7 +8,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {EngineConfig, TtsProvider} from '../local/config';
+import {
+  BystanderMode,
+  DEFAULT_BYSTANDER_MODEL,
+  EngineConfig,
+  TtsProvider,
+} from '../local/config';
+
+const BYSTANDER_MODES: {value: BystanderMode; label: string}[] = [
+  {value: 'voiceDesign', label: '文本生成'},
+  {value: 'audioPool', label: '音频路人池'},
+];
 
 type Section =
   | 'llm'
@@ -122,7 +132,12 @@ function FormInputItem({
           multiline && styles.inputWrapperMultiline,
         ]}>
         <TextInput
-          style={[styles.input, multiline && styles.inputMultiline]}
+          accessibilityLabel={label}
+          style={[
+            styles.input,
+            multiline && styles.inputMultiline,
+            !multiline && !!displayVal && styles.inputWithClear,
+          ]}
           value={displayVal}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -130,6 +145,7 @@ function FormInputItem({
           secureTextEntry={isApiKey && !showSecret}
           autoCapitalize="none"
           autoCorrect={false}
+          showSoftInputOnFocus
           keyboardType={numeric ? 'number-pad' : 'default'}
           multiline={multiline}
           onFocus={() => setFocused(true)}
@@ -138,8 +154,9 @@ function FormInputItem({
         {!multiline && !!displayVal && (
           <TouchableOpacity
             style={styles.clearBtn}
+            accessibilityLabel={`清空${label}`}
             onPress={() => onChangeText('')}
-            hitSlop={{top: 6, bottom: 6, left: 6, right: 6}}>
+            hitSlop={{top: 4, bottom: 4, left: 4, right: 4}}>
             <Text style={styles.clearBtnText}>✕</Text>
           </TouchableOpacity>
         )}
@@ -382,62 +399,87 @@ export default function TtsSettingsSection({
         )}
       </View>
 
-      {/* 模块 3：路人角色配音（MiMo 共用辅助配置） */}
-      {currentProvider !== 'mimoTTS' && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.headerLeft}>
-              <View style={[styles.serviceIcon, styles.iconPasser]}>
-                <Text style={[styles.serviceIconText, styles.iconTextPasser]}>
-                  PASSER
-                </Text>
-              </View>
-              <View style={styles.headerTitleBox}>
-                <Text style={styles.cardTitle}>路人配音（MiMo 共用配置）</Text>
-                <Text style={styles.cardSubtitle}>
-                  小说临时群演免克隆合成服务
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.passerNotice}>
-            <Text style={styles.passerNoticeText}>
-              小说中的非核心路人角色无需单独指定参考录音，将自动使用 MiMo
-              的文本设计模型配音，避免消耗主克隆额度。
-            </Text>
-          </View>
-
-          <FormInputItem
-            label="MiMo API 完整端点"
-            value={config.mimoTTS.endpoint}
-            placeholder="https://api.xiaomimimo.com/v1/chat/completions"
-            onChangeText={text => update('mimoTTS', 'endpoint', text)}
-          />
-
-          <FormInputItem
-            label="MiMo API Key"
-            value={config.mimoTTS.apiKey}
-            placeholder="sk-..."
-            isApiKey
-            onChangeText={text => update('mimoTTS', 'apiKey', text)}
-          />
-
-          <FormInputItem
-            label="MiMo PCM 采样率"
-            value={config.mimoTTS.sampleRate}
-            placeholder="24000"
-            numeric
-            onChangeText={text =>
-              update(
-                'mimoTTS',
-                'sampleRate',
-                text === '' ? Number.NaN : Number(text),
-              )
-            }
-          />
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>路人配音</Text>
         </View>
-      )}
+        <View style={styles.bystanderModes} accessibilityRole="radiogroup">
+          {BYSTANDER_MODES.map(({value, label}) => {
+            const selected = config.bystander.mode === value;
+            return (
+              <TouchableOpacity
+                key={value}
+                accessibilityRole="radio"
+                accessibilityState={{checked: selected}}
+                style={[styles.bystanderMode, selected && styles.providerCardSelected]}
+                onPress={() =>
+                  setConfig(previous => ({
+                    ...previous,
+                    bystander: {...previous.bystander, mode: value},
+                  }))
+                }>
+                <Text style={[styles.providerName, selected && styles.providerNameSelected]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {config.bystander.mode === 'audioPool' ? (
+          <Text style={styles.cardSubtitle}>
+            优先从路人池选择参考录音，使用 {currentProviderInfo.name} 合成。
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.cardSubtitle}>文本合成服务商：MiMo</Text>
+            <FormInputItem
+              label="路人配音模型"
+              value={config.bystander.model}
+              placeholder={DEFAULT_BYSTANDER_MODEL}
+              onChangeText={model =>
+                setConfig(previous => ({
+                  ...previous,
+                  bystander: {...previous.bystander, model},
+                }))
+              }
+            />
+            {currentProvider === 'mimoTTS' ? (
+              <Text style={styles.cardSubtitle}>
+                API 地址、密钥和采样率使用上方的 MiMo 配置。
+              </Text>
+            ) : (
+              <>
+                <FormInputItem
+                  label="MiMo API 完整端点"
+                  value={config.mimoTTS.endpoint}
+                  placeholder="https://api.xiaomimimo.com/v1/chat/completions"
+                  onChangeText={text => update('mimoTTS', 'endpoint', text)}
+                />
+                <FormInputItem
+                  label="MiMo API Key"
+                  value={config.mimoTTS.apiKey}
+                  placeholder="sk-..."
+                  isApiKey
+                  onChangeText={text => update('mimoTTS', 'apiKey', text)}
+                />
+                <FormInputItem
+                  label="MiMo PCM 采样率"
+                  value={config.mimoTTS.sampleRate}
+                  placeholder="24000"
+                  numeric
+                  onChangeText={text =>
+                    update(
+                      'mimoTTS',
+                      'sampleRate',
+                      text === '' ? Number.NaN : Number(text),
+                    )
+                  }
+                />
+              </>
+            )}
+          </>
+        )}
+      </View>
 
       {/* 模块 4：测试与连通性验证卡片 */}
       <View style={styles.card}>
@@ -521,12 +563,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#B45309',
-  },
-  iconPasser: {
-    backgroundColor: '#E0F2FE',
-  },
-  iconTextPasser: {
-    color: '#0284C7',
   },
   cardTitle: {
     fontSize: 16,
@@ -637,42 +673,40 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FAFAF9',
     borderWidth: 1,
     borderColor: '#D6D3D1',
     borderRadius: 10,
-    paddingHorizontal: 12,
-    minHeight: 46,
   },
   inputWrapperFocused: {
     borderColor: '#B45309',
     backgroundColor: '#FFFFFF',
-    shadowColor: '#B45309',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
   },
   inputWrapperMultiline: {
     minHeight: 88,
-    alignItems: 'flex-start',
-    paddingVertical: 10,
   },
   input: {
-    flex: 1,
+    minHeight: 44,
     fontSize: 14,
     color: '#1C1917',
+    paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  inputWithClear: {
+    paddingRight: 44,
   },
   inputMultiline: {
     textAlignVertical: 'top',
-    minHeight: 68,
+    minHeight: 86,
   },
   clearBtn: {
-    padding: 4,
-    marginLeft: 6,
+    position: 'absolute',
+    right: 6,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   clearBtnText: {
     fontSize: 12,
@@ -684,18 +718,19 @@ const styles = StyleSheet.create({
     color: '#78716C',
     marginTop: 5,
   },
-  passerNotice: {
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 14,
+  bystanderModes: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
   },
-  passerNoticeText: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#0369A1',
+  bystanderMode: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E7E5E4',
+    backgroundColor: '#FAFAF9',
   },
   testBtn: {
     backgroundColor: '#B45309',

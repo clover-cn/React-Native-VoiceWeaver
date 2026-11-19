@@ -1,6 +1,8 @@
 import {nativeCall} from './native';
 
 export type TtsProvider = 'siliconflow' | 'mimoTTS' | 'indextts2';
+export type BystanderMode = 'voiceDesign' | 'audioPool';
+export const DEFAULT_BYSTANDER_MODEL = 'mimo-v2.5-tts-voicedesign';
 export type SettingsGroup =
   | 'llm'
   | 'prescan'
@@ -21,6 +23,7 @@ export interface EngineConfig {
   siliconflow: ModelConfig & {uploadEndpoint: string};
   mimoTTS: ModelConfig & {stylePrompt: string; sampleRate: number};
   indextts2: {endpoint: string; apiKey: string};
+  bystander: {mode: BystanderMode; model: string};
   generation: {
     prescanCount: number;
     prefetchCount: number;
@@ -64,6 +67,7 @@ export const defaultConfig = (): EngineConfig => ({
     sampleRate: 24000,
   },
   indextts2: {endpoint: '', apiKey: ''},
+  bystander: {mode: 'voiceDesign', model: DEFAULT_BYSTANDER_MODEL},
   generation: {prescanCount: 10, prefetchCount: 2, background: true},
   advanced: {
     indexTtsWaitHours: 1,
@@ -104,6 +108,9 @@ export function validateConfig(
   config: EngineConfig,
   requireReady = false,
 ): void {
+  if (config.bystander.mode === 'voiceDesign' && !config.bystander.model.trim()) {
+    throw new ConfigurationError('请填写路人配音模型。', 'tts');
+  }
   const models = [
     ['llm', config.llm],
     ['prescan', config.prescan],
@@ -190,6 +197,7 @@ export async function loadConfig(): Promise<EngineConfig> {
     siliconflow: {...defaults.siliconflow, ...saved.siliconflow},
     mimoTTS: {...defaults.mimoTTS, ...saved.mimoTTS},
     indextts2: {...defaults.indextts2, ...saved.indextts2},
+    bystander: {...defaults.bystander, ...saved.bystander},
     generation: {...defaults.generation, ...saved.generation},
     advanced: {...defaults.advanced, ...saved.advanced},
   };
