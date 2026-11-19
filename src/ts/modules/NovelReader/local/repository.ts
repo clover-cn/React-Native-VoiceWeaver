@@ -26,6 +26,7 @@ export interface Character {
 export interface LocalChapter {
   sourceText?: string;
   contentHash: string;
+  regenerationId?: string;
   configHash: string;
   segments: ListenSegment[];
   phase: string;

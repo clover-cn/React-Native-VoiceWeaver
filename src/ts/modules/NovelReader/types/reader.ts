@@ -89,6 +89,7 @@ export interface ListenBookGeneratePayload {
   chapterTitle?: string;
   chapterText: string;
   prescanTexts?: ListenBookPrescanText[];
+  regenerationId?: string;
 }
 
 export interface GenerationSettings {

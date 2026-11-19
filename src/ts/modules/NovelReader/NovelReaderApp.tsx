@@ -68,6 +68,7 @@ import {
   areListenSegmentsFullyPlayable,
   buildListenSegmentFailureHint,
   buildListenProjectName,
+  createListenSessionId,
   createTextHash,
   normalizeChapterTextForRequest,
 } from './utils/listenBook';
@@ -1841,7 +1842,7 @@ const NovelReaderApp: React.FC = () => {
     collapseListenPreparation,
   ]);
 
-  const handleStartListen = async () => {
+  const startChapterListening = useCallback(async (regenerationId?: string) => {
     if (!selectedBook) {
       return;
     }
@@ -1852,9 +1853,10 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
-    if (preparation && !preparation.error) {
+    if (!regenerationId && preparation && !preparation.error) {
       return;
     }
+    const previousPreparationId = preparationIdRef.current;
     try {
       await assertNarratorAvailable(curProjectName);
     } catch (error) {
@@ -1864,13 +1866,17 @@ const NovelReaderApp: React.FC = () => {
       );
       return;
     }
+    if (preparationIdRef.current !== previousPreparationId) {
+      return;
+    }
     resetListen(true);
     stopPlayback();
     const id = ++preparationIdRef.current;
-    setRestorePlaybackProgress(true);
+    setRestorePlaybackProgress(!regenerationId);
     setPlaybackSession(id);
     setPreparation({
       id,
+      regenerationId,
       assetId: `${curProjectName}_${currentChapterIndex}`,
       startedAt: Date.now(),
       expanded: true,
@@ -1915,17 +1921,20 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
 
-      // 先检查完整音频、在途任务及可复用分段，避免恢复合成时下载预扫描正文。
-      updateListenRuntime('loading', false, '正在检查听书缓存…');
-      const cacheStatus = await checkListenCache(
-        curProjectName,
-        currentChapterIndex,
-        chapterText,
-      );
+      // 只有普通启动才检查旧缓存，重新生成会重新收集预扫描正文。
+      let cacheStatus: Awaited<ReturnType<typeof checkListenCache>> | undefined;
+      if (!regenerationId) {
+        updateListenRuntime('loading', false, '正在检查听书缓存…');
+        cacheStatus = await checkListenCache(
+          curProjectName,
+          currentChapterIndex,
+          chapterText,
+        );
+      }
       if (!active()) {
         return;
       }
-      if (cacheStatus.cached) {
+      if (cacheStatus?.cached) {
         setStage('play');
         updateListenRuntime('ready', true, '');
         return;
@@ -1935,9 +1944,9 @@ const NovelReaderApp: React.FC = () => {
       setStage(selectedBook.listenMode === 'plain' ? 'generate' : 'analyze');
       if (
         selectedBook.listenMode !== 'plain' &&
-        !cacheStatus.inProgress &&
-        !cacheStatus.hasReusableSegments &&
-        !cacheStatus.prescanComplete
+        !cacheStatus?.inProgress &&
+        !cacheStatus?.hasReusableSegments &&
+        !cacheStatus?.prescanComplete
       ) {
         const config = await fetchListenBookConfig();
         if (!active()) {
@@ -1976,10 +1985,11 @@ const NovelReaderApp: React.FC = () => {
       }
 
       updateListenRuntime('loading', false, '正在启动端侧听书任务…');
-      startListening(curProjectName, currentChapterIndex, {
+      await startListening(curProjectName, currentChapterIndex, {
         chapterTitle: chapter.title || '',
         chapterText,
         prescanTexts,
+        regenerationId,
       });
     } catch (error) {
       if (!active()) {
@@ -1997,7 +2007,25 @@ const NovelReaderApp: React.FC = () => {
           : current,
       );
     }
-  };
+  }, [
+    buildPrescanTexts,
+    chapterList,
+    checkListenCache,
+    currentChapterIndex,
+    currentChapterText,
+    ensureListenGenerationContext,
+    fetchListenBookConfig,
+    loadChapterTextForTts,
+    preparation,
+    resetListen,
+    selectedBook,
+    startListening,
+    stopPlayback,
+    updateListenRuntime,
+  ]);
+  const handleStartListen = useCallback(() => {
+    void startChapterListening(preparation?.error ? preparation.regenerationId : undefined);
+  }, [preparation, startChapterListening]);
 
   const handleStopListen = () => {
     cancelActiveChapterLoad();
@@ -2344,6 +2372,28 @@ const NovelReaderApp: React.FC = () => {
 
   const [audioExportVisible, setAudioExportVisible] = useState(false);
   const handleMenuItemClick = useCallback((id: string) => {
+    if (id === 'regenerate') {
+      const book = selectedBookRef.current;
+      const chapterIndex = currentChapterIndexRef.current;
+      if (!isListenMode || !book || chapterIndex !== currentChapterIndex) {
+        return;
+      }
+      Alert.alert('重新生成本章', '确认后将从头生成当前章节的配音，并从本章开头播放。', [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '重新生成',
+          onPress: () => {
+            if (
+              selectedBookRef.current === book &&
+              currentChapterIndexRef.current === chapterIndex
+            ) {
+              void startChapterListening(createListenSessionId());
+            }
+          },
+        },
+      ]);
+      return;
+    }
     if (id === 'download') {
       setAudioExportVisible(true);
       return;
@@ -2375,7 +2425,7 @@ const NovelReaderApp: React.FC = () => {
     if (id === 'sleep') {
       setSleepTimerVisible(true);
     }
-  }, []);
+  }, [currentChapterIndex, isListenMode, startChapterListening]);
 
   // —— Modal onClose 回调收敛 (A3): 改为稳定的 useCallback,避免每次 render 给 Modal 传新引用,
   // 这些 Modal 已 memo / 内部 visible 检查开销可控,但稳定引用能减少不必要的 reconcile。

@@ -358,6 +358,7 @@ async function checkpoint(task: Task, contentHash: string): Promise<void> {
     project.chapters[task.chapterIndex] = {
       sourceText: task.payload.chapterText || previous?.sourceText,
       contentHash,
+      regenerationId: task.payload.regenerationId || previous?.regenerationId,
       configHash: configIdentity(task.config, task.plain, task.articleReferenceAudioId),
       segments: task.segments,
       phase: task.phase,
@@ -596,8 +597,10 @@ async function run(task: Task): Promise<void> {
     }
     let project = await loadProject(task.projectName);
     const cached = project.chapters[task.chapterIndex];
+    const regenerationId = task.payload.regenerationId;
     if (
       cached?.contentHash === hash &&
+      (!regenerationId || cached.regenerationId === regenerationId) &&
       cached.configHash === configIdentity(task.config, task.plain, task.articleReferenceAudioId)
     ) {
       task.segments = (await validateSegmentFiles(cached.segments)).map(segment =>
@@ -670,13 +673,17 @@ async function run(task: Task): Promise<void> {
               },
             ]
       ).slice(0, config.generation.prescanCount);
-      const reusePrescan = canReusePrescan(
-        project.prescans?.[task.chapterIndex],
-        config,
-        task.chapterIndex,
-        hash,
-        task.payload.prescanTexts,
-      );
+      const prescanRecord = project.prescans?.[task.chapterIndex];
+      // 重新生成只复用本次任务已经保存的预扫描和分段。
+      const reusePrescan =
+        (!regenerationId || prescanRecord?.regenerationId === regenerationId) &&
+        canReusePrescan(
+          prescanRecord,
+          config,
+          task.chapterIndex,
+          hash,
+          task.payload.prescanTexts,
+        );
       if (prescan.length && !reusePrescan) {
         task.phase = 'prescan';
         publish(task);
@@ -714,7 +721,7 @@ async function run(task: Task): Promise<void> {
           // 与角色和活动记录一起落盘，后续正文解析失败也可复用成功结果。
           current.prescans = {
             ...current.prescans,
-            [task.chapterIndex]: createPrescanRecord(config, prescan),
+            [task.chapterIndex]: createPrescanRecord(config, prescan, regenerationId),
           };
         });
       } else if (reusePrescan) {
@@ -915,6 +922,7 @@ export async function generateChapter(
   );
   if (
     existing &&
+    (!payload.regenerationId || existing.payload.regenerationId === payload.regenerationId) &&
     (plain ||
       JSON.stringify(existing.config.bystander) === JSON.stringify(config.bystander)) &&
     configIdentity(existing.config, existing.plain, existing.articleReferenceAudioId) ===
@@ -926,7 +934,11 @@ export async function generateChapter(
     return existing;
   }
   if (existing) {
-    existing.controller.abort();
+    if (payload.regenerationId) {
+      cancelGeneration(projectName, existing.id, '重新生成本章', true);
+    } else {
+      existing.controller.abort();
+    }
   }
   const task: Task = {
     id: `local_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -982,17 +994,22 @@ export async function checkChapter(
     item =>
       item.projectName === projectName &&
       item.chapterIndex === chapterIndex &&
+      !item.controller.signal.aborted &&
       !['done', 'error', 'cancelled', 'paused'].includes(item.phase),
+  );
+  const replacingCache = Boolean(
+    task?.payload.regenerationId && task.payload.regenerationId !== entry?.regenerationId,
   );
   if (
     !entry ||
+    replacingCache ||
     (contentHash && entry.contentHash !== contentHash) ||
     entry.configHash !== configIdentity(config, project.listenMode === 'plain', project.articleReferenceAudioId)
   ) {
     return {
       exists: false,
       segments: [],
-      prescanComplete,
+      prescanComplete: !replacingCache && prescanComplete,
       inProgress: Boolean(task),
       taskId: task?.id,
     };

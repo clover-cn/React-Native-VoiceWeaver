@@ -9,6 +9,7 @@ import {prescanPrompt} from './prompts';
 export interface PrescanRecord {
   configHash: string;
   chapterHashes: Record<string, string>;
+  regenerationId?: string;
 }
 
 /** 只用影响角色预扫描的配置建立身份，语音合成设置变化不触发重扫。 */
@@ -27,9 +28,11 @@ function identity(config: EngineConfig): string {
 export function createPrescanRecord(
   config: EngineConfig,
   texts: ListenBookPrescanText[],
+  regenerationId?: string,
 ): PrescanRecord {
   return {
     configHash: identity(config),
+    regenerationId,
     chapterHashes: Object.fromEntries(
       texts.map(item => [
         item.chapterIndex,

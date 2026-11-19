@@ -164,6 +164,9 @@ export const useListenBook = (): UseListenBookReturn => {
     (skipCancel = false) => {
       if (!skipCancel) {
         void cancelListenTask();
+      } else {
+        context.current.epoch++;
+        context.current.taskId = '';
       }
       setListenState('idle');
       setListenPhase('');
