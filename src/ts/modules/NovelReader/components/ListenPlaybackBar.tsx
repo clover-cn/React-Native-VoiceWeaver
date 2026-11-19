@@ -205,7 +205,6 @@ const ListenPlaybackBar = memo((props: Props) => {
             onPress={props.onOpenCatalog}
             style={styles.action}
             activeOpacity={0.75}>
-            {/* <Text style={styles.actionIcon}>☷</Text> */}
             <Image source={AppImages.menuIcon} style={styles.menuIcon} />
           </TouchableOpacity>
         </View>
