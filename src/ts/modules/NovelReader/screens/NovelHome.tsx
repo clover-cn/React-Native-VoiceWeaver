@@ -1,6 +1,7 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {memo, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  Animated,
   View,
   Text,
   StyleSheet,
@@ -14,6 +15,33 @@ import {
 import {ReadingRecord} from '../utils/readerStorage';
 import {useDebug} from '../debug';
 import {AppImages} from '../../../../assets';
+
+/** 音色库：4 柱单色琥珀音频律动波形 */
+const VoiceWaveIcon = memo(() => (
+  <View style={styles.waveIconBox}>
+    <View style={[styles.voiceWaveBar, {height: 8}]} />
+    <View style={[styles.voiceWaveBar, {height: 16}]} />
+    <View style={[styles.voiceWaveBar, {height: 12}]} />
+    <View style={[styles.voiceWaveBar, {height: 6}]} />
+  </View>
+));
+
+/** 导入文章：极简单色文稿线框图标 */
+const ArticleDocIcon = memo(() => (
+  <View style={styles.docIconBox}>
+    <View style={styles.docLine1} />
+    <View style={styles.docLine2} />
+    <View style={styles.docLine3} />
+  </View>
+));
+
+/** 书源规则管理：单色经纬线框地球仪 */
+const SourceGlobeIcon = memo(() => (
+  <View style={styles.globeBox}>
+    <View style={styles.globeEquator} />
+    <View style={styles.globeMeridian} />
+  </View>
+));
 
 interface NovelHomeProps {
   onNavigateSearch: () => void;
@@ -75,6 +103,25 @@ const NovelHome: React.FC<NovelHomeProps> = ({
 }) => {
   const debugCtx = useDebug();
   const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
+  // 悬浮菜单展开与微回弹缩放动画
+  const menuAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (isFloatingMenuOpen) {
+      Animated.spring(menuAnim, {
+        toValue: 1,
+        friction: 8,
+        tension: 65,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(menuAnim, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isFloatingMenuOpen, menuAnim]);
 
   // 时段问候语
   const {greeting, subGreeting} = useMemo(() => getTimeGreeting(), []);
@@ -338,32 +385,54 @@ const NovelHome: React.FC<NovelHomeProps> = ({
 
       {/* 5. 悬浮菜单背景遮罩 */}
       {isFloatingMenuOpen && (
-        <TouchableOpacity
-          style={styles.menuBackdrop}
-          activeOpacity={1}
-          onPress={() => setIsFloatingMenuOpen(false)}
-          accessibilityLabel="关闭悬浮菜单"
-        />
+        <Animated.View style={[styles.menuBackdrop, {opacity: menuAnim}]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setIsFloatingMenuOpen(false)}
+            accessibilityLabel="关闭悬浮菜单"
+          />
+        </Animated.View>
       )}
 
-      {/* 6. 【重构核心】右下角超级多功能悬浮中枢 (Super FAB) */}
+      {/* 6. 【重构核心】右下角一体化多功能浮动卡片 (Unified Popover Card) */}
       <View style={styles.floatingMenu}>
         {isFloatingMenuOpen ? (
-          <View style={styles.menuItemsWrap}>
-            {/* 选项 1：听书与 API 设置（专门配置各项听书细节与模型 API） */}
+          <Animated.View
+            style={[
+              styles.menuCard,
+              {
+                opacity: menuAnim,
+                transform: [
+                  {
+                    scale: menuAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                  {
+                    translateY: menuAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [12, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}>
+            {/* 分组 1：听书与音效系统 */}
             <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.82}
+              style={styles.menuRow}
+              activeOpacity={0.72}
               onPress={() => {
                 setIsFloatingMenuOpen(false);
                 onOpenSettings();
               }}
               accessibilityRole="button"
               accessibilityLabel="听书与 API 设置">
-              <View style={[styles.menuItemIconBg, styles.menuIconSettings]}>
+              <View style={styles.menuItemIconBg}>
                 <Image
                   source={AppImages.setting}
-                  style={styles.settingIcon}
+                  style={styles.menuIconImage}
                   resizeMode="contain"
                 />
               </View>
@@ -373,12 +442,12 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                   正文解析 / TTS 模型 / 预取参数
                 </Text>
               </View>
+              <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
-
-            {/* 选项 2：音色库与参考录音 */}
+            <View style={styles.menuDivider} />
             <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.82}
+              style={styles.menuRow}
+              activeOpacity={0.72}
               onPress={() => {
                 setIsFloatingMenuOpen(false);
                 if (onOpenAudioLibrary) {
@@ -389,31 +458,43 @@ const NovelHome: React.FC<NovelHomeProps> = ({
               }}
               accessibilityRole="button"
               accessibilityLabel="音色库与参考录音">
-              <View style={[styles.menuItemIconBg, styles.menuIconVoice]}>
-                <Text style={styles.menuItemIconText}>🎙️</Text>
+              <View style={styles.menuItemIconBg}>
+                <VoiceWaveIcon />
               </View>
               <View style={styles.menuItemTextCol}>
                 <Text style={styles.menuItemTitle}>音色库与参考录音</Text>
                 <Text style={styles.menuItemSub}>管理演播声音与克隆音色</Text>
               </View>
+              <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem} activeOpacity={0.82}
-              disabled={isImporting} accessibilityRole="button" accessibilityLabel="导入文章"
-              onPress={() => { setIsFloatingMenuOpen(false); onImportArticle(); }}>
-              <View style={[styles.menuItemIconBg, styles.menuIconImport]}>
-                <Text style={styles.menuItemIconText}>📄</Text>
+            {/* 优雅分组细分割线 */}
+            <View style={styles.menuDivider} />
+
+            {/* 分组 2：内容导入与网络书源 */}
+            <TouchableOpacity
+              style={styles.menuRow}
+              activeOpacity={0.72}
+              disabled={isImporting}
+              accessibilityRole="button"
+              accessibilityLabel="导入文章"
+              onPress={() => {
+                setIsFloatingMenuOpen(false);
+                onImportArticle();
+              }}>
+              <View style={styles.menuItemIconBg}>
+                <ArticleDocIcon />
               </View>
               <View style={styles.menuItemTextCol}>
                 <Text style={styles.menuItemTitle}>导入文章</Text>
-                <Text style={styles.menuItemSub}>网页 / 本地 TXT / 粘贴文字，单音色朗读</Text>
+                <Text style={styles.menuItemSub}>网页 / 本地 TXT / 粘贴文字</Text>
               </View>
+              <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
-
-            {/* 选项 3：导入本地书籍 */}
+            <View style={styles.menuDivider} />
             <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.82}
+              style={styles.menuRow}
+              activeOpacity={0.72}
               onPress={() => {
                 setIsFloatingMenuOpen(false);
                 onImportBook();
@@ -421,10 +502,10 @@ const NovelHome: React.FC<NovelHomeProps> = ({
               disabled={isImporting}
               accessibilityRole="button"
               accessibilityLabel="导入书籍">
-              <View style={[styles.menuItemIconBg, styles.menuIconImport]}>
+              <View style={styles.menuItemIconBg}>
                 <Image
                   source={AppImages.imp}
-                  style={styles.settingIcon}
+                  style={styles.menuIconImage}
                   resizeMode="contain"
                 />
               </View>
@@ -434,27 +515,28 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                 </Text>
                 <Text style={styles.menuItemSub}>选择并解析离线 TXT 小说</Text>
               </View>
+              <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
-
-            {/* 选项 4：书源规则管理 */}
+            <View style={styles.menuDivider} />
             <TouchableOpacity
-              style={styles.menuItem}
-              activeOpacity={0.82}
+              style={styles.menuRow}
+              activeOpacity={0.72}
               onPress={() => {
                 setIsFloatingMenuOpen(false);
                 onManageBookSources();
               }}
               accessibilityRole="button"
               accessibilityLabel="书源管理">
-              <View style={[styles.menuItemIconBg, styles.menuIconSource]}>
-                <Text style={styles.menuItemIconText}>🌐</Text>
+              <View style={styles.menuItemIconBg}>
+                <SourceGlobeIcon />
               </View>
               <View style={styles.menuItemTextCol}>
                 <Text style={styles.menuItemTitle}>书源规则管理</Text>
                 <Text style={styles.menuItemSub}>管理与测试网络小说书源</Text>
               </View>
+              <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         ) : null}
 
         {/* 主悬浮球 */}
@@ -924,10 +1006,6 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
   },
-  settingIcon: {
-    width: 18,
-    height: 18,
-  },
   emptyCard: {
     marginHorizontal: 22,
     backgroundColor: '#FFFFFF',
@@ -963,7 +1041,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
 
-  // 6. 右下角超级悬浮中枢 (Super FAB)
+  // 6. 右下角超级多功能一体化浮动卡片 (Unified Popover Card)
   floatingMenu: {
     position: 'absolute',
     right: 20,
@@ -971,49 +1049,111 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     zIndex: 25,
   },
-  menuItemsWrap: {
-    alignItems: 'flex-end',
-    marginBottom: 14,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minWidth: 230,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 10,
+  menuCard: {
+    width: 270,
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: '#EFECE6',
+    paddingVertical: 6,
+    marginBottom: 14,
     shadowColor: '#1C1917',
-    shadowOffset: {width: 0, height: 6},
-    shadowOpacity: 0.14,
-    shadowRadius: 14,
-    elevation: 8,
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#F5F2EB',
+    marginVertical: 4,
+    marginHorizontal: 14,
   },
   menuItemIconBg: {
     width: 36,
     height: 36,
-    borderRadius: 12,
+    borderRadius: 11,
+    backgroundColor: '#FAF5ED',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
-  menuIconSettings: {
-    backgroundColor: 'rgba(217, 119, 6, 0.12)',
+  menuIconImage: {
+    width: 18,
+    height: 18,
+    tintColor: '#B45309',
   },
-  menuIconVoice: {
-    backgroundColor: 'rgba(168, 85, 247, 0.12)',
+  waveIconBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2.5,
+    width: 18,
+    height: 18,
   },
-  menuIconImport: {
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  voiceWaveBar: {
+    width: 2.5,
+    backgroundColor: '#B45309',
+    borderRadius: 1.5,
   },
-  menuIconSource: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  docIconBox: {
+    width: 15,
+    height: 18,
+    borderWidth: 1.5,
+    borderColor: '#B45309',
+    borderRadius: 3,
+    paddingHorizontal: 2,
+    justifyContent: 'center',
+    gap: 2.5,
   },
-  menuItemIconText: {
-    fontSize: 16,
+  docLine1: {
+    width: 7,
+    height: 1.5,
+    backgroundColor: '#B45309',
+    borderRadius: 1,
+  },
+  docLine2: {
+    width: 9,
+    height: 1.5,
+    backgroundColor: '#B45309',
+    borderRadius: 1,
+  },
+  docLine3: {
+    width: 6,
+    height: 1.5,
+    backgroundColor: '#B45309',
+    borderRadius: 1,
+  },
+  globeBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#B45309',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  globeEquator: {
+    position: 'absolute',
+    width: '100%',
+    height: 1.5,
+    backgroundColor: '#B45309',
+  },
+  globeMeridian: {
+    width: 8,
+    height: '100%',
+    borderRadius: 4,
+    borderWidth: 1.2,
+    borderColor: '#B45309',
   },
   menuItemTextCol: {
     flex: 1,
@@ -1024,9 +1164,15 @@ const styles = StyleSheet.create({
     color: '#1C1917',
   },
   menuItemSub: {
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#78716C',
-    marginTop: 1,
+    marginTop: 1.5,
+  },
+  menuChevron: {
+    fontSize: 15,
+    color: '#D6D3D1',
+    fontWeight: '600',
+    marginLeft: 6,
   },
   floatingButton: {
     width: 58,
