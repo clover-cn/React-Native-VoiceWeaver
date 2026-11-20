@@ -1,11 +1,14 @@
-import {restorePendingGeneration} from './local/engine';
+import {restorePendingGeneration, retireChapterProject} from './local/engine';
 import ChapterAudioExportModal from './components/ChapterAudioExportModal';
 import {assertNarratorAvailable} from './local/preflight';
 import SettingsScreen from './screens/SettingsScreen';
 import ArticleImportModal from './components/ArticleImportModal';
 import {readArticle, saveArticle} from './utils/articleStorage';
 import {
+  chapterStorageIndex,
+  clearWebNovelChapterFiles,
   readWebNovelChapter,
+  removeWebNovelChapter,
   saveWebNovelChapter,
 } from './utils/webNovelStorage';
 import {SettingsGroup} from './local/config';
@@ -19,6 +22,7 @@ import {
   Platform,
   StatusBar,
   StyleSheet,
+  unstable_batchedUpdates,
   View,
 } from 'react-native';
 import {Toast, GlobalToast} from '../base/utils/ToastManager';
@@ -438,6 +442,7 @@ const NovelReaderApp: React.FC = () => {
   }, [audioOptions]);
 
   const chapterListRef = useRef<Chapter[]>([]);
+  const deletingChapterRef = useRef(false);
   const currentChapterIndexRef = useRef<number>(-1);
   const selectedBookRef = useRef<Book | null>(null);
   const projectNameRef = useRef<string>('');
@@ -520,6 +525,11 @@ const NovelReaderApp: React.FC = () => {
   } = useListenBook();
 
   const projectName = selectedBook ? buildListenProjectName(selectedBook) : '';
+  const audioChapterIndex = chapterStorageIndex(
+    selectedBook,
+    chapterList,
+    currentChapterIndex,
+  );
 
   useEffect(() => {
     projectNameRef.current = projectName;
@@ -571,7 +581,7 @@ const NovelReaderApp: React.FC = () => {
     );
     saveListenChapterCache({
       projectName,
-      chapterIndex: currentChapterIndex,
+      chapterIndex: audioChapterIndex,
       contentHash,
       segments,
       updatedAt: Date.now(),
@@ -579,6 +589,7 @@ const NovelReaderApp: React.FC = () => {
       console.warn('[NovelReaderApp] 保存本地听书清单失败', error);
     });
   }, [
+    audioChapterIndex,
     currentChapterIndex,
     currentChapterText,
     isGenerationComplete,
@@ -822,7 +833,10 @@ const NovelReaderApp: React.FC = () => {
       index: number,
       cancelToken?: BookSourceCancelToken,
     ): Promise<ChapterContentCacheEntry> => {
-      const key = buildChapterContentCacheKey(book, index);
+      const key = buildChapterContentCacheKey(
+        book,
+        chapterStorageIndex(book, list, index),
+      );
       const cached = chapterContentCacheRef.current.get(key);
       if (cached) {
         return cached;
@@ -920,7 +934,11 @@ const NovelReaderApp: React.FC = () => {
         );
       } else {
         setReaderLoading(null);
-        Alert.alert('打开失败', '这本书没有可阅读的本地章节。');
+        if (book.sourceType === 'local_web_novel') {
+          setContentParagraphs(['还没有章节，可在菜单中选择「追加章节」。']);
+        } else {
+          Alert.alert('打开失败', '这本书没有可阅读的本地章节。');
+        }
       }
       return;
     }
@@ -1009,7 +1027,8 @@ const NovelReaderApp: React.FC = () => {
           }
           return null;
         }
-        const cacheKey = buildChapterContentCacheKey(book, index);
+        const storageIndex = chapterStorageIndex(book, list, index);
+        const cacheKey = buildChapterContentCacheKey(book, storageIndex);
         const cachedData = cacheKey
           ? chapterContentCacheRef.current.get(cacheKey)
           : null;
@@ -1037,7 +1056,7 @@ const NovelReaderApp: React.FC = () => {
         }
 
         setReaderLoading(null);
-        checkListenCache(curProjectName, index, data.text).catch(error => {
+        checkListenCache(curProjectName, storageIndex, data.text).catch(error => {
           console.warn('[NovelReaderApp] 检查服务端听书缓存失败', error);
         });
         return data;
@@ -1084,7 +1103,10 @@ const NovelReaderApp: React.FC = () => {
     }
 
     const nextIndex = currentChapterIndex + 1;
-    const cacheKey = buildChapterContentCacheKey(selectedBook, nextIndex);
+    const cacheKey = buildChapterContentCacheKey(
+      selectedBook,
+      chapterStorageIndex(selectedBook, chapterList, nextIndex),
+    );
     if (!cacheKey || chapterContentCacheRef.current.has(cacheKey)) {
       return;
     }
@@ -1132,7 +1154,7 @@ const NovelReaderApp: React.FC = () => {
       const normalizedCachedText = normalizeChapterTextForRequest(cachedText);
       if (normalizedCachedText) {
         return {
-          chapterIndex: index,
+          chapterIndex: chapterStorageIndex(book, list, index),
           chapterTitle: chapter.title || '',
           text: normalizedCachedText,
         };
@@ -1145,7 +1167,7 @@ const NovelReaderApp: React.FC = () => {
       }
 
       return {
-        chapterIndex: index,
+        chapterIndex: chapterStorageIndex(book, list, index),
         chapterTitle: chapter.title || '',
         text,
       };
@@ -1243,7 +1265,7 @@ const NovelReaderApp: React.FC = () => {
           return localService.generate({
             projectName: requestProjectName,
             listenerId,
-            chapterIndex,
+            chapterIndex: item.chapterIndex,
             chapterTitle: item.chapterTitle,
             chapterText: item.text,
             prescanTexts: [],
@@ -1294,7 +1316,7 @@ const NovelReaderApp: React.FC = () => {
       setIsListenMode(true);
       setRestorePlaybackProgress(false);
       setPlaybackSession(++preparationIdRef.current);
-      await startListening(currentProjectName, index, {
+      await startListening(currentProjectName, chapterStorageIndex(book, list, index), {
         chapterTitle: chapter.title || '',
         chapterText,
         prescanTexts: [],
@@ -1396,8 +1418,8 @@ const NovelReaderApp: React.FC = () => {
         return;
       }
       const requestProjectName = projectName;
-      const requestChapterIndex = currentChapterIndex;
-      const chapterTitle = chapterList[requestChapterIndex]?.title || '';
+      const requestChapterIndex = audioChapterIndex;
+      const chapterTitle = chapterList[currentChapterIndex]?.title || '';
       const chapterText = normalizeChapterTextForRequest(currentChapterText);
 
       if (
@@ -1465,6 +1487,7 @@ const NovelReaderApp: React.FC = () => {
       }
     },
     [
+      audioChapterIndex,
       currentChapterIndex,
       currentChapterText,
       chapterList,
@@ -1496,7 +1519,7 @@ const NovelReaderApp: React.FC = () => {
     isListenMode ? listenState : 'idle',
     selectedBook && currentChapterIndex >= 0
       ? {
-          assetId: `${projectName}_${currentChapterIndex}`,
+          assetId: `${projectName}_${audioChapterIndex}`,
           playbackSessionId: playbackSession,
           restoreProgress: restorePlaybackProgress,
           title: chapterList[currentChapterIndex]?.title || '',
@@ -1506,7 +1529,7 @@ const NovelReaderApp: React.FC = () => {
         }
       : undefined,
     projectName,
-    currentChapterIndex,
+    audioChapterIndex,
     handleChapterFinished,
     handleAutoGenerateMissingSegment,
     preparation ? preparation.autoPlay && !preparation.error : true,
@@ -1577,7 +1600,7 @@ const NovelReaderApp: React.FC = () => {
       return;
     }
 
-    const prefetchKey = `${projectName}_${currentChapterIndex}`;
+    const prefetchKey = `${projectName}_${audioChapterIndex}`;
     if (!projectName || prefetchedChapterKeyRef.current === prefetchKey) {
       return;
     }
@@ -1587,6 +1610,7 @@ const NovelReaderApp: React.FC = () => {
       console.warn('[NovelReaderApp] 后台预生成调度失败', error);
     });
   }, [
+    audioChapterIndex,
     currentChapterIndex,
     isGenerationComplete,
     isListenMode,
@@ -1609,6 +1633,9 @@ const NovelReaderApp: React.FC = () => {
   }, [cancelActiveChapterLoad, resetListen, stopPlayback]);
 
   const exitReader = useCallback(async () => {
+    if (deletingChapterRef.current) {
+      return;
+    }
     pendingArticlePlayback.current = '';
     const nextViewState = readerReturnViewState;
     cancelActiveChapterLoad();
@@ -1901,7 +1928,7 @@ const NovelReaderApp: React.FC = () => {
     setPreparation({
       id,
       regenerationId,
-      assetId: `${curProjectName}_${currentChapterIndex}`,
+      assetId: `${curProjectName}_${audioChapterIndex}`,
       startedAt: Date.now(),
       expanded: true,
       autoPlay: true,
@@ -1951,7 +1978,7 @@ const NovelReaderApp: React.FC = () => {
         updateListenRuntime('loading', false, '正在检查听书缓存…');
         cacheStatus = await checkListenCache(
           curProjectName,
-          currentChapterIndex,
+          audioChapterIndex,
           chapterText,
         );
       }
@@ -2009,7 +2036,7 @@ const NovelReaderApp: React.FC = () => {
       }
 
       updateListenRuntime('loading', false, '正在启动端侧听书任务…');
-      await startListening(curProjectName, currentChapterIndex, {
+      await startListening(curProjectName, audioChapterIndex, {
         chapterTitle: chapter.title || '',
         chapterText,
         prescanTexts,
@@ -2034,6 +2061,7 @@ const NovelReaderApp: React.FC = () => {
   }, [
     buildPrescanTexts,
     chapterList,
+    audioChapterIndex,
     checkListenCache,
     currentChapterIndex,
     currentChapterText,
@@ -2077,7 +2105,7 @@ const NovelReaderApp: React.FC = () => {
     ) => {
       await localService.chapterEdits({
         projectName,
-        chapterIndex: currentChapterIndex,
+        chapterIndex: audioChapterIndex,
         invalidatedSegmentIndexes,
         segments: nextSegments.map(segment => ({
           type: segment.type,
@@ -2097,7 +2125,7 @@ const NovelReaderApp: React.FC = () => {
         })),
       });
     },
-    [currentChapterIndex, projectName],
+    [audioChapterIndex, projectName],
   );
 
   const syncRoleOverrideForSegment = useCallback(
@@ -2114,11 +2142,11 @@ const NovelReaderApp: React.FC = () => {
         projectName,
         role: segment.role,
         audioId: audioId || null,
-        chapterIndex: currentChapterIndex,
+        chapterIndex: audioChapterIndex,
         skipCacheInvalidation: true,
       });
     },
-    [currentChapterIndex, projectName],
+    [audioChapterIndex, projectName],
   );
 
   const syncGlobalBindingsForRole = useCallback(
@@ -2158,7 +2186,7 @@ const NovelReaderApp: React.FC = () => {
       const listenerId = getListenerId(requestProjectName);
       const data = await localService.autoRegenerate({
         projectName,
-        currentChapterIndex,
+        currentChapterIndex: audioChapterIndex,
         listenerId,
         invalidatedSegmentIndexes: invalidatedIndexes,
         futureRoleUpdate,
@@ -2195,7 +2223,7 @@ const NovelReaderApp: React.FC = () => {
       }
     },
     [
-      currentChapterIndex,
+      audioChapterIndex,
       projectName,
       replaceSegments,
       updateListenRuntime,
@@ -2370,6 +2398,9 @@ const NovelReaderApp: React.FC = () => {
   );
 
   const handlePrevChapter = useCallback(() => {
+    if (deletingChapterRef.current) {
+      return;
+    }
     loadChapterContent(
       chapterListRef.current,
       currentChapterIndexRef.current - 1,
@@ -2377,6 +2408,9 @@ const NovelReaderApp: React.FC = () => {
   }, [loadChapterContent]);
 
   const handleNextChapter = useCallback(() => {
+    if (deletingChapterRef.current) {
+      return;
+    }
     loadChapterContent(
       chapterListRef.current,
       currentChapterIndexRef.current + 1,
@@ -2385,9 +2419,118 @@ const NovelReaderApp: React.FC = () => {
 
   const handleSelectChapter = useCallback(
     (index: number) => {
+      if (deletingChapterRef.current) {
+        return;
+      }
       loadChapterContent(chapterListRef.current, index);
     },
     [loadChapterContent],
+  );
+
+  const confirmDeleteChapter = useCallback(
+    (chapter: Chapter) => {
+      const book = selectedBookRef.current;
+      if (book?.sourceType !== 'local_web_novel' || deletingChapterRef.current) {
+        return;
+      }
+      Alert.alert('删除章节', `确定删除「${chapter.title}」？`, [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            if (
+              deletingChapterRef.current ||
+              selectedBookRef.current?.bookUrl !== book.bookUrl
+            ) {
+              return;
+            }
+            deletingChapterRef.current = true;
+            try {
+              const records = await removeWebNovelChapter(
+                book.bookUrl,
+                chapter.bookUrl,
+              );
+              setReadingRecords(records);
+              const updated = records.find(
+                record => record.book.bookUrl === book.bookUrl,
+              );
+              if (!updated) {
+                return;
+              }
+              const project = buildListenProjectName(book);
+              void Promise.all([
+                retireChapterProject(project, chapter.index),
+                clearWebNovelChapterFiles(book, chapter),
+              ]).catch(error => {
+                console.warn('[NovelReaderApp] 清理已删除章节的文件失败', error);
+              });
+              chapterContentCacheRef.current.delete(
+                buildChapterContentCacheKey(book, chapter.index),
+              );
+              if (selectedBookRef.current?.bookUrl !== book.bookUrl) {
+                return;
+              }
+
+              const previousPosition = currentChapterIndexRef.current;
+              const active = chapterListRef.current[previousPosition];
+              const chapters = updated.chapterList;
+              const activePosition = chapters.findIndex(
+                item => item.bookUrl === active?.bookUrl,
+              );
+              unstable_batchedUpdates(() => {
+                chapterListRef.current = chapters;
+                setChapterList(chapters);
+                setSelectedBook(updated.book);
+                if (activePosition >= 0) {
+                  currentChapterIndexRef.current = activePosition;
+                  setCurrentChapterIndex(activePosition);
+                  return;
+                }
+                cancelActiveChapterLoad();
+                stopPlayback();
+                if (chapters.length) {
+                  const fallbackPosition =
+                    active?.bookUrl === chapter.bookUrl
+                      ? Math.min(previousPosition, chapters.length - 1)
+                      : updated.currentChapterIndex;
+                  currentChapterIndexRef.current = fallbackPosition;
+                  void loadChapterContent(
+                    chapters,
+                    fallbackPosition,
+                    updated.book,
+                  );
+                } else {
+                  resetListen();
+                  setIsListenMode(false);
+                  currentChapterIndexRef.current = -1;
+                  setCurrentChapterIndex(-1);
+                  setCurrentChapterText('');
+                  setContentParagraphs([
+                    '还没有章节，可在菜单中选择「追加章节」。',
+                  ]);
+                  setReaderLoading(null);
+                }
+              });
+            } catch (error) {
+              Alert.alert(
+                '删除失败',
+                error instanceof Error ? error.message : '请稍后重试。',
+              );
+            } finally {
+              deletingChapterRef.current = false;
+            }
+          },
+        },
+      ]);
+    },
+    [
+      buildChapterContentCacheKey,
+      cancelActiveChapterLoad,
+      loadChapterContent,
+      resetListen,
+      stopPlayback,
+    ],
   );
 
   const handleOpenSegmentEditor = useCallback(async () => {
@@ -2448,15 +2591,11 @@ const NovelReaderApp: React.FC = () => {
         const book = selectedBookRef.current;
         const chapters = chapterListRef.current;
         const lastChapter = chapters[chapters.length - 1];
-        if (
-          book?.sourceType === 'local_web_novel' &&
-          lastChapter &&
-          !isDeletingBook
-        ) {
+        if (book?.sourceType === 'local_web_novel' && !isDeletingBook) {
           setNovelImport({
             bookUrl: book.bookUrl,
             name: book.name,
-            lastChapterTitle: lastChapter.title,
+            lastChapterTitle: lastChapter?.title ?? '暂无章节',
           });
         }
         return;
@@ -2609,6 +2748,11 @@ const NovelReaderApp: React.FC = () => {
               onPrevChapter={handlePrevChapter}
               onNextChapter={handleNextChapter}
               onSelectChapter={handleSelectChapter}
+              onDeleteChapter={
+                selectedBook?.sourceType === 'local_web_novel'
+                  ? confirmDeleteChapter
+                  : undefined
+              }
               onStartListen={handleStartListen}
               onStopListen={handleStopListen}
               onSegmentEditSubmit={handleSegmentEditSubmit}
@@ -2707,6 +2851,9 @@ const NovelReaderApp: React.FC = () => {
                 chapterListRef.current = chapters;
                 setChapterList(chapters);
                 setSelectedBook(book);
+                if (currentChapterIndexRef.current < 0) {
+                  void loadChapterContent(chapters, 0, book);
+                }
               }
               return record;
             },

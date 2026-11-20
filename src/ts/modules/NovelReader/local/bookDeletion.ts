@@ -17,7 +17,9 @@ async function deleteBookFiles(record: ReadingRecord): Promise<void> {
     async savedIndexes => {
       const indexes = [
         ...savedIndexes,
-        ...record.chapterList.map((_chapter, index) => index),
+        ...record.chapterList.map((chapter, index) =>
+          record.book.sourceType === 'local_web_novel' ? chapter.index : index,
+        ),
       ];
       await clearBookListeningData(
         buildListenProjectName(record.book),

@@ -99,6 +99,7 @@ export function getActiveChapterTask(
   );
 }
 const deletingProjects = new Set<string>();
+const removedChapterKeys = new Set<string>();
 const projectVersions = new Map<string, number>();
 
 /** 取消该书任务，等待在途请求退出后清理，阻止旧结果重建已删除资料。 */
@@ -134,6 +135,58 @@ export async function deleteBookProject(
   } finally {
     deletingProjects.delete(projectName);
   }
+}
+
+/** 取消此章的生成任务，持久化删除标记，避免后台恢复时重新生成。 */
+export async function retireChapterProject(
+  projectName: string,
+  chapterIndex: number,
+) {
+  const version = projectVersions.get(projectName) || 0;
+  removedChapterKeys.add(taskKey(projectName, chapterIndex));
+  for (const task of tasks.values()) {
+    if (task.projectName === projectName && task.chapterIndex === chapterIndex) {
+      cancelGeneration(projectName, task.id, '删除目录章节');
+    }
+  }
+  await enqueue(async () => {
+    if (
+      deletingProjects.has(projectName) ||
+      version !== (projectVersions.get(projectName) || 0)
+    ) {
+      return;
+    }
+    const uris = await updateProject(projectName, project => {
+      const removed = project.chapters[chapterIndex]?.segments ?? [];
+      delete project.chapters[chapterIndex];
+      delete project.prescans?.[chapterIndex];
+      project.removedChapterIndexes = [
+        ...new Set([...(project.removedChapterIndexes ?? []), chapterIndex]),
+      ];
+      const retained = new Set(
+        Object.values(project.chapters).flatMap(chapter =>
+          chapter.segments.flatMap(segment => [
+            segment.audioUrl,
+            segment.localAudioUrl,
+          ]),
+        ),
+      );
+      const generated = removed.flatMap(segment => [
+        segment.audioUrl,
+        segment.localAudioUrl,
+      ]);
+      return [...new Set(generated)].filter((uri): uri is string =>
+        Boolean(uri && /\/voiceweaver\/generated-[^/]+$/.test(uri) && !retained.has(uri)),
+      );
+    });
+    for (const [id, task] of tasks) {
+      if (task.projectName === projectName && task.chapterIndex === chapterIndex) {
+        tasks.delete(id);
+      }
+    }
+    await rememberPending();
+    await Promise.all(uris.map(uri => nativeCall('deleteAudio', {uri})));
+  }, -1);
 }
 const listeners = new Set<(snapshot: TaskSnapshot) => void>();
 const idleListeners = new Set<() => void>();
@@ -286,6 +339,13 @@ export async function restorePendingGeneration(): Promise<void> {
       deletingProjects.has(item.projectName) ||
       (versions.get(item.projectName) || 0) !==
         (projectVersions.get(item.projectName) || 0)
+    ) {
+      continue;
+    }
+    const project = await loadProject(item.projectName);
+    if (
+      project.removedChapterIndexes?.includes(item.chapterIndex) ||
+      removedChapterKeys.has(taskKey(item.projectName, item.chapterIndex))
     ) {
       continue;
     }
@@ -908,6 +968,12 @@ export async function generateChapter(
   // 取消必须覆盖仍在读取配置或检查录音、尚未登记到 tasks 的请求。
   assertStartAllowed(projectName, startStamp);
   const key = taskKey(projectName, chapterIndex);
+  if (
+    removedChapterKeys.has(key) ||
+    project.removedChapterIndexes?.includes(chapterIndex)
+  ) {
+    throw new Error('章节已删除，生成已取消。');
+  }
   const hash = createTextHash(
     normalizeChapterTextForRequest(payload.chapterText),
   );

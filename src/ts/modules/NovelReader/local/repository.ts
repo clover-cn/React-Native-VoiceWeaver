@@ -38,6 +38,7 @@ export interface LocalProject {
   articleReferenceAudioId?: string;
   articleSnapshot?: {title: string; text: string; sourceUrl?: string; savedAt: number};
   prescans?: Record<string, PrescanRecord>;
+  removedChapterIndexes?: number[];
   characters: Record<string, Character>;
   bindings: GlobalAudioBindings;
   overrides: Record<string, string | null>;
@@ -101,7 +102,10 @@ export function deleteProjectFiles(
         }
       }
     }
-    await cleanup(Object.keys(project.chapters).map(Number));
+    await cleanup([
+      ...Object.keys(project.chapters).map(Number),
+      ...(project.removedChapterIndexes ?? []),
+    ]);
     // 旧版本依据片段引用清理，新文件还带书籍标识以覆盖被替换的音频。
     await nativeCall('deleteProject', {
       key: projectKey(name),

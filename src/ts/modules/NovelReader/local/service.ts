@@ -166,7 +166,7 @@ export const localService = {
     for (const chapterIndex of futureChapters) {
       const chapter = (await repository.loadProject(payload.projectName))
         .chapters[chapterIndex];
-      if (!chapter.sourceText) {
+      if (!chapter?.sourceText) {
         continue;
       }
       await engine.generateChapter(

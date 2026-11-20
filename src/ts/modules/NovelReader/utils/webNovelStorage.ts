@@ -6,7 +6,10 @@ import {
   normalizeArticleUrl,
 } from './article';
 import {buildListenProjectName, createTextHash} from './listenBook';
-import {updateWebNovelRecords} from './readerStorage';
+import {
+  clearChapterListeningData,
+  updateWebNovelRecords,
+} from './readerStorage';
 
 type WebNovelTarget = {newBookId: string} | {bookUrl: string};
 
@@ -22,6 +25,20 @@ const chapterFile = (book: Book, index: number) =>
 
 const urlKey = (url: string) =>
   url.replace(/^https?:\/\/[^/?#]+/i, authority => authority.toLowerCase());
+
+/** 网页章节的文件和音频序号独立于目录位置，删章后也不复用。 */
+export function chapterStorageIndex(
+  book: Book | null,
+  chapters: Chapter[],
+  position: number,
+) {
+  return book?.sourceType === 'local_web_novel'
+    ? chapters[position]?.index ?? -1
+    : position;
+}
+
+const nextChapterIndex = (chapters: Chapter[], savedIndex?: number) =>
+  savedIndex ?? (chapters[chapters.length - 1]?.index ?? -1) + 1;
 
 /** 章节文件先于目录提交，重试时可重写同一个尚未发布的序号。 */
 export async function saveWebNovelChapter(
@@ -78,7 +95,7 @@ export async function saveWebNovelChapter(
       }),
       latestChapterTitle: title,
     };
-    const index = chapters.length;
+    const index = nextChapterIndex(chapters, current?.nextWebChapterIndex);
     const chapter: Chapter = {
       title,
       index,
@@ -89,12 +106,16 @@ export async function saveWebNovelChapter(
     await writeDocument(chapterFile(book, index), {text});
     return [
       {
-        currentChapterIndex: 0,
-        currentChapter: chapter,
-        contentRequest: {url: chapter.bookUrl, options: {method: 'LOCAL'}},
         ...current,
         book,
         chapterList: [...chapters, chapter],
+        nextWebChapterIndex: index + 1,
+        currentChapterIndex:
+          chapters.length === 0 ? 0 : current?.currentChapterIndex ?? 0,
+        currentChapter: current?.currentChapter ?? chapter,
+        contentRequest: current?.currentChapter
+          ? current.contentRequest
+          : {url: chapter.bookUrl, options: {method: 'LOCAL'}},
         updatedAt: Date.now(),
       },
       ...currentRecords.filter(record => record !== current),
@@ -105,6 +126,61 @@ export async function saveWebNovelChapter(
     throw new Error('未找到保存后的小说。');
   }
   return {records, record};
+}
+
+export async function removeWebNovelChapter(
+  bookUrl: string,
+  chapterUrl: string,
+) {
+  return updateWebNovelRecords(records => {
+    const current = records.find(record => record.book.bookUrl === bookUrl);
+    const removedPosition =
+      current?.chapterList.findIndex(
+        chapter => chapter.bookUrl === chapterUrl,
+      ) ?? -1;
+    if (!current || removedPosition < 0) {
+      return records;
+    }
+    const chapters = current.chapterList.filter(
+      chapter => chapter.bookUrl !== chapterUrl,
+    );
+    const retainedPosition = chapters.findIndex(
+      chapter => chapter.bookUrl === current.currentChapter?.bookUrl,
+    );
+    const position =
+      retainedPosition >= 0
+        ? retainedPosition
+        : Math.min(removedPosition, chapters.length - 1);
+    const chapter = chapters[position];
+    return records.map(record =>
+      record === current
+        ? {
+            ...current,
+            book: {
+              ...current.book,
+              latestChapterTitle: chapters[chapters.length - 1]?.title,
+            },
+            chapterList: chapters,
+            nextWebChapterIndex: nextChapterIndex(
+              current.chapterList,
+              current.nextWebChapterIndex,
+            ),
+            currentChapterIndex: position,
+            currentChapter: chapter,
+            contentRequest: {
+              url: chapter?.bookUrl ?? bookUrl,
+              options: {method: 'LOCAL'},
+            },
+          }
+        : record,
+    );
+  });
+}
+
+export async function clearWebNovelChapterFiles(book: Book, chapter: Chapter) {
+  // 原子写入空值，避免失败时留下半截正文。
+  await writeDocument(chapterFile(book, chapter.index), null);
+  await clearChapterListeningData(buildListenProjectName(book), chapter.index);
 }
 
 export async function readWebNovelChapter(book: Book, chapter: Chapter) {

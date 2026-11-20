@@ -71,6 +71,7 @@ interface NovelReaderProps {
   onTogglePlayPause: () => void;
   onPlaySegment: (index: number) => void;
   onSelectChapter: (index: number) => void;
+  onDeleteChapter?: (chapter: Chapter) => void;
   onMenuItemClick: (id: string) => void;
   canAppendChapters?: boolean;
   loadingMenuItemId?: string | null;
@@ -661,6 +662,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   onTogglePlayPause,
   onPlaySegment,
   onSelectChapter,
+  onDeleteChapter,
   onMenuItemClick,
   canAppendChapters,
   loadingMenuItemId,
@@ -1033,6 +1035,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
         currentIndex={currentChapterIndex}
         onClose={() => setCatalogVisible(false)}
         onSelectChapter={handleSelectReadingChapter}
+        onDeleteChapter={onDeleteChapter}
       />
     </View>
   );

@@ -19,6 +19,7 @@ interface ReaderCatalogProps {
   currentIndex: number;
   onClose: () => void;
   onSelectChapter: (index: number) => void;
+  onDeleteChapter?: (chapter: Chapter) => void;
 }
 
 const { width } = Dimensions.get('window');
@@ -30,6 +31,7 @@ const ReaderCatalog: React.FC<ReaderCatalogProps> = ({
   currentIndex,
   onClose,
   onSelectChapter,
+  onDeleteChapter,
 }) => {
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -93,13 +95,15 @@ const ReaderCatalog: React.FC<ReaderCatalogProps> = ({
           index={index}
           isActive={index === currentIndex}
           onPress={handleItemPress}
+          onLongPress={onDeleteChapter}
         />
       );
     },
-    [currentIndex, handleItemPress]
+    [currentIndex, handleItemPress, onDeleteChapter]
   );
 
-  const keyExtractor = (item: Chapter, index: number) => `chapter_${index}`;
+  const keyExtractor = (item: Chapter, index: number) =>
+    onDeleteChapter ? item.bookUrl : `chapter_${index}`;
 
   return (
     <View
@@ -149,15 +153,19 @@ const CatalogItem = React.memo(
     index,
     isActive,
     onPress,
+    onLongPress,
   }: {
     item: Chapter;
     index: number;
     isActive: boolean;
     onPress: (index: number) => void;
+    onLongPress?: (chapter: Chapter) => void;
   }) => {
     return (
       <TouchableOpacity
         style={[styles.itemContainer, isActive && styles.activeItemContainer]}
+        accessibilityHint={onLongPress ? '长按可删除此章节' : undefined}
+        onLongPress={onLongPress ? () => onLongPress(item) : undefined}
         onPress={() => onPress(index)}>
         <Text
           numberOfLines={2}

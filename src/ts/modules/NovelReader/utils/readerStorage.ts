@@ -52,6 +52,7 @@ export interface ReadingRecord {
   chapterList: Chapter[];
   currentChapterIndex: number;
   currentChapter?: Chapter;
+  nextWebChapterIndex?: number;
   contentRequest: RequestSnapshot;
   updatedAt: number;
 }
@@ -291,7 +292,11 @@ export const upsertReadingRecord = async (
       const current = records.find(
         item => item.book.bookUrl === record.book.bookUrl,
       );
-      const chapter = current?.chapterList[record.currentChapterIndex];
+      const position =
+        current?.chapterList.findIndex(
+          chapter => chapter.bookUrl === record.currentChapter?.bookUrl,
+        ) ?? -1;
+      const chapter = current?.chapterList[position];
       // 延迟到达的进度写入只能更新仍在书架上的书籍。
       if (!current || !chapter) {
         return records;
@@ -299,7 +304,7 @@ export const upsertReadingRecord = async (
       return [
         {
           ...current,
-          currentChapterIndex: chapter.index,
+          currentChapterIndex: position,
           currentChapter: chapter,
           contentRequest: {url: chapter.bookUrl, options: {method: 'LOCAL'}},
           updatedAt: record.updatedAt,
@@ -372,6 +377,18 @@ const isValidReadingRecord = (value: unknown): value is ReadingRecord => {
 
 const LISTEN_PROGRESS_KEY = 'novel_reader_listen_progress';
 const removedListeningProjects = new Set<string>();
+const removedListeningChapters = new Set<string>();
+const listeningChapterKey = (projectName: string, index: number) =>
+  `${projectName}_${index}`;
+const isRemovedListeningChapter = ({
+  projectName,
+  chapterIndex,
+}: {
+  projectName: string;
+  chapterIndex: number;
+}) =>
+  removedListeningProjects.has(projectName) ||
+  removedListeningChapters.has(listeningChapterKey(projectName, chapterIndex));
 const progressWrites = new Map<string, Promise<void>>();
 /** 用户主动重新打开书籍后，允许保存新的听书进度。 */
 export const activateBookListeningData = (projectName: string): void => {
@@ -397,7 +414,7 @@ export interface ListenChapterCache {
 export const saveListenProgress = async (
   progress: ListenProgress,
 ): Promise<void> => {
-  if (removedListeningProjects.has(progress.projectName)) {
+  if (isRemovedListeningChapter(progress)) {
     return;
   }
   // 使用复合 key，区分不同书的不同章节
@@ -406,7 +423,7 @@ export const saveListenProgress = async (
   const write = (progressWrites.get(compositeKey) || Promise.resolve())
     .catch(() => {})
     .then(async () => {
-      if (removedListeningProjects.has(snapshot.projectName)) {
+      if (isRemovedListeningChapter(snapshot)) {
         return;
       }
       if (isNativeStorageAvailable()) {
@@ -463,40 +480,50 @@ export async function clearBookListeningData(
 ): Promise<void> {
   removedListeningProjects.add(projectName);
   for (const index of new Set(chapterIndexes)) {
-    if (!Number.isInteger(index) || index < 0) {
-      continue;
+    if (Number.isInteger(index) && index >= 0) {
+      await removeChapterListeningData(projectName, index);
     }
-    const cacheKey = getListenChapterCacheKey(projectName, index);
-    const cache = isNativeStorageAvailable()
-      ? await readPrefJson<ListenChapterCache | null>(cacheKey, null)
-      : readJson<ListenChapterCache | null>(cacheKey, null);
-    const localUris = (cache?.segments || []).flatMap(segment =>
-      [segment.localAudioUrl, segment.audioUrl].filter((uri): uri is string =>
-        Boolean(
-          uri &&
-            /^(file:\/\/|internal:\/\/|\/)/.test(uri) &&
-            !uri.includes('/voiceweaver/'),
-        ),
+  }
+}
+
+export async function clearChapterListeningData(
+  projectName: string,
+  index: number,
+) {
+  removedListeningChapters.add(listeningChapterKey(projectName, index));
+  await removeChapterListeningData(projectName, index);
+}
+
+async function removeChapterListeningData(projectName: string, index: number) {
+  const cacheKey = getListenChapterCacheKey(projectName, index);
+  const cache = isNativeStorageAvailable()
+    ? await readPrefJson<ListenChapterCache | null>(cacheKey, null)
+    : readJson<ListenChapterCache | null>(cacheKey, null);
+  const localUris = (cache?.segments || []).flatMap(segment =>
+    [segment.localAudioUrl, segment.audioUrl].filter((uri): uri is string =>
+      Boolean(
+        uri &&
+          /^(file:\/\/|internal:\/\/|\/)/.test(uri) &&
+          !uri.includes('/voiceweaver/'),
       ),
-    );
-    if (localUris.length) {
-      const result = await ListenAudioCacheController.cleanupAudioCache({
-        localUris: [...new Set(localUris)],
-      });
-      if (!result.success || result.failedCount) {
-        throw new Error('清理书籍播放缓存失败，请停止播放后重试。');
-      }
+    ),
+  );
+  if (localUris.length) {
+    const result = await ListenAudioCacheController.cleanupAudioCache({
+      localUris: [...new Set(localUris)],
+    });
+    if (!result.success || result.failedCount) {
+      throw new Error('清理书籍播放缓存失败，请停止播放后重试。');
     }
-    const keys = [
-      getListenChapterCacheKey(projectName, index),
-      `${LISTEN_PROGRESS_KEY}_${projectName}_${index}`,
-    ];
-    for (const key of keys) {
-      if (isNativeStorageAvailable()) {
-        await removePrefData(key);
-      } else {
-        getStorage().removeItem(key);
-      }
+  }
+  const progressKey = `${LISTEN_PROGRESS_KEY}_${projectName}_${index}`;
+  await progressWrites.get(progressKey)?.catch(() => {});
+  const keys = [cacheKey, progressKey];
+  for (const key of keys) {
+    if (isNativeStorageAvailable()) {
+      await removePrefData(key);
+    } else {
+      getStorage().removeItem(key);
     }
   }
 }
@@ -504,7 +531,7 @@ export async function clearBookListeningData(
 export const saveListenChapterCache = async (
   cache: ListenChapterCache,
 ): Promise<void> => {
-  if (removedListeningProjects.has(cache.projectName)) {
+  if (isRemovedListeningChapter(cache)) {
     return;
   }
   const key = getListenChapterCacheKey(cache.projectName, cache.chapterIndex);
