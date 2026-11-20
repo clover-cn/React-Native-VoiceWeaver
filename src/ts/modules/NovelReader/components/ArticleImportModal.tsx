@@ -24,6 +24,8 @@ import {
 } from '../utils/browserArticle';
 import {loadConfig} from '../local/config';
 import {cleanArticleText} from '../local/articleCleaning';
+import {NovelPagePanel, NovelPageToolbar} from './NovelPageCollection';
+import type {CollectedPage} from './NovelPageCollection';
 import ArticleVoicePicker from './ArticleVoicePicker';
 import {AudioOption} from '../types/audio';
 import type {ReadingRecord} from '../utils/readerStorage';
@@ -76,12 +78,16 @@ export default function ArticleImportModal({
   const currentUrl = useRef('');
   const remote = useRef<AbortController | null>(null);
   const savingRef = useRef(false);
+  const previewPages = useRef<CollectedPage[] | null>(null);
 
   const [address, setAddress] = useState('');
   const [uri, setUri] = useState('');
   const [browserSession, setBrowserSession] = useState(0);
   const [canGoBack, setCanGoBack] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [collectedPages, setCollectedPages] = useState<CollectedPage[]>([]);
+  const [pagePanelVisible, setPagePanelVisible] = useState(false);
+  const [collectionMessage, setCollectionMessage] = useState('');
   const [title, setTitle] = useState('');
   const [bookTitle, setBookTitle] = useState('');
   const [text, setText] = useState('');
@@ -115,7 +121,10 @@ export default function ArticleImportModal({
     !text.trim() ||
     Boolean(
       novel &&
-        (!sourceUrl || !title.trim() || (!novel.target && !bookTitle.trim())),
+        (!collectedPages.length ||
+          !sourceUrl ||
+          !title.trim() ||
+          (!novel.target && !bookTitle.trim())),
     );
 
   useEffect(() => {
@@ -208,13 +217,38 @@ export default function ArticleImportModal({
 
   const open = () => openBrowser(address);
 
-  const close = () => {
-    if (savingRef.current) {
+  const clearCollection = () => {
+    previewPages.current = null;
+    setCollectedPages([]);
+    setCollectionMessage('');
+  };
+
+  const confirmDiscard = (proceed: () => void) => {
+    if (collectedPages.length === 0) {
+      proceed();
       return;
     }
-    cancelExtraction();
-    finishPageLoad();
-    onClose();
+    Alert.alert('放弃已收集的页面？', '这些页面还未保存到章节。', [
+      {text: '保留', style: 'cancel'},
+      {
+        text: '放弃',
+        style: 'destructive',
+        onPress: () => {
+          clearCollection();
+          proceed();
+        },
+      },
+    ]);
+  };
+
+  const close = () => {
+    if (!savingRef.current) {
+      confirmDiscard(() => {
+        cancelExtraction();
+        finishPageLoad();
+        onClose();
+      });
+    }
   };
 
   const cleanPage = async (result: {
@@ -230,7 +264,7 @@ export default function ArticleImportModal({
     setText(result.text);
     setRawText(result.text);
     setSourceUrl(result.url);
-    setTextSource('页面全部文字');
+    setTextSource(novel ? '已收集的网页原文' : '页面全部文字');
     setWarning('尚未完成清洗，当前保留网页原文，可手动删除无关内容。');
     setParagraphMode(false);
     setSelected([]);
@@ -279,7 +313,11 @@ export default function ArticleImportModal({
   };
 
   const extract = () => {
+    if (request.current) {
+      return;
+    }
     cancelExtraction();
+    setCollectionMessage('');
     const id = `article_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     request.current = id;
     setExtracting(true);
@@ -290,13 +328,61 @@ export default function ArticleImportModal({
     web.current?.injectJavaScript(browserArticleScript(id));
   };
 
+  const collectPage = (page: CollectedPage) => {
+    if (collectedPages.some(existing => existing.text === page.text)) {
+      setCollectionMessage('这一页已收集');
+      return;
+    }
+    setCollectedPages([...collectedPages, page]);
+  };
+
+  const moveCollectedPage = (index: number, offset: number) => {
+    setCollectedPages(pages => {
+      const nextIndex = index + offset;
+      if (!pages[index] || !pages[nextIndex]) {
+        return pages;
+      }
+      const next = [...pages];
+      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+      return next;
+    });
+    setCollectionMessage('');
+  };
+
+  const importCollectedPages = () => {
+    const first = collectedPages[0];
+    if (!first || extracting) {
+      return;
+    }
+    if (previewPages.current === collectedPages) {
+      setEditing(true);
+      return;
+    }
+    const length = collectedPages.reduce(
+      (total, page) => total + page.text.length,
+      (collectedPages.length - 1) * 2,
+    );
+    if (length > MAX_ARTICLE_LENGTH) {
+      Alert.alert(
+        '章节文字超过 20 万字符',
+        '已保留收集清单，请移除部分页面后重试。',
+      );
+      return;
+    }
+    previewPages.current = collectedPages;
+    void cleanPage({
+      ...first,
+      text: collectedPages.map(page => page.text).join('\n\n'),
+    });
+  };
+
   const importText = async () => {
     cancelExtraction();
     setImporting(true);
     try {
       if (novel?.onImportTxt) {
         if (await novel.onImportTxt()) {
-          close();
+          onClose();
         }
         return;
       }
@@ -364,6 +450,7 @@ export default function ArticleImportModal({
         if (!mounted.current) {
           return;
         }
+        clearCollection();
         Alert.alert(
           '保存成功',
           `「${title.trim()}」已保存到《${record.book.name}》。`,
@@ -400,7 +487,9 @@ export default function ArticleImportModal({
         visible={visible && !voicePickerVisible}
         animationType="slide"
         onRequestClose={() => {
-          if (!saving && !importing) {
+          if (pagePanelVisible) {
+            setPagePanelVisible(false);
+          } else if (!saving && !importing) {
             close();
           }
         }}>
@@ -409,7 +498,12 @@ export default function ArticleImportModal({
 
           {/* 1. 初始导入选择界面 */}
           {!editing && !uri && (
-            <View style={styles.flexOne}>
+            <View
+              style={styles.flexOne}
+              accessibilityElementsHidden={pagePanelVisible}
+              importantForAccessibility={
+                pagePanelVisible ? 'no-hide-descendants' : 'auto'
+              }>
               <View style={styles.header}>
                 <TouchableOpacity
                   accessibilityRole="button"
@@ -492,6 +586,18 @@ export default function ArticleImportModal({
                   </TouchableOpacity>
                 </View>
 
+                {collectedPages.length > 0 && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`已收集 ${collectedPages.length} 页`}
+                    onPress={() => setPagePanelVisible(true)}
+                    style={styles.collectionLink}>
+                    <Text style={styles.headerLink}>
+                      已收集 {collectedPages.length} 页 ›
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
                 {/* 卡片 2: 其他导入方式 */}
                 {!novel?.target && (
                   <>
@@ -503,7 +609,7 @@ export default function ArticleImportModal({
                         accessibilityRole="button"
                         accessibilityLabel="导入本地 TXT"
                         disabled={importing || extracting}
-                        onPress={importText}
+                        onPress={() => confirmDiscard(() => void importText())}
                         activeOpacity={0.7}
                         style={styles.quickCard}>
                         <View
@@ -602,9 +708,11 @@ export default function ArticleImportModal({
           {Boolean(uri) && (!editing || novel) && (
             <View
               style={editing ? styles.hiddenBrowser : styles.flexOne}
-              pointerEvents={editing ? 'none' : 'auto'}
-              accessibilityElementsHidden={editing}
-              importantForAccessibility={editing ? 'no-hide-descendants' : 'auto'}>
+              pointerEvents={editing || pagePanelVisible ? 'none' : 'auto'}
+              accessibilityElementsHidden={editing || pagePanelVisible}
+              importantForAccessibility={
+                editing || pagePanelVisible ? 'no-hide-descendants' : 'auto'
+              }>
               <View style={styles.browserHeader}>
                 <TouchableOpacity
                   accessibilityRole="button"
@@ -694,6 +802,7 @@ export default function ArticleImportModal({
                     cancelExtraction();
                   }
                   beginPageLoad();
+                  setCollectionMessage('');
                 }}
                 onNavigationStateChange={state => {
                   if (/^https?:\/\//i.test(state.url)) {
@@ -768,7 +877,11 @@ export default function ArticleImportModal({
                       throw new Error(String(data.error));
                     }
                     const result = parseBrowserArticle(data);
-                    cleanPage(result);
+                    if (novel) {
+                      collectPage(result);
+                    } else {
+                      void cleanPage(result);
+                    }
                   } catch (error) {
                     cancelExtraction();
                     Alert.alert('提取失败', (error as Error).message);
@@ -776,45 +889,59 @@ export default function ArticleImportModal({
                 }}
               />
 
-              {/* 底部悬浮提取条 */}
-              <View style={styles.browserBottomBar}>
-                <Text style={styles.browserTipText}>
-                  💡 提示：提取前请先滑动网页、点击“展开全文”，确保正文完整显示
-                </Text>
+              {/* 底部网页操作栏 */}
+              {novel ? (
+                <View style={styles.browserBottomBar}>
+                  <NovelPageToolbar
+                    count={collectedPages.length}
+                    message={collectionMessage}
+                    collecting={extracting}
+                    loading={loading}
+                    onOpen={() => setPagePanelVisible(true)}
+                    onCollect={extract}
+                    onImport={importCollectedPages}
+                  />
+                </View>
+              ) : (
+                <View style={styles.browserBottomBar}>
+                  <Text style={styles.browserTipText}>
+                    💡 提示：提取前请先滑动网页、点击“展开全文”，确保正文完整显示
+                  </Text>
 
-                {extracting ? (
-                  <View style={styles.extractingBar}>
-                    <ActivityIndicator
-                      size="small"
-                      color="#FFFFFF"
-                      style={styles.extractingIndicator}
-                    />
-                    <Text style={styles.extractingText}>
-                      正在抓取页面文字并准备解析…
-                    </Text>
+                  {extracting ? (
+                    <View style={styles.extractingBar}>
+                      <ActivityIndicator
+                        size="small"
+                        color="#FFFFFF"
+                        style={styles.extractingIndicator}
+                      />
+                      <Text style={styles.extractingText}>
+                        正在抓取页面文字并准备解析…
+                      </Text>
+                      <TouchableOpacity
+                        onPress={cancelExtraction}
+                        style={styles.cancelExtractBtn}>
+                        <Text style={styles.cancelExtractText}>取消</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
                     <TouchableOpacity
-                      onPress={cancelExtraction}
-                      style={styles.cancelExtractBtn}>
-                      <Text style={styles.cancelExtractText}>取消</Text>
+                      accessibilityRole="button"
+                      accessibilityLabel="提取页面全部文字"
+                      disabled={loading || extracting || importing}
+                      onPress={extract}
+                      style={[
+                        styles.extractPrimaryBtn,
+                        (loading || extracting || importing) &&
+                          styles.disabledButton,
+                      ]}>
+                      <Text style={styles.extractPrimaryBtnText}>
+                        ✨ 提取页面全部文字
+                      </Text>
                     </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    accessibilityLabel="提取页面全部文字"
-                    disabled={loading || extracting || importing}
-                    onPress={extract}
-                    style={[
-                      styles.extractPrimaryBtn,
-                      (loading || extracting || importing) &&
-                        styles.disabledButton,
-                    ]}>
-                    <Text style={styles.extractPrimaryBtnText}>
-                      ✨ 提取页面全部文字
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
 
@@ -1211,6 +1338,17 @@ export default function ArticleImportModal({
               </View>
             </View>
           )}
+          {pagePanelVisible && (
+            <NovelPagePanel
+              pages={collectedPages}
+              onClose={() => setPagePanelVisible(false)}
+              onMove={moveCollectedPage}
+              onRemove={index => {
+                setCollectedPages(pages => pages.filter((_, at) => at !== index));
+                setCollectionMessage('');
+              }}
+            />
+          )}
         </SafeAreaView>
       </Modal>
       <ArticleVoicePicker
@@ -1233,6 +1371,12 @@ const styles = StyleSheet.create({
   },
   flexOne: {
     flex: 1,
+  },
+  collectionLink: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   hiddenBrowser: {
     ...StyleSheet.absoluteFillObject,
