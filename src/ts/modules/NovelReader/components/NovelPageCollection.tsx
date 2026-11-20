@@ -32,53 +32,90 @@ export function NovelPageToolbar({
 }: ToolbarProps) {
   const unavailable = count === 0 || collecting;
   return (
-    <>
-      <View style={styles.statusRow}>
+    <View style={styles.toolbarContainer}>
+      {/* 顶部通栏状态卡片 */}
+      <View style={styles.statusCard}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`已收集 ${count} 页`}
-          disabled={unavailable}
+          accessibilityLabel={`已收集 ${count} 页，点击查看管理清单`}
+          disabled={count === 0}
           onPress={onOpen}
-          style={styles.countChip}>
-          <Text style={styles.countText}>
-            已收集 {count} 页{count > 0 ? ' ›' : ''}
+          style={({pressed}) => [
+            styles.statusLeftChip,
+            count > 0 && styles.statusLeftChipActive,
+            pressed && count > 0 && styles.chipPressed,
+          ]}>
+          <View
+            style={[
+              styles.docIconMini,
+              count === 0 && styles.docIconMiniDisabled,
+            ]}>
+            <View
+              style={[
+                styles.docIconMiniLine,
+                count === 0 && styles.docIconMiniLineDisabled,
+              ]}
+            />
+          </View>
+          <Text style={[styles.countText, count > 0 && styles.countTextActive]}>
+            已收集 {count} 页
           </Text>
+          {count > 0 && <Text style={styles.countChevron}>管理 ›</Text>}
         </Pressable>
-        <Text accessibilityLiveRegion="polite" style={styles.statusMessage}>
+
+        <Text
+          accessibilityLiveRegion="polite"
+          numberOfLines={1}
+          style={styles.statusMessage}>
           {message || (count ? '可翻页后继续收集' : '展开全文后收集')}
         </Text>
       </View>
+
+      {/* 底部主次分明操作双按钮 */}
       <View style={styles.actionRow}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="收集当前页"
           disabled={loading || collecting}
           onPress={onCollect}
-          style={[
+          style={({pressed}) => [
             styles.action,
             styles.collect,
             (loading || collecting) && styles.disabled,
+            pressed && !(loading || collecting) && styles.actionPressed,
           ]}>
           {collecting ? (
-            <ActivityIndicator size="small" color="#92400E" />
+            <ActivityIndicator size="small" color="#B45309" />
           ) : (
-            <Text style={styles.collectText}>收集当前页</Text>
+            <View style={styles.btnContentRow}>
+              <Text style={styles.collectText}>收集当前页</Text>
+            </View>
           )}
         </Pressable>
+
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="导入章节"
+          accessibilityLabel={
+            count > 0 ? `导入章节，共 ${count} 页` : '导入章节'
+          }
           disabled={unavailable}
           onPress={onImport}
-          style={[
+          style={({pressed}) => [
             styles.action,
             styles.import,
-            unavailable && styles.disabled,
+            unavailable && styles.importDisabled,
+            pressed && !unavailable && styles.actionPressed,
           ]}>
-          <Text style={styles.importText}>导入章节</Text>
+          <Text
+            style={[
+              styles.importText,
+              unavailable && styles.importTextDisabled,
+            ]}>
+            {count > 0 ? `导入章节 (${count}页)` : '导入章节'}
+          </Text>
         </Pressable>
       </View>
-    </>
+    </View>
   );
 }
 
@@ -165,35 +202,141 @@ export function NovelPagePanel({pages, onClose, onMove, onRemove}: PanelProps) {
 }
 
 const styles = StyleSheet.create({
-  statusRow: {flexDirection: 'row', alignItems: 'center', marginBottom: 7},
-  countChip: {
-    minHeight: 32,
-    justifyContent: 'center',
-    borderRadius: 16,
-    paddingHorizontal: 11,
-    backgroundColor: '#F5EADD',
+  toolbarContainer: {
+    width: '100%',
   },
-  countText: {color: '#854014', fontSize: 13, fontWeight: '700'},
-  statusMessage: {marginLeft: 9, flex: 1, color: '#655B52', fontSize: 12},
-  actionRow: {flexDirection: 'row'},
+  statusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF5ED',
+    borderWidth: 1,
+    borderColor: '#EFE8DE',
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 10,
+  },
+  statusLeftChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  statusLeftChipActive: {
+    backgroundColor: 'rgba(217, 119, 6, 0.1)',
+  },
+  chipPressed: {
+    opacity: 0.7,
+  },
+  docIconMini: {
+    width: 12,
+    height: 14,
+    borderWidth: 1.2,
+    borderColor: '#B45309',
+    borderRadius: 2,
+    marginRight: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 1,
+  },
+  docIconMiniDisabled: {
+    borderColor: '#A8A29E',
+  },
+  docIconMiniLine: {
+    width: 6,
+    height: 1.2,
+    backgroundColor: '#B45309',
+    borderRadius: 0.6,
+  },
+  docIconMiniLineDisabled: {
+    backgroundColor: '#A8A29E',
+  },
+  countText: {
+    color: '#78716C',
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  countTextActive: {
+    color: '#B45309',
+    fontWeight: '700',
+  },
+  countChevron: {
+    color: '#D97706',
+    fontSize: 11,
+    fontWeight: '700',
+    marginLeft: 4,
+  },
+  statusMessage: {
+    marginLeft: 8,
+    flex: 1,
+    color: '#78716C',
+    fontSize: 12,
+    textAlign: 'right',
+    paddingRight: 4,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   action: {
     flex: 1,
-    minHeight: 44,
-    paddingVertical: 7,
+    minHeight: 46,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
+    borderRadius: 14,
+  },
+  actionPressed: {
+    opacity: 0.85,
+    transform: [{scale: 0.985}],
+  },
+  btnContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   collect: {
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#D8B995',
-    backgroundColor: '#FFF9F1',
+    borderWidth: 1.2,
+    borderColor: '#D97706',
+    backgroundColor: '#FAF5ED',
+    shadowColor: '#D97706',
+    shadowOffset: {width: 0, height: 1.5},
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  collectText: {fontSize: 15, fontWeight: '700', color: '#92400E'},
-  import: {backgroundColor: '#B45309'},
-  importText: {fontSize: 15, fontWeight: '700', color: '#FFF'},
-  disabled: {opacity: 0.45},
+  collectText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  import: {
+    backgroundColor: '#D97706',
+    shadowColor: '#D97706',
+    shadowOffset: {width: 0, height: 3},
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  importDisabled: {
+    backgroundColor: '#E7E2DA',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  importText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  importTextDisabled: {
+    color: '#A8A29E',
+  },
+  disabled: {
+    opacity: 0.45,
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 10,
