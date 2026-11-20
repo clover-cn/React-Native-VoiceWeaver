@@ -26,29 +26,37 @@ import {loadConfig} from '../local/config';
 import {cleanArticleText} from '../local/articleCleaning';
 import ArticleVoicePicker from './ArticleVoicePicker';
 import {AudioOption} from '../types/audio';
+import type {ReadingRecord} from '../utils/readerStorage';
+import type {WebNovelDraft} from '../utils/webNovelStorage';
 import {
   deleteLocalTxtBookFile,
   importLocalTxtBook,
   readLocalTxtBookContent,
 } from '../utils/localBookStorage';
 
-interface Props {
+interface NovelImportOptions {
+  target?: {name: string; lastChapterTitle: string};
+  onImportTxt?: () => Promise<boolean>;
+  onSave: (draft: WebNovelDraft) => Promise<ReadingRecord>;
+  onRead: (record: ReadingRecord) => void;
+}
+
+type SaveArticle = (
+  title: string,
+  text: string,
+  sourceUrl: string | undefined,
+  play: boolean,
+  referenceAudioId?: string,
+) => Promise<void>;
+
+type Props = {
   visible?: boolean;
   onOpenSettings: () => void;
   onClose: () => void;
-  novel?: {
-    target?: {name: string; lastChapterTitle: string};
-    onImportTxt?: () => Promise<boolean>;
-  };
-  onSave: (
-    title: string,
-    text: string,
-    sourceUrl: string | undefined,
-    play: boolean,
-    referenceAudioId?: string,
-    bookTitle?: string,
-  ) => Promise<void>;
-}
+} & (
+  | {novel: NovelImportOptions; onSave?: never}
+  | {novel?: undefined; onSave: SaveArticle}
+);
 
 /** 浏览器提取全部可见文字，经模型筛选原文段落后由用户编辑确认。 */
 export default function ArticleImportModal({
@@ -348,7 +356,32 @@ export default function ArticleImportModal({
     savingRef.current = true;
     setSaving(true);
     try {
-      await onSave(title, text, sourceUrl, play, referenceAudio?.id, bookTitle);
+      if (novel) {
+        if (!sourceUrl) {
+          throw new Error('请先抓取章节网页。');
+        }
+        const record = await novel.onSave({bookTitle, title, text, sourceUrl});
+        if (!mounted.current) {
+          return;
+        }
+        Alert.alert(
+          '保存成功',
+          `「${title.trim()}」已保存到《${record.book.name}》。`,
+          [
+            {
+              text: '继续添加',
+              onPress: () => {
+                cancelExtraction();
+                setEditing(false);
+              },
+            },
+            {text: '返回阅读', onPress: () => novel.onRead(record)},
+          ],
+          {cancelable: false},
+        );
+      } else {
+        await onSave(title, text, sourceUrl, play, referenceAudio?.id);
+      }
     } catch (error) {
       if (mounted.current) {
         Alert.alert('保存失败', (error as Error).message);
@@ -566,8 +599,12 @@ export default function ArticleImportModal({
           )}
 
           {/* 2. URL 网页浏览与提取界面 */}
-          {!editing && Boolean(uri) && (
-            <View style={styles.flexOne}>
+          {Boolean(uri) && (!editing || novel) && (
+            <View
+              style={editing ? styles.hiddenBrowser : styles.flexOne}
+              pointerEvents={editing ? 'none' : 'auto'}
+              accessibilityElementsHidden={editing}
+              importantForAccessibility={editing ? 'no-hide-descendants' : 'auto'}>
               <View style={styles.browserHeader}>
                 <TouchableOpacity
                   accessibilityRole="button"
@@ -653,7 +690,9 @@ export default function ArticleImportModal({
                   /^https?:\/\//i.test(event.url)
                 }
                 onLoadStart={() => {
-                  cancelExtraction();
+                  if (!editing) {
+                    cancelExtraction();
+                  }
                   beginPageLoad();
                 }}
                 onNavigationStateChange={state => {
@@ -673,7 +712,9 @@ export default function ArticleImportModal({
                 }}
                 onLoadEnd={finishPageLoad}
                 onError={() => {
-                  cancelExtraction();
+                  if (!editing) {
+                    cancelExtraction();
+                  }
                   finishPageLoad();
                   setPageError('网页打开失败，请检查网络或切换本地TXT/粘贴。');
                 }}
@@ -1192,6 +1233,10 @@ const styles = StyleSheet.create({
   },
   flexOne: {
     flex: 1,
+  },
+  hiddenBrowser: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
   },
 
   // 1. 顶栏样式（严格对齐 SettingsScreen 风格）

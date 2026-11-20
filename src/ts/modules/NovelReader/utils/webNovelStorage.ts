@@ -10,7 +10,7 @@ import {updateWebNovelRecords} from './readerStorage';
 
 type WebNovelTarget = {newBookId: string} | {bookUrl: string};
 
-interface WebNovelDraft {
+export interface WebNovelDraft {
   bookTitle: string;
   title: string;
   text: string;
@@ -46,8 +46,10 @@ export async function saveWebNovelChapter(
   }
   const contentHash = createTextHash(text);
 
-  return updateWebNovelRecords(async records => {
-    const current = records.find(record => record.book.bookUrl === bookUrl);
+  const records = await updateWebNovelRecords(async currentRecords => {
+    const current = currentRecords.find(
+      record => record.book.bookUrl === bookUrl,
+    );
     if (!creating && !current) {
       throw new Error('目标小说已从书架删除，请重新导入。');
     }
@@ -95,9 +97,14 @@ export async function saveWebNovelChapter(
         chapterList: [...chapters, chapter],
         updatedAt: Date.now(),
       },
-      ...records.filter(record => record !== current),
+      ...currentRecords.filter(record => record !== current),
     ];
   });
+  const record = records.find(item => item.book.bookUrl === bookUrl);
+  if (!record) {
+    throw new Error('未找到保存后的小说。');
+  }
+  return {records, record};
 }
 
 export async function readWebNovelChapter(book: Book, chapter: Chapter) {

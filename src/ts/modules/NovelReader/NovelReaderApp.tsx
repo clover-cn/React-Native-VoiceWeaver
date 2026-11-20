@@ -868,7 +868,7 @@ const NovelReaderApp: React.FC = () => {
     [viewState],
   );
 
-  const handleBookSelect = async (book: Book) => {
+  const handleBookSelect = async (book: Book, savedRecord?: ReadingRecord) => {
     if (pendingArticlePlayback.current !== book.bookUrl) {
       pendingArticlePlayback.current = '';
     }
@@ -898,9 +898,9 @@ const NovelReaderApp: React.FC = () => {
       book.sourceType === 'local_article' ||
       book.sourceType === 'local_web_novel'
     ) {
-      const localRecord = readingRecords.find(
-        item => item.book.bookUrl === book.bookUrl,
-      );
+      const localRecord =
+        savedRecord ??
+        readingRecords.find(item => item.book.bookUrl === book.bookUrl);
       const localChapters = localRecord?.chapterList || (book.sourceType === 'local_article'
         ? [{title: book.name, bookUrl: `${book.bookUrl}/chapter/0`, index: 0}]
         : []);
@@ -1662,7 +1662,7 @@ const NovelReaderApp: React.FC = () => {
     }
 
     setReaderReturnViewState('home');
-    await handleBookSelect(record.book);
+    await handleBookSelect(record.book, record);
   };
 
   const handleImportBook = useCallback(async () => {
@@ -2687,51 +2687,44 @@ const NovelReaderApp: React.FC = () => {
       {novelImport && (
         <ArticleImportModal
           visible={!settingsVisible}
-          novel={
-            'bookUrl' in novelImport
+          novel={{
+            ...('bookUrl' in novelImport
               ? {target: novelImport}
-              : {onImportTxt: handleImportBook}
-          }
+              : {onImportTxt: handleImportBook}),
+            onSave: async draft => {
+              const {records, record} = await saveWebNovelChapter(
+                novelImport,
+                draft,
+              );
+              const {book, chapterList: chapters} = record;
+              setReadingRecords(records);
+              setNovelImport({
+                bookUrl: book.bookUrl,
+                name: book.name,
+                lastChapterTitle: chapters[chapters.length - 1].title,
+              });
+              if (selectedBookRef.current?.bookUrl === book.bookUrl) {
+                chapterListRef.current = chapters;
+                setChapterList(chapters);
+                setSelectedBook(book);
+              }
+              return record;
+            },
+            onRead: record => {
+              setNovelImport(null);
+              if (
+                viewState !== 'reader' ||
+                selectedBookRef.current?.bookUrl !== record.book.bookUrl
+              ) {
+                void handleResumeReading(record);
+              }
+            },
+          }}
           onOpenSettings={() => {
             setSettingsGroup('llm');
             setSettingsVisible(true);
           }}
           onClose={() => setNovelImport(null)}
-          onSave={async (
-            title,
-            text,
-            sourceUrl,
-            _play,
-            _referenceAudio,
-            bookTitle,
-          ) => {
-            if (!sourceUrl) {
-              throw new Error('请先抓取章节网页。');
-            }
-            const nextRecords = await saveWebNovelChapter(novelImport, {
-              title,
-              text,
-              sourceUrl,
-              bookTitle: bookTitle ?? '',
-            });
-            setReadingRecords(nextRecords);
-            setNovelImport(null);
-            if ('bookUrl' in novelImport) {
-              const updated = nextRecords.find(
-                item => item.book.bookUrl === novelImport.bookUrl,
-              );
-              if (
-                updated &&
-                selectedBookRef.current?.bookUrl === novelImport.bookUrl
-              ) {
-                chapterListRef.current = updated.chapterList;
-                setChapterList(updated.chapterList);
-                setSelectedBook(updated.book);
-              }
-            } else {
-              Alert.alert('导入完成', `《${bookTitle?.trim()}》已加入书架。`);
-            }
-          }}
         />
       )}
 
