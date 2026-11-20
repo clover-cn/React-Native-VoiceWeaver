@@ -10,7 +10,7 @@ export interface Book {
   latestChapterTitle?: string;
   bookUrl: string;
   tocUrl?: string;
-  sourceType?: 'remote' | 'local_txt' | 'local_article';
+  sourceType?: 'remote' | 'local_txt' | 'local_article' | 'local_web_novel';
   contentType?: 'novel' | 'article';
   listenMode?: 'plain' | 'drama';
   sourceUrl?: string;
@@ -25,6 +25,8 @@ export interface Chapter {
   index: number;
   sourceId?: string;
   baseUrl?: string;
+  sourceUrl?: string;
+  contentHash?: string;
 }
 
 export interface AudioReferenceConfig {

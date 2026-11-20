@@ -251,6 +251,8 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                     <Text style={styles.heroProgressTitle}>
                       {heroRecord.book.sourceType === 'local_txt'
                         ? '本地 TXT 离线有声书'
+                        : heroRecord.book.sourceType === 'local_web_novel'
+                        ? '网页导入 · 可离线阅读'
                         : '网络精选书源 · 智能角色分镜'}
                     </Text>
                     <Text style={styles.heroProgressStatus}>随时畅听</Text>
@@ -336,7 +338,13 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                             ? styles.sourceTagTextLocal
                             : styles.sourceTagTextOnline,
                         ]}>
-                        {book.contentType === 'article' ? '文章快照' : isLocal ? '本地 TXT' : '网络源'}
+                        {book.contentType === 'article'
+                          ? '文章快照'
+                          : isLocal
+                          ? '本地 TXT'
+                          : book.sourceType === 'local_web_novel'
+                          ? '网页导入'
+                          : '网络源'}
                       </Text>
                     </View>
                   </View>
@@ -377,7 +385,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
             <Text style={styles.emptyIcon}>📚</Text>
             <Text style={styles.emptyTitle}>书架还没有书籍</Text>
             <Text style={styles.emptyDesc}>
-              点击右下角「＋」导入本地 TXT 小说，或配置网络书源开始收听。
+              点击右下角「＋」导入网页章节或本地 TXT 小说。
             </Text>
           </View>
         )}
@@ -511,9 +519,9 @@ const NovelHome: React.FC<NovelHomeProps> = ({
               </View>
               <View style={styles.menuItemTextCol}>
                 <Text style={styles.menuItemTitle}>
-                  {isImporting ? '导入解析中…' : '导入本地书籍'}
+                  {isImporting ? '导入解析中…' : '导入小说'}
                 </Text>
-                <Text style={styles.menuItemSub}>选择并解析离线 TXT 小说</Text>
+                <Text style={styles.menuItemSub}>网页抓取 / 本地 TXT</Text>
               </View>
               <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>

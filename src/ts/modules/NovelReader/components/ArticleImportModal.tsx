@@ -36,12 +36,17 @@ interface Props {
   visible?: boolean;
   onOpenSettings: () => void;
   onClose: () => void;
+  novel?: {
+    target?: {name: string; lastChapterTitle: string};
+    onImportTxt?: () => Promise<boolean>;
+  };
   onSave: (
     title: string,
     text: string,
     sourceUrl: string | undefined,
     play: boolean,
     referenceAudioId?: string,
+    bookTitle?: string,
   ) => Promise<void>;
 }
 
@@ -51,6 +56,7 @@ export default function ArticleImportModal({
   onClose,
   onSave,
   onOpenSettings,
+  novel,
 }: Props) {
   const web = useRef<WebView>(null);
   const mounted = useRef(true);
@@ -61,6 +67,7 @@ export default function ArticleImportModal({
   const pageProbeId = useRef('');
   const currentUrl = useRef('');
   const remote = useRef<AbortController | null>(null);
+  const savingRef = useRef(false);
 
   const [address, setAddress] = useState('');
   const [uri, setUri] = useState('');
@@ -68,6 +75,7 @@ export default function ArticleImportModal({
   const [canGoBack, setCanGoBack] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState('');
+  const [bookTitle, setBookTitle] = useState('');
   const [text, setText] = useState('');
   const [sourceUrl, setSourceUrl] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -87,6 +95,20 @@ export default function ArticleImportModal({
   );
 
   const paragraphs = text.split(/\n+/).filter(part => part.trim());
+  const titleLabel = novel ? '章节名' : '文章标题';
+  const saveLabel = novel
+    ? novel.target
+      ? `保存到《${novel.target.name}》`
+      : '保存到书架'
+    : '保存并开始听书';
+  const saveDisabled =
+    saving ||
+    extracting ||
+    !text.trim() ||
+    Boolean(
+      novel &&
+        (!sourceUrl || !title.trim() || (!novel.target && !bookTitle.trim())),
+    );
 
   useEffect(() => {
     mounted.current = true;
@@ -179,6 +201,9 @@ export default function ArticleImportModal({
   const open = () => openBrowser(address);
 
   const close = () => {
+    if (savingRef.current) {
+      return;
+    }
     cancelExtraction();
     finishPageLoad();
     onClose();
@@ -193,7 +218,7 @@ export default function ArticleImportModal({
     finishPageLoad();
     const controller = new AbortController();
     remote.current = controller;
-    setTitle(result.title);
+    setTitle(novel && result.title === '未命名文章' ? '' : result.title);
     setText(result.text);
     setRawText(result.text);
     setSourceUrl(result.url);
@@ -261,6 +286,12 @@ export default function ArticleImportModal({
     cancelExtraction();
     setImporting(true);
     try {
+      if (novel?.onImportTxt) {
+        if (await novel.onImportTxt()) {
+          close();
+        }
+        return;
+      }
       const imported = await importLocalTxtBook();
       if (!imported) {
         return;
@@ -311,17 +342,19 @@ export default function ArticleImportModal({
   };
 
   const save = async (play: boolean) => {
-    if (saving || extracting) {
+    if (savingRef.current || saveDisabled) {
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     try {
-      await onSave(title, text, sourceUrl, play, referenceAudio?.id);
+      await onSave(title, text, sourceUrl, play, referenceAudio?.id, bookTitle);
     } catch (error) {
       if (mounted.current) {
         Alert.alert('保存失败', (error as Error).message);
       }
     } finally {
+      savingRef.current = false;
       if (mounted.current) {
         setSaving(false);
       }
@@ -353,7 +386,9 @@ export default function ArticleImportModal({
                   style={styles.headerSide}>
                   <Text style={styles.headerLink}>‹ 关闭</Text>
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>导入文章</Text>
+                <Text style={styles.headerTitle}>
+                  {novel?.target ? '追加章节' : novel ? '导入小说' : '导入文章'}
+                </Text>
                 <View style={styles.headerSide} />
               </View>
 
@@ -366,9 +401,15 @@ export default function ArticleImportModal({
                 <View style={styles.card}>
                   <View style={styles.cardHeader}>
                     <View style={styles.cardHeaderInfo}>
-                      <Text style={styles.cardTitle}>网页文章导入</Text>
+                      <Text style={styles.cardTitle}>
+                        {novel ? '网页抓取' : '网页文章导入'}
+                      </Text>
                       <Text style={styles.cardSubtitle}>
-                        支持各大公众号、新闻与文学网页
+                        {novel?.target
+                          ? `《${novel.target.name}》 · 最后一章：${novel.target.lastChapterTitle}`
+                          : novel
+                          ? '打开章节网页，每次导入一章。'
+                          : '支持各大公众号、新闻与文学网页'}
                       </Text>
                     </View>
                   </View>
@@ -376,13 +417,17 @@ export default function ArticleImportModal({
                   <View style={styles.urlInputWrap}>
                     <TextInput
                       style={styles.urlInput}
-                      accessibilityLabel="文章网页地址输入框"
+                      accessibilityLabel="网页地址输入框"
                       value={address}
                       onChangeText={value => {
                         cancelExtraction();
                         setAddress(value);
                       }}
-                      placeholder="输入或长按粘贴文章 URL (https://...)"
+                      placeholder={
+                        novel
+                          ? '输入或粘贴章节链接'
+                          : '输入或长按粘贴文章 URL (https://...)'
+                      }
                       placeholderTextColor="#A8A29E"
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -415,45 +460,57 @@ export default function ArticleImportModal({
                 </View>
 
                 {/* 卡片 2: 其他导入方式 */}
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>其他导入方式</Text>
-                </View>
-                <View style={styles.quickGrid}>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    accessibilityLabel="导入本地 TXT"
-                    disabled={importing || extracting}
-                    onPress={importText}
-                    activeOpacity={0.7}
-                    style={styles.quickCard}>
-                    <View style={[styles.quickIconBadge, styles.quickIconTxt]}>
-                      <Text style={styles.quickIconText}>📄</Text>
+                {!novel?.target && (
+                  <>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>其他导入方式</Text>
                     </View>
-                    <Text style={styles.quickTitle}>
-                      {importing ? '导入中…' : '本地 TXT'}
-                    </Text>
-                    <Text style={styles.quickDesc}>
-                      导入本地文本文件（≤20万字）
-                    </Text>
-                  </TouchableOpacity>
+                    <View style={styles.quickGrid}>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel="导入本地 TXT"
+                        disabled={importing || extracting}
+                        onPress={importText}
+                        activeOpacity={0.7}
+                        style={styles.quickCard}>
+                        <View
+                          style={[styles.quickIconBadge, styles.quickIconTxt]}>
+                          <Text style={styles.quickIconText}>📄</Text>
+                        </View>
+                        <Text style={styles.quickTitle}>
+                          {importing ? '导入中…' : '本地 TXT'}
+                        </Text>
+                        <Text style={styles.quickDesc}>
+                          {novel
+                            ? '选择小说 TXT 文件并自动分章'
+                            : '导入本地文本文件（≤20万字）'}
+                        </Text>
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    accessibilityLabel="粘贴正文"
-                    disabled={importing || extracting}
-                    onPress={openPasteMode}
-                    activeOpacity={0.7}
-                    style={styles.quickCard}>
-                    <View
-                      style={[styles.quickIconBadge, styles.quickIconPaste]}>
-                      <Text style={styles.quickIconText}>📋</Text>
+                      {!novel && (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityLabel="粘贴正文"
+                          disabled={importing || extracting}
+                          onPress={openPasteMode}
+                          activeOpacity={0.7}
+                          style={styles.quickCard}>
+                          <View
+                            style={[
+                              styles.quickIconBadge,
+                              styles.quickIconPaste,
+                            ]}>
+                            <Text style={styles.quickIconText}>📋</Text>
+                          </View>
+                          <Text style={styles.quickTitle}>粘贴正文</Text>
+                          <Text style={styles.quickDesc}>
+                            直接录入或从剪贴板粘贴文本
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    <Text style={styles.quickTitle}>粘贴正文</Text>
-                    <Text style={styles.quickDesc}>
-                      直接录入或从剪贴板粘贴文本
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                  </>
+                )}
 
                 {/* 卡片 3: 使用指南与说明 */}
                 <View style={styles.guideCard}>
@@ -465,7 +522,9 @@ export default function ArticleImportModal({
                       </View>
                       <Text style={styles.stepText}>
                         <Text style={styles.stepBold}>打开网页：</Text>
-                        输入文章链接并进入内置浏览器载入页面。
+                        {novel
+                          ? '输入章节链接并在内置浏览器打开。'
+                          : '输入文章链接并进入内置浏览器载入页面。'}
                       </Text>
                     </View>
                     <View style={styles.guideStepItem}>
@@ -737,7 +796,9 @@ export default function ArticleImportModal({
                   </Text>
                 </TouchableOpacity>
 
-                <Text style={styles.headerTitle}>文章预览与编辑</Text>
+                <Text style={styles.headerTitle}>
+                  {novel ? '章节预览与编辑' : '文章预览与编辑'}
+                </Text>
 
                 <View style={styles.headerSide} />
               </View>
@@ -852,10 +913,70 @@ export default function ArticleImportModal({
                 style={styles.editorList}
                 contentContainerStyle={styles.editorContent}
                 keyboardShouldPersistTaps="handled"
-                data={paragraphMode ? paragraphs : []}
+                data={paragraphMode ? [null, ...paragraphs] : []}
+                stickyHeaderIndices={paragraphMode ? [1] : undefined}
                 extraData={selected}
-                keyExtractor={(_, index) => String(index)}
-                renderItem={({item, index}) => {
+                keyExtractor={(item, index) =>
+                  item === null ? 'paragraph-actions' : String(index - 1)
+                }
+                renderItem={({item, index: rowIndex}) => {
+                  // 表单头是第 0 个滚动子项，批量操作栏是第 1 个。
+                  if (item === null) {
+                    return (
+                      <View style={styles.stickyParagraphActions}>
+                        <View style={styles.paragraphModeHeader}>
+                          <View style={styles.paragraphTipWrap}>
+                            <Text style={styles.paragraphModeTip}>
+                              勾选下方需要删除的段落（如广告、推荐语、冗余版权）：
+                            </Text>
+                          </View>
+                          <View style={styles.batchActionsRow}>
+                            <Text style={styles.selectedCountText}>
+                              已选 {selected.length} / {paragraphs.length} 段
+                            </Text>
+                            <View style={styles.batchBtnRow}>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (selected.length === paragraphs.length) {
+                                    setSelected([]);
+                                  } else {
+                                    setSelected(paragraphs.map((_, i) => i));
+                                  }
+                                }}
+                                style={styles.batchSmallBtn}>
+                                <Text style={styles.batchSmallBtnText}>
+                                  {selected.length === paragraphs.length
+                                    ? '取消全选'
+                                    : '全选'}
+                                </Text>
+                              </TouchableOpacity>
+                              {selected.length > 0 ? (
+                                <TouchableOpacity
+                                  accessibilityRole="button"
+                                  accessibilityLabel="删除选中段落"
+                                  onPress={() => {
+                                    setText(
+                                      paragraphs
+                                        .filter(
+                                          (_, idx) => !selected.includes(idx),
+                                        )
+                                        .join('\n\n'),
+                                    );
+                                    setSelected([]);
+                                  }}
+                                  style={styles.deleteBatchBtn}>
+                                  <Text style={styles.deleteBatchBtnText}>
+                                    删除选中 ({selected.length})
+                                  </Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  }
+                  const index = rowIndex - 1;
                   const isChecked = selected.includes(index);
                   return (
                     <TouchableOpacity
@@ -894,27 +1015,46 @@ export default function ArticleImportModal({
                 }}
                 ListHeaderComponent={
                   <View style={styles.formSection}>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.fieldLabel}>朗读参考音频</Text>
-                      <TouchableOpacity
-                        accessibilityRole="button"
-                        accessibilityLabel="选择文章参考音频"
-                        disabled={saving || extracting}
-                        onPress={() => setVoicePickerVisible(true)}
-                        style={styles.articleVoiceRow}>
-                        <Text style={styles.articleVoiceName} numberOfLines={1}>
-                          {referenceAudio?.name || '默认旁白'}
-                        </Text>
-                        <Text style={styles.headerLink}>选择 ›</Text>
-                      </TouchableOpacity>
-                    </View>
+                    {!novel && (
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.fieldLabel}>朗读参考音频</Text>
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityLabel="选择文章参考音频"
+                          disabled={saving || extracting}
+                          onPress={() => setVoicePickerVisible(true)}
+                          style={styles.articleVoiceRow}>
+                          <Text
+                            style={styles.articleVoiceName}
+                            numberOfLines={1}>
+                            {referenceAudio?.name || '默认旁白'}
+                          </Text>
+                          <Text style={styles.headerLink}>选择 ›</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {novel && !novel.target && (
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.fieldLabel}>书名</Text>
+                        <TextInput
+                          style={styles.titleInput}
+                          accessibilityLabel="书名输入框"
+                          placeholder="请输入书名"
+                          placeholderTextColor="#A8A29E"
+                          value={bookTitle}
+                          onChangeText={setBookTitle}
+                          maxLength={200}
+                          editable={!saving && !extracting}
+                        />
+                      </View>
+                    )}
                     {/* 标题输入 */}
                     <View style={styles.inputGroup}>
-                      <Text style={styles.fieldLabel}>文章标题</Text>
+                      <Text style={styles.fieldLabel}>{titleLabel}</Text>
                       <TextInput
                         style={styles.titleInput}
-                        accessibilityLabel="文章标题输入框"
-                        placeholder="请输入文章标题"
+                        accessibilityLabel={`${titleLabel}输入框`}
+                        placeholder={`请输入${titleLabel}`}
                         placeholderTextColor="#A8A29E"
                         value={title}
                         onChangeText={setTitle}
@@ -937,60 +1077,13 @@ export default function ArticleImportModal({
                       </View>
                     ) : null}
 
-                    {/* 模式提示或自由编辑输入框 */}
-                    {paragraphMode ? (
-                      <View style={styles.paragraphModeHeader}>
-                        <View style={styles.paragraphTipWrap}>
-                          <Text style={styles.paragraphModeTip}>
-                            勾选下方需要删除的段落（如广告、推荐语、冗余版权）：
-                          </Text>
-                        </View>
-                        <View style={styles.batchActionsRow}>
-                          <Text style={styles.selectedCountText}>
-                            已选 {selected.length} / {paragraphs.length} 段
-                          </Text>
-                          <View style={styles.batchBtnRow}>
-                            <TouchableOpacity
-                              onPress={() => {
-                                if (selected.length === paragraphs.length) {
-                                  setSelected([]);
-                                } else {
-                                  setSelected(paragraphs.map((_, i) => i));
-                                }
-                              }}
-                              style={styles.batchSmallBtn}>
-                              <Text style={styles.batchSmallBtnText}>
-                                {selected.length === paragraphs.length
-                                  ? '取消全选'
-                                  : '全选'}
-                              </Text>
-                            </TouchableOpacity>
-                            {selected.length > 0 ? (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setText(
-                                    paragraphs
-                                      .filter(
-                                        (_, idx) => !selected.includes(idx),
-                                      )
-                                      .join('\n\n'),
-                                  );
-                                  setSelected([]);
-                                }}
-                                style={styles.deleteBatchBtn}>
-                                <Text style={styles.deleteBatchBtnText}>
-                                  删除选中 ({selected.length})
-                                </Text>
-                              </TouchableOpacity>
-                            ) : null}
-                          </View>
-                        </View>
-                      </View>
-                    ) : (
+                    {!paragraphMode && (
                       <View style={styles.inputGroup}>
                         <View style={styles.fieldLabelRow}>
                           <View style={styles.fieldLabelLeft}>
-                            <Text style={styles.fieldLabel}>文章正文</Text>
+                            <Text style={styles.fieldLabel}>
+                              {novel ? '章节正文' : '文章正文'}
+                            </Text>
                             {textSource === '大模型清洗后的正文' ? (
                               <View style={styles.sourceBadgeAiSmall}>
                                 <Text style={styles.sourceBadgeTextAi}>
@@ -1005,7 +1098,9 @@ export default function ArticleImportModal({
                         </View>
                         <TextInput
                           style={styles.bodyInput}
-                          accessibilityLabel="文章正文输入框"
+                          accessibilityLabel={
+                            novel ? '章节正文输入框' : '文章正文输入框'
+                          }
                           placeholder="在此粘贴或编辑正文内容..."
                           placeholderTextColor="#A8A29E"
                           multiline
@@ -1018,11 +1113,13 @@ export default function ArticleImportModal({
                           maxLength={MAX_ARTICLE_LENGTH}
                           editable={!saving && !extracting}
                         />
-                        <Text style={styles.bodyTipText}>
-                          💡
-                          提示：保存后将生成专属文章书籍，普通朗读使用所选参考音频，默认旁白。云端
-                          TTS 会接收朗读文本。
-                        </Text>
+                        {!novel && (
+                          <Text style={styles.bodyTipText}>
+                            💡
+                            提示：保存后将生成专属文章书籍，普通朗读使用所选参考音频，默认旁白。云端
+                            TTS 会接收朗读文本。
+                          </Text>
+                        )}
                       </View>
                     )}
                   </View>
@@ -1031,28 +1128,29 @@ export default function ArticleImportModal({
 
               {/* 底部固定保存操作栏 */}
               <View style={styles.editorBottomDock}>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel="仅保存"
-                  disabled={saving || extracting || !text.trim()}
-                  onPress={() => save(false)}
-                  style={[
-                    styles.saveDraftBtn,
-                    (saving || extracting || !text.trim()) &&
-                      styles.disabledButton,
-                  ]}>
-                  <Text style={styles.saveDraftBtnText}>仅保存</Text>
-                </TouchableOpacity>
+                {!novel && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="仅保存"
+                    disabled={saveDisabled}
+                    onPress={() => save(false)}
+                    style={[
+                      styles.saveDraftBtn,
+                      (saving || extracting || !text.trim()) &&
+                        styles.disabledButton,
+                    ]}>
+                    <Text style={styles.saveDraftBtnText}>仅保存</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   accessibilityRole="button"
-                  accessibilityLabel="保存并播放"
-                  disabled={saving || extracting || !text.trim()}
-                  onPress={() => save(true)}
+                  accessibilityLabel={novel ? saveLabel : '保存并播放'}
+                  disabled={saveDisabled}
+                  onPress={() => save(!novel)}
                   style={[
                     styles.savePlayBtn,
-                    (saving || extracting || !text.trim()) &&
-                      styles.disabledButton,
+                    saveDisabled && styles.disabledButton,
                   ]}>
                   {saving ? (
                     <View style={styles.savingRow}>
@@ -1064,7 +1162,9 @@ export default function ArticleImportModal({
                       <Text style={styles.savePlayBtnText}>正在保存…</Text>
                     </View>
                   ) : (
-                    <Text style={styles.savePlayBtnText}>保存并开始听书</Text>
+                    <Text style={styles.savePlayBtnText} numberOfLines={1}>
+                      {saveLabel}
+                    </Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -1710,6 +1810,9 @@ const styles = StyleSheet.create({
   },
 
   // 段落模式样式
+  stickyParagraphActions: {
+    backgroundColor: '#F8F6F0',
+  },
   paragraphModeHeader: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,

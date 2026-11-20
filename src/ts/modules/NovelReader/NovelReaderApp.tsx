@@ -4,6 +4,10 @@ import {assertNarratorAvailable} from './local/preflight';
 import SettingsScreen from './screens/SettingsScreen';
 import ArticleImportModal from './components/ArticleImportModal';
 import {readArticle, saveArticle} from './utils/articleStorage';
+import {
+  readWebNovelChapter,
+  saveWebNovelChapter,
+} from './utils/webNovelStorage';
 import {SettingsGroup} from './local/config';
 import {localService} from './local/service';
 import {deleteBookData} from './local/bookDeletion';
@@ -83,6 +87,9 @@ import {
 
 export type ViewState = 'home' | 'search' | 'reader';
 type ReaderReturnViewState = Exclude<ViewState, 'reader'>;
+type NovelImportSession =
+  | {newBookId: string}
+  | {bookUrl: string; name: string; lastChapterTitle: string};
 
 type MissingEmotionPolicy = 'strict' | 'fallback_neutral';
 
@@ -381,6 +388,9 @@ const NovelReaderApp: React.FC = () => {
   const [readingRecords, setReadingRecords] = useState<ReadingRecord[]>([]);
   const [isImportingBook, setIsImportingBook] = useState(false);
   const [articleImportVisible, setArticleImportVisible] = useState(false);
+  const [novelImport, setNovelImport] = useState<NovelImportSession | null>(
+    null,
+  );
   const pendingArticlePlayback = useRef('');
   const [isDeletingBook, setIsDeletingBook] = useState(false);
   const removedBookUrlsRef = useRef(new Set<string>());
@@ -756,6 +766,9 @@ const NovelReaderApp: React.FC = () => {
       if (book.sourceType === 'local_article') {
         return readArticle(book);
       }
+      if (book.sourceType === 'local_web_novel') {
+        return readWebNovelChapter(book, chap);
+      }
       if (isLocalTxtBook(book)) {
         const localContent = await readLocalTxtBookContent(
           book.localBookId || '',
@@ -880,7 +893,11 @@ const NovelReaderApp: React.FC = () => {
     });
     openReaderFromView();
 
-    if (isLocalTxtBook(book) || book.sourceType === 'local_article') {
+    if (
+      isLocalTxtBook(book) ||
+      book.sourceType === 'local_article' ||
+      book.sourceType === 'local_web_novel'
+    ) {
       const localRecord = readingRecords.find(
         item => item.book.bookUrl === book.bookUrl,
       );
@@ -903,7 +920,7 @@ const NovelReaderApp: React.FC = () => {
         );
       } else {
         setReaderLoading(null);
-        Alert.alert('打开失败', '本地 TXT 没有可阅读的章节。');
+        Alert.alert('打开失败', '这本书没有可阅读的本地章节。');
       }
       return;
     }
@@ -1031,7 +1048,12 @@ const NovelReaderApp: React.FC = () => {
 
         setReaderLoading(null);
         console.warn('Get content failed.', e);
-        Alert.alert('获取正文失败', '本地书源未能解析该章节正文。');
+        Alert.alert(
+          '获取正文失败',
+          book?.sourceType === 'local_web_novel' && e instanceof Error
+            ? e.message
+            : '本地书源未能解析该章节正文。',
+        );
       }
 
       return null;
@@ -1645,7 +1667,7 @@ const NovelReaderApp: React.FC = () => {
 
   const handleImportBook = useCallback(async () => {
     if (isImportingBook || isDeletingBook) {
-      return;
+      return false;
     }
 
     setIsImportingBook(true);
@@ -1653,7 +1675,7 @@ const NovelReaderApp: React.FC = () => {
     try {
       const imported = await importLocalTxtBook();
       if (!imported) {
-        return;
+        return false;
       }
 
       importPhase = 'dedupe';
@@ -1664,7 +1686,7 @@ const NovelReaderApp: React.FC = () => {
       if (existing?.book.contentHash === imported.contentHash) {
         await deleteLocalTxtBookFile(imported.book.localBookId || '');
         Alert.alert('已在书架', `《${imported.book.name}》已经导入过了。`);
-        return;
+        return true;
       }
 
       if (existing && isLocalTxtBook(existing.book)) {
@@ -1707,6 +1729,7 @@ const NovelReaderApp: React.FC = () => {
         '导入完成',
         `《${imported.book.name}》已加入书架，共 ${imported.chapters.length} 个章节。`,
       );
+      return true;
     } catch (error) {
       console.warn(
         `[NovelReaderApp] 导入 TXT 书籍失败 phase=${importPhase}`,
@@ -1716,6 +1739,7 @@ const NovelReaderApp: React.FC = () => {
         '导入失败',
         error instanceof Error ? error.message : '导入 TXT 书籍失败。',
       );
+      return false;
     } finally {
       setIsImportingBook(false);
     }
@@ -2371,61 +2395,89 @@ const NovelReaderApp: React.FC = () => {
   }, [ensureListenGenerationContext]);
 
   const [audioExportVisible, setAudioExportVisible] = useState(false);
-  const handleMenuItemClick = useCallback((id: string) => {
-    if (id === 'regenerate') {
-      const book = selectedBookRef.current;
-      const chapterIndex = currentChapterIndexRef.current;
-      if (!isListenMode || !book || chapterIndex !== currentChapterIndex) {
+  const handleMenuItemClick = useCallback(
+    (id: string) => {
+      if (id === 'regenerate') {
+        const book = selectedBookRef.current;
+        const chapterIndex = currentChapterIndexRef.current;
+        if (!isListenMode || !book || chapterIndex !== currentChapterIndex) {
+          return;
+        }
+        Alert.alert(
+          '重新生成本章',
+          '确认后将从头生成当前章节的配音，并从本章开头播放。',
+          [
+            {text: '取消', style: 'cancel'},
+            {
+              text: '重新生成',
+              onPress: () => {
+                if (
+                  selectedBookRef.current === book &&
+                  currentChapterIndexRef.current === chapterIndex
+                ) {
+                  void startChapterListening(createListenSessionId());
+                }
+              },
+            },
+          ],
+        );
         return;
       }
-      Alert.alert('重新生成本章', '确认后将从头生成当前章节的配音，并从本章开头播放。', [
-        {text: '取消', style: 'cancel'},
-        {
-          text: '重新生成',
-          onPress: () => {
-            if (
-              selectedBookRef.current === book &&
-              currentChapterIndexRef.current === chapterIndex
-            ) {
-              void startChapterListening(createListenSessionId());
-            }
-          },
-        },
-      ]);
-      return;
-    }
-    if (id === 'download') {
-      setAudioExportVisible(true);
-      return;
-    }
-    if (id === 'settings') {
-      setSettingsGroup(undefined);
-      setSettingsVisible(true);
-      return;
-    }
-    if (id === 'source') {
-      if (selectedBookRef.current?.sourceType === 'local_article') {
-        Alert.alert('本地文章', '当前朗读使用已保存的正文快照，无需切换小说书源。');
+      if (id === 'download') {
+        setAudioExportVisible(true);
         return;
       }
-      setSourceModalVisible(true);
-      return;
-    }
+      if (id === 'settings') {
+        setSettingsGroup(undefined);
+        setSettingsVisible(true);
+        return;
+      }
+      if (id === 'source') {
+        const sourceType = selectedBookRef.current?.sourceType;
+        if (sourceType === 'local_article') {
+          Alert.alert(
+            '本地文章',
+            '当前朗读使用已保存的正文快照，无需切换小说书源。',
+          );
+        } else if (sourceType !== 'local_web_novel') {
+          setSourceModalVisible(true);
+        }
+        return;
+      }
+      if (id === 'append_chapter') {
+        const book = selectedBookRef.current;
+        const chapters = chapterListRef.current;
+        const lastChapter = chapters[chapters.length - 1];
+        if (
+          book?.sourceType === 'local_web_novel' &&
+          lastChapter &&
+          !isDeletingBook
+        ) {
+          setNovelImport({
+            bookUrl: book.bookUrl,
+            name: book.name,
+            lastChapterTitle: lastChapter.title,
+          });
+        }
+        return;
+      }
 
-    if (id === 'audio') {
-      setAudioLibraryVisible(true);
-      return;
-    }
+      if (id === 'audio') {
+        setAudioLibraryVisible(true);
+        return;
+      }
 
-    if (id === 'info') {
-      setBookDetailVisible(true);
-      return;
-    }
+      if (id === 'info') {
+        setBookDetailVisible(true);
+        return;
+      }
 
-    if (id === 'sleep') {
-      setSleepTimerVisible(true);
-    }
-  }, [currentChapterIndex, isListenMode, startChapterListening]);
+      if (id === 'sleep') {
+        setSleepTimerVisible(true);
+      }
+    },
+    [currentChapterIndex, isDeletingBook, isListenMode, startChapterListening],
+  );
 
   // —— Modal onClose 回调收敛 (A3): 改为稳定的 useCallback,避免每次 render 给 Modal 传新引用,
   // 这些 Modal 已 memo / 内部 visible 检查开销可控,但稳定引用能减少不必要的 reconcile。
@@ -2484,7 +2536,9 @@ const NovelReaderApp: React.FC = () => {
       {viewState === 'home' && (
         <NovelHome
           onNavigateSearch={() => setViewState('search')}
-          onImportBook={handleImportBook}
+          onImportBook={() =>
+            setNovelImport({newBookId: createListenSessionId()})
+          }
           onImportArticle={() => setArticleImportVisible(true)}
           onOpenSettings={() => {
             setSettingsGroup(undefined);
@@ -2561,6 +2615,7 @@ const NovelReaderApp: React.FC = () => {
               onOpenSegmentEditor={handleOpenSegmentEditor}
               loadingMenuItemId={loadingMenuItemId}
               onMenuItemClick={handleMenuItemClick}
+              canAppendChapters={selectedBook?.sourceType === 'local_web_novel'}
               onOpenPreparation={
                 preparation
                   ? () =>
@@ -2628,6 +2683,57 @@ const NovelReaderApp: React.FC = () => {
           }
         }}
       />}
+
+      {novelImport && (
+        <ArticleImportModal
+          visible={!settingsVisible}
+          novel={
+            'bookUrl' in novelImport
+              ? {target: novelImport}
+              : {onImportTxt: handleImportBook}
+          }
+          onOpenSettings={() => {
+            setSettingsGroup('llm');
+            setSettingsVisible(true);
+          }}
+          onClose={() => setNovelImport(null)}
+          onSave={async (
+            title,
+            text,
+            sourceUrl,
+            _play,
+            _referenceAudio,
+            bookTitle,
+          ) => {
+            if (!sourceUrl) {
+              throw new Error('请先抓取章节网页。');
+            }
+            const nextRecords = await saveWebNovelChapter(novelImport, {
+              title,
+              text,
+              sourceUrl,
+              bookTitle: bookTitle ?? '',
+            });
+            setReadingRecords(nextRecords);
+            setNovelImport(null);
+            if ('bookUrl' in novelImport) {
+              const updated = nextRecords.find(
+                item => item.book.bookUrl === novelImport.bookUrl,
+              );
+              if (
+                updated &&
+                selectedBookRef.current?.bookUrl === novelImport.bookUrl
+              ) {
+                chapterListRef.current = updated.chapterList;
+                setChapterList(updated.chapterList);
+                setSelectedBook(updated.book);
+              }
+            } else {
+              Alert.alert('导入完成', `《${bookTitle?.trim()}》已加入书架。`);
+            }
+          }}
+        />
+      )}
 
       <SettingsScreen
         canClearStorage={!isPlaying}

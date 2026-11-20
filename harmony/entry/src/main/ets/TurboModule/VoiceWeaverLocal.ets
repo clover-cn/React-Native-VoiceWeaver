@@ -221,6 +221,10 @@ export class VoiceWeaverLocal {
           }
           for (const path of paths) { this.audioExport.assertMutable(path); }
           for (const path of paths) { if (fs.accessSync(path)) { fs.unlinkSync(path); } }
+          const chapterPrefix = 'chapter-' + p.key.substring(8, 72) + '-';
+          for (const name of fs.listFileSync(this.root)) {
+            if (name.startsWith(chapterPrefix)) { fs.unlinkSync(this.path(name)); }
+          }
           const document = this.path(p.key);
           if (fs.accessSync(document)) { fs.unlinkSync(document); }
           break;

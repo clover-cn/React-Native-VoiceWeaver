@@ -1,8 +1,12 @@
-import {hasNativeStorage} from '../../base/utils/nativeCapabilities';
+import {
+  hasNativeCapability,
+  hasNativeStorage,
+} from '../../base/utils/nativeCapabilities';
 import {Book, Chapter, ListenSegment} from '../types/reader';
 import bridge from '../../base/utils/bridge';
 import {normalizePlaybackRate} from './playbackRate';
 import ListenAudioCacheController from '../controllers/ListenAudioCacheController';
+import {readDocument, writeDocument} from '../local/native';
 
 const PLAYBACK_RATE_KEY = 'novel_reader_playback_rate';
 
@@ -24,6 +28,7 @@ export const savePlaybackRate = async (rate: number): Promise<void> => {
 
 const SEARCH_HISTORY_KEY = 'novel_reader_search_history';
 const READING_RECORD_KEY = 'novel_reader_reading_record';
+const WEB_NOVEL_RECORDS = 'web-novel-shelf.json';
 const MAX_SEARCH_HISTORY = 10;
 const PREF_NAME = 'novel_reader_pref';
 
@@ -203,7 +208,7 @@ export const clearSearchHistory = async (): Promise<void> => {
   }
 };
 
-export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
+const loadLegacyReadingRecords = async (): Promise<ReadingRecord[]> => {
   const raw = isNativeStorageAvailable()
     ? await readPrefJson<unknown>(READING_RECORD_KEY, null)
     : readJson<unknown>(READING_RECORD_KEY, null);
@@ -211,9 +216,27 @@ export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
   return normalizeReadingRecords(raw);
 };
 
-export const saveReadingRecords = async (
-  records: ReadingRecord[],
-): Promise<void> => {
+const loadWebNovelRecords = () =>
+  hasNativeCapability('voiceWeaver')
+    ? readDocument<ReadingRecord[]>(WEB_NOVEL_RECORDS, [])
+    : Promise.resolve([]);
+
+const mergeReadingRecords = (legacy: ReadingRecord[], web: ReadingRecord[]) =>
+  web.length
+    ? [...legacy, ...web].sort(
+        (left, right) => right.updatedAt - left.updatedAt,
+      )
+    : legacy;
+
+export const loadReadingRecords = async (): Promise<ReadingRecord[]> => {
+  const [legacy, web] = await Promise.all([
+    loadLegacyReadingRecords(),
+    loadWebNovelRecords(),
+  ]);
+  return mergeReadingRecords(legacy, web);
+};
+
+const saveReadingRecords = async (records: ReadingRecord[]): Promise<void> => {
   const trimmed = records;
 
   if (trimmed.length === 0) {
@@ -240,18 +263,62 @@ function serializeReadingRecords<T>(work: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** 网页小说目录使用私有文件，避免章节增长触及偏好值的长度限制。 */
+export function updateWebNovelRecords(
+  update: (
+    records: ReadingRecord[],
+  ) => Promise<ReadingRecord[]> | ReadingRecord[],
+): Promise<ReadingRecord[]> {
+  return serializeReadingRecords(async () => {
+    const [legacy, current] = await Promise.all([
+      loadLegacyReadingRecords(),
+      loadWebNovelRecords(),
+    ]);
+    const next = await update(current);
+    if (next !== current) {
+      await writeDocument(WEB_NOVEL_RECORDS, next);
+    }
+    return mergeReadingRecords(legacy, next);
+  });
+}
+
 // 写入/更新一条书架记录：按 bookUrl 去重，最新访问的书籍置顶。
 export const upsertReadingRecord = async (
   record: ReadingRecord,
 ): Promise<ReadingRecord[]> => {
+  if (record.book.sourceType === 'local_web_novel') {
+    return updateWebNovelRecords(records => {
+      const current = records.find(
+        item => item.book.bookUrl === record.book.bookUrl,
+      );
+      const chapter = current?.chapterList[record.currentChapterIndex];
+      // 延迟到达的进度写入只能更新仍在书架上的书籍。
+      if (!current || !chapter) {
+        return records;
+      }
+      return [
+        {
+          ...current,
+          currentChapterIndex: chapter.index,
+          currentChapter: chapter,
+          contentRequest: {url: chapter.bookUrl, options: {method: 'LOCAL'}},
+          updatedAt: record.updatedAt,
+        },
+        ...records.filter(item => item !== current),
+      ];
+    });
+  }
   return serializeReadingRecords(async () => {
-    const current = await loadReadingRecords();
+    const [current, web] = await Promise.all([
+      loadLegacyReadingRecords(),
+      loadWebNovelRecords(),
+    ]);
     const next = [
       record,
       ...current.filter(item => item.book.bookUrl !== record.book.bookUrl),
     ];
     await saveReadingRecords(next);
-    return next;
+    return mergeReadingRecords(next, web);
   });
 };
 
@@ -260,11 +327,14 @@ export const removeReadingRecord = async (
   bookUrl: string,
 ): Promise<ReadingRecord[]> => {
   return serializeReadingRecords(async () => {
-    const current = await loadReadingRecords();
+    const [current, web] = await Promise.all([
+      loadLegacyReadingRecords(),
+      loadWebNovelRecords(),
+    ]);
     const next = current.filter(item => item.book.bookUrl !== bookUrl);
     // 上次落盘失败可能已改变原生内存缓存，重试仍须提交磁盘状态。
     await saveReadingRecords(next);
-    return next;
+    return mergeReadingRecords(next, web);
   });
 };
 

@@ -3,6 +3,7 @@ import {
   ReadingRecord,
   clearBookListeningData,
   removeReadingRecord,
+  updateWebNovelRecords,
 } from '../utils/readerStorage';
 import {buildListenProjectName} from '../utils/listenBook';
 import {
@@ -10,10 +11,7 @@ import {
   isLocalTxtBook,
 } from '../utils/localBookStorage';
 
-/** 书架条目最后删除，清理失败时保留入口以便重试。 */
-export async function deleteBookData(
-  record: ReadingRecord,
-): Promise<ReadingRecord[]> {
+async function deleteBookFiles(record: ReadingRecord): Promise<void> {
   await deleteBookProject(
     buildListenProjectName(record.book),
     async savedIndexes => {
@@ -30,5 +28,24 @@ export async function deleteBookData(
       }
     },
   );
+}
+
+/** 书架条目最后删除，清理失败时保留入口以便重试。 */
+export async function deleteBookData(
+  record: ReadingRecord,
+): Promise<ReadingRecord[]> {
+  if (record.book.sourceType === 'local_web_novel') {
+    return updateWebNovelRecords(async records => {
+      const current = records.find(
+        item => item.book.bookUrl === record.book.bookUrl,
+      );
+      if (!current) {
+        return records;
+      }
+      await deleteBookFiles(current);
+      return records.filter(item => item !== current);
+    });
+  }
+  await deleteBookFiles(record);
   return removeReadingRecord(record.book.bookUrl);
 }

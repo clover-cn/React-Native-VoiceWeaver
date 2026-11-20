@@ -148,6 +148,12 @@ final class VoiceWeaverLocal {
         if (entries != null) for (File target : entries) if (target.getName().startsWith(prefix)) targets.add(target);
         for (File target : targets) { ChapterAudioExport.assertMutable(target); if (AudioPlaybackService.usesFile(target)) throw new IOException("音频正在播放，请先停止播放"); }
         for (File target : targets) if (target.exists() && !target.delete()) throw new IOException("清理书籍音频失败");
+        String chapterPrefix = "chapter-" + key.substring(8, 72) + "-";
+        if (entries != null) for (File target : entries) {
+          if (target.getName().startsWith(chapterPrefix) && target.exists() && !target.delete()) {
+            throw new IOException("清理书籍正文失败");
+          }
+        }
         File document = file(key);
         if (document.exists() && !document.delete()) throw new IOException("清理书籍资料失败");
         return JSONObject.NULL;

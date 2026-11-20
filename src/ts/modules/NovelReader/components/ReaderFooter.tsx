@@ -27,6 +27,7 @@ interface ReaderFooterProps {
   onPrevChapter: () => void;
   onNextChapter: () => void;
   onMenuItemClick?: (itemIdentifier: string) => void;
+  canAppendChapters?: boolean;
   loadingMenuItemId?: string | null;
   /** 点击展开当前章节演播生成的详细进度面板 */
   onOpenPreparation?: () => void;
@@ -41,6 +42,7 @@ const MENU_ITEMS: ReadonlyArray<{label: string; id: string}> = [
   {label: '翻页模式', id: 'flip'},
   {label: '书籍详情', id: 'info'},
 ];
+const APPEND_CHAPTER_ITEM = {label: '追加章节', id: 'append_chapter'};
 
 /** 1. 下载语音：精致单色下载箭头与托盘 */
 const DownloadAudioIcon = memo(() => (
@@ -102,6 +104,7 @@ const renderMenuIcon = (id: string) => {
     case 'sleep':
       return <SleepTimerIcon />;
     case 'source':
+    case 'append_chapter':
       return <SourceGlobeIcon />;
     case 'flip':
       return <FlipBookIcon />;
@@ -212,6 +215,7 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
   onPrevChapter,
   onNextChapter,
   onMenuItemClick,
+  canAppendChapters,
   loadingMenuItemId,
   onOpenPreparation,
 }) => {
@@ -221,6 +225,11 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
     },
     [onMenuItemClick],
   );
+  const menuItems = canAppendChapters
+    ? MENU_ITEMS.map(item =>
+        item.id === 'source' ? APPEND_CHAPTER_ITEM : item,
+      )
+    : MENU_ITEMS;
 
   const renderListenControl = () => {
     switch (listenState) {
@@ -322,19 +331,21 @@ const ReaderFooter: React.FC<ReaderFooterProps> = ({
 
         {/* 快捷功能网格 */}
         <View style={styles.gridContainer}>
-          {MENU_ITEMS.filter(
-            item =>
-              showChapterControls ||
-              (item.id !== 'download' && item.id !== 'regenerate'),
-          ).map(item => (
-            <FooterMenuItem
-              key={item.id}
-              id={item.id}
-              label={item.label}
-              isLoading={loadingMenuItemId === item.id}
-              onPress={handleMenuPress}
-            />
-          ))}
+          {menuItems
+            .filter(
+              item =>
+                showChapterControls ||
+                (item.id !== 'download' && item.id !== 'regenerate'),
+            )
+            .map(item => (
+              <FooterMenuItem
+                key={item.id}
+                id={item.id}
+                label={item.label}
+                isLoading={loadingMenuItemId === item.id}
+                onPress={handleMenuPress}
+              />
+            ))}
         </View>
 
         {/* 底部换章操作 */}

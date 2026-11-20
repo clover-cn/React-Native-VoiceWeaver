@@ -72,6 +72,7 @@ interface NovelReaderProps {
   onPlaySegment: (index: number) => void;
   onSelectChapter: (index: number) => void;
   onMenuItemClick: (id: string) => void;
+  canAppendChapters?: boolean;
   loadingMenuItemId?: string | null;
   /** 点击展开当前章节演播生成的详细进度面板 */
   onOpenPreparation?: () => void;
@@ -661,6 +662,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
   onPlaySegment,
   onSelectChapter,
   onMenuItemClick,
+  canAppendChapters,
   loadingMenuItemId,
   onOpenPreparation,
 }) => {
@@ -1009,6 +1011,7 @@ const NovelReader: React.FC<NovelReaderProps> = ({
             onPrevChapter={onPrevChapter}
             onNextChapter={onNextChapter}
             onMenuItemClick={onMenuItemClick}
+            canAppendChapters={canAppendChapters}
             loadingMenuItemId={loadingMenuItemId}
             onOpenPreparation={onOpenPreparation}
           />
