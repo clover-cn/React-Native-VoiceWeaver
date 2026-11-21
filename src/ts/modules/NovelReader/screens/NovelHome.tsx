@@ -174,7 +174,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
         </View>
 
         {/* 2. 声学搜索栏 */}
-        <TouchableOpacity
+        {/* <TouchableOpacity
           style={styles.searchBar}
           onPress={onNavigateSearch}
           activeOpacity={0.85}>
@@ -182,7 +182,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
           <Text style={styles.searchPlaceholder}>
             搜索你想听的小说、角色或作者…
           </Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         {/* 3. 【听书特色】正在收听焦点黑胶/立体卡片 (Hero Playing Card) */}
         {heroRecord && (
@@ -525,8 +525,8 @@ const NovelHome: React.FC<NovelHomeProps> = ({
               </View>
               <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
-            <View style={styles.menuDivider} />
-            <TouchableOpacity
+            {/* <View style={styles.menuDivider} /> */}
+            {/* <TouchableOpacity
               style={styles.menuRow}
               activeOpacity={0.72}
               onPress={() => {
@@ -543,7 +543,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
                 <Text style={styles.menuItemSub}>管理与测试网络小说书源</Text>
               </View>
               <Text style={styles.menuChevron}>›</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </Animated.View>
         ) : null}
 
