@@ -42,7 +42,7 @@ export const getBookProgressMeta = (
   if (isLastListened) {
     badgeText = '上次收听';
   } else if (isFinished) {
-    badgeText = '✓ 已听完';
+    badgeText = '已听完';
   } else if (totalChapters > 0) {
     badgeText = `已听 ${percent}%`;
   }
