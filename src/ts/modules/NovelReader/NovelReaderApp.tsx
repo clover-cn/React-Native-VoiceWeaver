@@ -31,6 +31,8 @@ import VideoPlayerController from './controllers/VideoPlayerController';
 import VideoSessionController from './controllers/VideoSessionController';
 import {useListenBook} from './hooks/useListenBook';
 import NovelHome from './screens/NovelHome';
+import NovelBookshelf from './screens/NovelBookshelf';
+import {BOOKSHELF_BANNER_TOP_BG} from './components/BookshelfShared';
 import NovelReader, {ReaderLoadingState} from './screens/NovelReader';
 import {
   ActiveSegContext,
@@ -89,7 +91,7 @@ import {
   readLocalTxtBookContent,
 } from './utils/localBookStorage';
 
-export type ViewState = 'home' | 'search' | 'reader';
+export type ViewState = 'home' | 'bookshelf' | 'search' | 'reader';
 type ReaderReturnViewState = Exclude<ViewState, 'reader'>;
 type NovelImportSession =
   | {newBookId: string}
@@ -1852,7 +1854,7 @@ const NovelReaderApp: React.FC = () => {
         return true;
       }
 
-      if (viewState === 'search') {
+      if (viewState === 'search' || viewState === 'bookshelf') {
         setViewState('home');
         return true;
       }
@@ -2664,7 +2666,7 @@ const NovelReaderApp: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      {/* 安卓状态栏跟随当前页面顶部底色，首页与深色横幅衔接，其余页面保留浅色底。 */}
+      {/* 安卓状态栏跟随当前页面顶部底色，首页与全部书籍页衔接深色横幅，其余页面保留浅色底。 */}
       {Platform.OS === 'android' && (
         <StatusBar
           backgroundColor={
@@ -2672,9 +2674,15 @@ const NovelReaderApp: React.FC = () => {
               ? '#F4F1E8'
               : viewState === 'home'
               ? '#21234A'
+              : viewState === 'bookshelf'
+              ? BOOKSHELF_BANNER_TOP_BG
               : '#F8F6F0'
           }
-          barStyle={viewState === 'home' ? 'light-content' : 'dark-content'}
+          barStyle={
+            viewState === 'home' || viewState === 'bookshelf'
+              ? 'light-content'
+              : 'dark-content'
+          }
           translucent={false}
         />
       )}
@@ -2690,9 +2698,20 @@ const NovelReaderApp: React.FC = () => {
             setSettingsVisible(true);
           }}
           onOpenAudioLibrary={() => setAudioLibraryVisible(true)}
+          onOpenBookshelf={() => setViewState('bookshelf')}
           onManageBookSources={handleOpenBookSourceManager}
           isImporting={isImportingBook || isDeletingBook}
           readingRecords={readingRecords}
+          onResumeReading={handleResumeReading}
+          onRemoveRecord={handleRemoveReadingRecord}
+        />
+      )}
+
+      {viewState === 'bookshelf' && (
+        <NovelBookshelf
+          readingRecords={readingRecords}
+          isBusy={isImportingBook || isDeletingBook}
+          onBack={() => setViewState('home')}
           onResumeReading={handleResumeReading}
           onRemoveRecord={handleRemoveReadingRecord}
         />

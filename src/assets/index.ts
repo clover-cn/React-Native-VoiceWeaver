@@ -22,6 +22,8 @@ export const AppImages = {
   homeBanner: require('./Image/index_banner.png'),
   // 从横幅底部延伸到书架背景的暖粉渐变
   homeBannerFade: require('./Image/index_banner_fade.png'),
+  // 全部书籍页面顶部视觉横幅背景图
+  booksBanner: require('./Image/books_banner.png'),
 };
 
 export default AppImages;

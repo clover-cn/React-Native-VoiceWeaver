@@ -1,4 +1,4 @@
-import React, {memo, useEffect, useRef, useState} from 'react';
+import React, {memo, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -9,7 +9,6 @@ import {
   SafeAreaView,
   Platform,
   Image,
-  Alert,
   ScrollView,
   StatusBar,
   useWindowDimensions,
@@ -18,6 +17,20 @@ import {ReadingRecord} from '../utils/readerStorage';
 import {useDebug} from '../debug';
 import {AppImages} from '../../../../assets';
 import bridge from '../../base/utils/bridge';
+import {
+  BOOKSHELF_ACCENT_PURPLE,
+  BookshelfFilterPills,
+  BookshelfGridCard,
+  BookshelfListCard,
+  BookshelfViewToggle,
+} from '../components/BookshelfShared';
+import {
+  BookshelfFilterTab,
+  BookshelfViewMode,
+  confirmRemoveBookRecord,
+  filterBookshelfRecords,
+  getBookshelfTabCounts,
+} from '../utils/bookshelfUtils';
 
 /** 首页顶部横幅延展底色（与 index_banner.png 顶部深紫蓝衔接） */
 const HOME_BANNER_TOP_BG = '#21234A';
@@ -62,11 +75,16 @@ interface NovelHomeProps {
   onManageBookSources: () => void;
   onOpenSettings: () => void;
   onOpenAudioLibrary?: () => void;
+  onOpenBookshelf?: () => void;
   isImporting?: boolean;
   readingRecords: ReadingRecord[];
   onResumeReading: (record: ReadingRecord) => void;
   onRemoveRecord: (bookUrl: string) => void;
 }
+
+const SHELF_PADDING = 22;
+const SHELF_GRID_GAP = 10;
+const HOME_GRID_MAX_BOOKS = 7;
 
 const NovelHome: React.FC<NovelHomeProps> = ({
   onNavigateSearch,
@@ -75,6 +93,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   onManageBookSources,
   onOpenSettings,
   onOpenAudioLibrary,
+  onOpenBookshelf,
   isImporting = false,
   readingRecords,
   onResumeReading,
@@ -92,6 +111,9 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   const topInset = Number.isFinite(nativeTop) ? Math.max(0, nativeTop) : 0;
 
   const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
+  const [shelfFilter, setShelfFilter] = useState<BookshelfFilterTab>('all');
+  const [shelfViewMode, setShelfViewMode] = useState<BookshelfViewMode>('grid');
+  const [isManagingShelf, setIsManagingShelf] = useState(false);
   // 悬浮菜单展开与微回弹缩放动画
   const menuAnim = useRef(new Animated.Value(0)).current;
 
@@ -118,20 +140,24 @@ const NovelHome: React.FC<NovelHomeProps> = ({
     }
   }, [isImporting]);
 
-  const handleLongPress = (record: ReadingRecord) => {
-    Alert.alert(
-      '删除书籍及本地数据',
-      `确定删除《${record.book.name}》吗？将清理该书的正文、阅读与听书进度、角色绑定及生成音频，本地导入的 TXT 也会删除。共享音色和 API 配置保留。`,
-      [
-        {text: '取消', style: 'cancel'},
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: () => onRemoveRecord(record.book.bookUrl),
-        },
-      ],
-    );
-  };
+  const tabCounts = useMemo(
+    () => getBookshelfTabCounts(readingRecords),
+    [readingRecords],
+  );
+  const filteredShelfRecords = useMemo(
+    () => filterBookshelfRecords(readingRecords, shelfFilter),
+    [readingRecords, shelfFilter],
+  );
+  const previewGridRecords = useMemo(
+    () => filteredShelfRecords.slice(0, HOME_GRID_MAX_BOOKS),
+    [filteredShelfRecords],
+  );
+  const lastListenedUrl =
+    readingRecords.length > 0 ? readingRecords[0].book.bookUrl : null;
+  const gridCardWidth = Math.floor(
+    (windowWidth - SHELF_PADDING * 2 - SHELF_GRID_GAP * 3) / 4,
+  );
+  const gridCardCoverHeight = Math.round(gridCardWidth * 1.18);
 
   // 最近收听/阅读的焦点书籍（排在第一本）
   const heroRecord = readingRecords.length > 0 ? readingRecords[0] : null;
@@ -285,113 +311,121 @@ const NovelHome: React.FC<NovelHomeProps> = ({
           </View>
         )}
 
-        {/* 4. 我的有声书架 */}
+        {/* 4. 我的书架 */}
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionTitle}>我的有声书架</Text>
-            {readingRecords.length > 0 && (
-              <View style={styles.countBadge}>
-                <Text style={styles.countBadgeText}>
-                  {readingRecords.length} 本在读
-                </Text>
-              </View>
-            )}
+            <Text style={styles.sectionTitle}>我的书架</Text>
+            <Text style={styles.sectionCountText}>
+              共 {readingRecords.length} 本
+            </Text>
           </View>
+          {readingRecords.length > 0 && (
+            <View style={styles.sectionActionsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.manageBtn,
+                  isManagingShelf && styles.manageBtnActive,
+                ]}
+                onPress={() => setIsManagingShelf(prev => !prev)}
+                activeOpacity={0.75}>
+                <Text
+                  style={[
+                    styles.manageBtnText,
+                    isManagingShelf && styles.manageBtnTextActive,
+                  ]}>
+                  {isManagingShelf ? '完成' : '管理'}
+                </Text>
+              </TouchableOpacity>
+              <BookshelfViewToggle
+                viewMode={shelfViewMode}
+                onChangeViewMode={setShelfViewMode}
+              />
+            </View>
+          )}
         </View>
 
         {readingRecords.length > 0 ? (
-          readingRecords.map(record => {
-            const book = record.book;
-            const chapter = record.currentChapter;
-            const isLocal = book.sourceType === 'local_txt';
-            return (
-              <TouchableOpacity
-                key={book.bookUrl}
-                disabled={isImporting}
-                style={styles.bookCard}
-                onPress={() => onResumeReading(record)}
-                onLongPress={() => handleLongPress(record)}
-                delayLongPress={400}
-                activeOpacity={0.82}>
-                {/* 立体质感书封 */}
-                {book.coverUrl ? (
-                  <View style={styles.coverWrapper}>
-                    <Image
-                      source={{uri: book.coverUrl}}
-                      style={styles.coverImage}
-                      resizeMode="cover"
+          <>
+            <View style={styles.shelfFilterWrap}>
+              <BookshelfFilterPills
+                activeFilter={shelfFilter}
+                onChangeFilter={setShelfFilter}
+                counts={tabCounts}
+              />
+            </View>
+
+            {shelfViewMode === 'grid' ? (
+              <View style={styles.shelfGrid}>
+                {previewGridRecords.map(record => (
+                  <BookshelfGridCard
+                    key={record.book.bookUrl}
+                    record={record}
+                    width={gridCardWidth}
+                    isLastListened={record.book.bookUrl === lastListenedUrl}
+                    isManaging={isManagingShelf}
+                    disabled={isImporting}
+                    subtitleMode="chapter"
+                    onPress={onResumeReading}
+                    onLongPress={item =>
+                      confirmRemoveBookRecord(item, onRemoveRecord)
+                    }
+                  />
+                ))}
+                {/* 查看全部入口卡片 */}
+                {onOpenBookshelf && (
+                  <TouchableOpacity
+                    style={[
+                      styles.viewAllCard,
+                      {width: gridCardWidth, height: gridCardCoverHeight},
+                    ]}
+                    onPress={onOpenBookshelf}
+                    activeOpacity={0.82}
+                    accessibilityRole="button"
+                    accessibilityLabel="查看全部书籍">
+                    <Text style={styles.viewAllPlus}>＋</Text>
+                    <Text style={styles.viewAllTitle}>查看全部</Text>
+                    <Text style={styles.viewAllCount}>
+                      {readingRecords.length} 本 ›
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <View style={styles.shelfListWrap}>
+                {filteredShelfRecords.length > 0 ? (
+                  filteredShelfRecords.map(record => (
+                    <BookshelfListCard
+                      key={record.book.bookUrl}
+                      record={record}
+                      isLastListened={record.book.bookUrl === lastListenedUrl}
+                      isManaging={isManagingShelf}
+                      disabled={isImporting}
+                      onPress={onResumeReading}
+                      onLongPress={item =>
+                        confirmRemoveBookRecord(item, onRemoveRecord)
+                      }
                     />
-                    <View style={styles.coverSpine} />
-                  </View>
+                  ))
                 ) : (
-                  <View style={[styles.coverWrapper, styles.coverPlaceholder]}>
-                    <Image source={AppImages.defaultCover} style={styles.coverImage} resizeMode="cover" />
-                    <View style={styles.coverSpine} />
+                  <View style={styles.emptyFilterCard}>
+                    <Text style={styles.emptyFilterText}>
+                      当前分类暂无书籍
+                    </Text>
                   </View>
                 )}
-
-                {/* 书籍信息与听书元数据 */}
-                <View style={styles.bookInfo}>
-                  <View style={styles.bookHeaderRow}>
-                    <Text style={styles.bookTitle} numberOfLines={1}>
-                      {book.name}
+                {onOpenBookshelf && (
+                  <TouchableOpacity
+                    style={styles.listViewAllBtn}
+                    onPress={onOpenBookshelf}
+                    activeOpacity={0.8}>
+                    <Text style={styles.listViewAllText}>
+                      查看全部 {readingRecords.length} 本书籍 ›
                     </Text>
-                    <View
-                      style={[
-                        styles.sourceTag,
-                        isLocal
-                          ? styles.sourceTagLocal
-                          : styles.sourceTagOnline,
-                      ]}>
-                      <Text
-                        style={[
-                          styles.sourceTagText,
-                          isLocal
-                            ? styles.sourceTagTextLocal
-                            : styles.sourceTagTextOnline,
-                        ]}>
-                        {book.contentType === 'article'
-                          ? '文章快照'
-                          : isLocal
-                          ? '本地 TXT'
-                          : book.sourceType === 'local_web_novel'
-                          ? '网页导入'
-                          : '网络源'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.bookAuthor}>
-                    {book.author || '未知作者'}
-                  </Text>
-
-                  <Text style={styles.bookIntro} numberOfLines={1}>
-                    {chapter?.title
-                      ? `上次听至: ${chapter.title}`
-                      : book.intro || '准备开启聆听'}
-                  </Text>
-
-                  {/* 替换原先难看生硬的技术URL，注入听书专属属性 */}
-                  <View style={styles.recordMetaRow}>
-                    <View style={styles.audioFeatBadge}>
-                      <Text style={styles.audioFeatText}>
-                        {book.contentType === 'article' ? '原文单音色朗读' : isLocal ? '支持离线演播' : '多角色配音演播'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* 卡片右侧快捷播放圆形按钮 */}
-                <View style={styles.quickPlayBtn}>
-                  <Image
-                    source={AppImages.play}
-                    style={styles.quickPlayIcon}
-                    resizeMode="contain"
-                  />
-                </View>
-              </TouchableOpacity>
-            );
-          })
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </>
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyIcon}>📚</Text>
@@ -832,162 +866,119 @@ const styles = StyleSheet.create({
     height: 40,
   },
 
-  // 4. 我的有声书架
+  // 4. 我的书架
   sectionHeader: {
-    paddingHorizontal: 22,
-    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SHELF_PADDING,
+    marginBottom: 12,
   },
   sectionTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
   },
   sectionTitle: {
     fontSize: 19,
     fontWeight: '800',
-    color: '#1C1917',
+    color: '#241B29',
     letterSpacing: -0.3,
   },
-  countBadge: {
+  sectionCountText: {
     marginLeft: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: '#7D6E78',
+  },
+  sectionActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  manageBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 10,
-    backgroundColor: 'rgba(217, 119, 6, 0.1)',
-  },
-  countBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#B45309',
-  },
-  bookCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    marginHorizontal: 22,
-    marginBottom: 14,
+    backgroundColor: '#F3ECEE',
     borderWidth: 1,
-    borderColor: '#EFECE6',
-    shadowColor: '#1C1917',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderColor: '#E8DDE1',
   },
-  coverWrapper: {
-    width: 60,
-    height: 80,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#E7E5E4',
-    marginRight: 14,
-    position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
+  manageBtnActive: {
+    backgroundColor: BOOKSHELF_ACCENT_PURPLE,
+    borderColor: BOOKSHELF_ACCENT_PURPLE,
   },
-  coverImage: {
-    width: '100%',
-    height: '100%',
-  },
-  coverPlaceholder: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#E7E5E4',
-  },
-  coverSpine: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 2.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  coverText: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#A8A29E',
-  },
-  bookInfo: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  bookHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 3,
-  },
-  bookTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1C1917',
-    flex: 1,
-    marginRight: 8,
-  },
-  sourceTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 5,
-  },
-  sourceTagLocal: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-  },
-  sourceTagOnline: {
-    backgroundColor: 'rgba(217, 119, 6, 0.1)',
-  },
-  sourceTagText: {
-    fontSize: 10,
+  manageBtnText: {
+    fontSize: 12,
     fontWeight: '600',
+    color: '#4E414C',
   },
-  sourceTagTextLocal: {
-    color: '#065F46',
+  manageBtnTextActive: {
+    color: '#FFFFFF',
   },
-  sourceTagTextOnline: {
-    color: '#B45309',
+  shelfFilterWrap: {
+    paddingHorizontal: SHELF_PADDING,
+    marginBottom: 14,
   },
-  bookAuthor: {
-    fontSize: 12,
-    color: '#78716C',
-    marginBottom: 4,
+  shelfGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: SHELF_PADDING,
+    gap: SHELF_GRID_GAP,
   },
-  bookIntro: {
-    fontSize: 12,
-    color: '#44403C',
-    lineHeight: 16,
+  viewAllCard: {
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.78)',
+    borderWidth: 1,
+    borderColor: '#E4D8DD',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  viewAllPlus: {
+    fontSize: 22,
+    fontWeight: '400',
+    color: '#4E414C',
     marginBottom: 6,
   },
-  recordMetaRow: {
-    flexDirection: 'row',
+  viewAllTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#241B29',
+  },
+  viewAllCount: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#7D6E78',
+  },
+  shelfListWrap: {
+    paddingHorizontal: SHELF_PADDING,
+  },
+  emptyFilterCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderRadius: 14,
+    paddingVertical: 24,
     alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#EAE0E3',
   },
-  audioFeatBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF5ED',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 6,
-    borderWidth: 0.5,
-    borderColor: '#EFE8DE',
+  emptyFilterText: {
+    fontSize: 13,
+    color: '#7D6E78',
   },
-  audioFeatText: {
-    fontSize: 10,
-    color: '#8A5D3B',
-    fontWeight: '600',
-  },
-  quickPlayBtn: {
-    width: 30,
-    height: 30,
+  listViewAllBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 8,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderWidth: 1,
+    borderColor: '#E8DDE1',
   },
-  quickPlayIcon: {
-    width: 28,
-    height: 28,
+  listViewAllText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: BOOKSHELF_ACCENT_PURPLE,
   },
   emptyCard: {
     marginHorizontal: 22,
