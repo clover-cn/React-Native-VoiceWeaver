@@ -146,6 +146,8 @@ const NovelHome: React.FC<NovelHomeProps> = ({
       )}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        bounces={false}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* 1. 顶部视觉横幅背景区（连续点击 3 下触发调试模式） */}
         <TouchableOpacity
