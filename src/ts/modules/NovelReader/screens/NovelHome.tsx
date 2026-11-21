@@ -135,6 +135,8 @@ const NovelHome: React.FC<NovelHomeProps> = ({
 
   // 最近收听/阅读的焦点书籍（排在第一本）
   const heroRecord = readingRecords.length > 0 ? readingRecords[0] : null;
+  // 卡片只覆盖横幅底部渐变的一小段，给图内文案留出空间。
+  const heroBannerOverlap = Math.min(12, bannerFadeHeight * 0.2);
 
   return (
     <View style={styles.container}>
@@ -153,6 +155,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
         <TouchableOpacity
           style={[
             styles.bannerContainer,
+            !heroRecord && styles.bannerWithoutHero,
             topInset > 0 && {paddingTop: topInset},
           ]}
           onPress={() => debugCtx.registerTap()}
@@ -195,7 +198,7 @@ const NovelHome: React.FC<NovelHomeProps> = ({
 
         {/* 3. 【听书特色】正在收听焦点黑胶/立体卡片 (Hero Playing Card) */}
         {heroRecord && (
-          <View style={styles.heroSection}>
+          <View style={[styles.heroSection, {marginTop: -heroBannerOverlap}]}>
             <TouchableOpacity
               style={styles.heroCard}
               disabled={isImporting}
@@ -612,8 +615,10 @@ const styles = StyleSheet.create({
   bannerContainer: {
     width: '100%',
     backgroundColor: HOME_BANNER_TOP_BG,
-    marginBottom: 8,
     overflow: 'hidden',
+  },
+  bannerWithoutHero: {
+    marginBottom: 8,
   },
   bannerFadeOverlay: {
     position: 'absolute',
@@ -653,6 +658,7 @@ const styles = StyleSheet.create({
   heroSection: {
     marginHorizontal: 22,
     marginBottom: 24,
+    zIndex: 1,
   },
   heroCard: {
     backgroundColor: '#26201B', // 质感深胡桃焦糖木色
