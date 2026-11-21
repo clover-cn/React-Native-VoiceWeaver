@@ -2664,11 +2664,17 @@ const NovelReaderApp: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      {/* 安卓状态栏跟随当前页面底色，保留系统占位以避免遮挡顶部内容。 */}
+      {/* 安卓状态栏跟随当前页面顶部底色，首页与深色横幅衔接，其余页面保留浅色底。 */}
       {Platform.OS === 'android' && (
         <StatusBar
-          backgroundColor={viewState === 'reader' ? '#F4F1E8' : '#F8F6F0'}
-          barStyle="dark-content"
+          backgroundColor={
+            viewState === 'reader'
+              ? '#F4F1E8'
+              : viewState === 'home'
+              ? '#21234A'
+              : '#F8F6F0'
+          }
+          barStyle={viewState === 'home' ? 'light-content' : 'dark-content'}
           translucent={false}
         />
       )}

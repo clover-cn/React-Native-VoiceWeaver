@@ -1,4 +1,4 @@
-import React, {memo, useEffect, useMemo, useRef, useState} from 'react';
+import React, {memo, useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -11,10 +11,22 @@ import {
   Image,
   Alert,
   ScrollView,
+  StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import {ReadingRecord} from '../utils/readerStorage';
 import {useDebug} from '../debug';
 import {AppImages} from '../../../../assets';
+import bridge from '../../base/utils/bridge';
+
+/** 首页顶部横幅延展底色（与 index_banner.png 顶部深紫蓝衔接） */
+const HOME_BANNER_TOP_BG = '#21234A';
+/** 首页整体背景色（与横幅底部暖粉紫氛围自然过渡） */
+const HOME_PAGE_BG = '#F7EFED';
+const homeBannerSource = Image.resolveAssetSource(AppImages.homeBanner);
+const HOME_BANNER_ASPECT_RATIO = homeBannerSource.width / homeBannerSource.height;
+/** 渐变图在 40% 处转为不透明暖粉色，与横幅底边对齐。 */
+const BANNER_FADE_OVERLAP = 0.4;
 
 /** 音色库：4 柱单色琥珀音频律动波形 */
 const VoiceWaveIcon = memo(() => (
@@ -56,39 +68,6 @@ interface NovelHomeProps {
   onRemoveRecord: (bookUrl: string) => void;
 }
 
-/**
- * 获取当前时段有声文学问候语
- */
-const getTimeGreeting = (): {greeting: string; subGreeting: string} => {
-  const hour = new Date().getHours();
-  if (hour >= 5 && hour < 11) {
-    return {
-      greeting: '晨光正好，伴声启程',
-      subGreeting: '新的一天，选一段动人章节唤醒思绪',
-    };
-  } else if (hour >= 11 && hour < 14) {
-    return {
-      greeting: '中午好，享受闲暇',
-      subGreeting: '午间小憩，让温暖的声音陪你放松片刻',
-    };
-  } else if (hour >= 14 && hour < 18) {
-    return {
-      greeting: '午后静好，声旅人',
-      subGreeting: '沏一杯茶，听一段引人入胜的故事',
-    };
-  } else if (hour >= 18 && hour < 23) {
-    return {
-      greeting: '晚风轻拂，静心聆听',
-      subGreeting: '卸下一天的疲惫，走进属于你的声境天地',
-    };
-  } else {
-    return {
-      greeting: '夜幕低垂，声枕入梦',
-      subGreeting: '夜深了，让温柔的故事伴你入眠',
-    };
-  }
-};
-
 const NovelHome: React.FC<NovelHomeProps> = ({
   onNavigateSearch,
   onImportBook,
@@ -102,6 +81,16 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   onRemoveRecord,
 }) => {
   const debugCtx = useDebug();
+  // 显式计算横幅高度，避免图片在滚动容器中按资源原始高度布局。
+  const {width: windowWidth} = useWindowDimensions();
+  const bannerHeight = windowWidth / HOME_BANNER_ASPECT_RATIO;
+  const bannerFadeHeight = Math.min(72, bannerHeight * 0.46);
+  const nativeTop =
+    Platform.OS !== 'android' && Platform.OS !== 'ios'
+      ? Number(bridge.getOhASData('topRectHeight', 0))
+      : 0;
+  const topInset = Number.isFinite(nativeTop) ? Math.max(0, nativeTop) : 0;
+
   const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
   // 悬浮菜单展开与微回弹缩放动画
   const menuAnim = useRef(new Animated.Value(0)).current;
@@ -122,9 +111,6 @@ const NovelHome: React.FC<NovelHomeProps> = ({
       }).start();
     }
   }, [isFloatingMenuOpen, menuAnim]);
-
-  // 时段问候语
-  const {greeting, subGreeting} = useMemo(() => getTimeGreeting(), []);
 
   useEffect(() => {
     if (isImporting) {
@@ -151,26 +137,47 @@ const NovelHome: React.FC<NovelHomeProps> = ({
   const heroRecord = readingRecords.length > 0 ? readingRecords[0] : null;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      {Platform.OS === 'ios' && (
+        <>
+          <StatusBar barStyle="light-content" />
+          <SafeAreaView style={styles.iosTopSafeArea} />
+        </>
+      )}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {/* 1. 顶部情境化声学问候区 */}
-        <View style={styles.header}>
-          <View style={styles.headerTitleWrap}>
-            <View style={styles.tagRow}>
-              <Text style={styles.brandTag}>VOICEWEAVER · 织音</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => debugCtx.registerTap()}
-              activeOpacity={0.9}>
-              <Text style={styles.greeting}>{greeting}</Text>
-            </TouchableOpacity>
-            <Text style={styles.subGreeting}>{subGreeting}</Text>
-          </View>
-          <View style={styles.headphoneIconWrap}>
-            <Text style={styles.headphoneIcon}>🎧</Text>
-          </View>
+        {/* 1. 顶部视觉横幅背景区（连续点击 3 下触发调试模式） */}
+        <TouchableOpacity
+          style={[
+            styles.bannerContainer,
+            topInset > 0 && {paddingTop: topInset},
+          ]}
+          onPress={() => debugCtx.registerTap()}
+          activeOpacity={1}
+          accessibilityRole="button"
+          accessibilityLabel="VoiceWeaver 织音顶部横幅">
+          <Image
+            source={AppImages.homeBanner}
+            style={{width: windowWidth, height: bannerHeight}}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
+        {/* 渐变跨过横幅底边，延伸到收听卡片背后。 */}
+        <View
+          style={[
+            styles.bannerFadeOverlay,
+            {
+              top: topInset + bannerHeight - bannerFadeHeight * BANNER_FADE_OVERLAP,
+            },
+          ]}
+          pointerEvents="none"
+          accessible={false}>
+          <Image
+            source={AppImages.homeBannerFade}
+            style={{width: windowWidth, height: bannerFadeHeight}}
+            resizeMode="stretch"
+          />
         </View>
 
         {/* 2. 声学搜索栏 */}
@@ -583,72 +590,32 @@ const NovelHome: React.FC<NovelHomeProps> = ({
           </View>
         </View>
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F6F0', // 温润宣纸暖白底色，营造书香氛围
+    backgroundColor: HOME_PAGE_BG, // 与顶部横幅暖粉紫氛围衔接的浅粉米白底色
+  },
+  iosTopSafeArea: {
+    flex: 0,
+    backgroundColor: HOME_BANNER_TOP_BG,
   },
   scrollContent: {
     paddingBottom: 120,
   },
-  // 1. 顶部情境化声学问候区
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 22,
-    paddingTop: Platform.OS === 'ios' ? 14 : 26,
-    paddingBottom: 16,
+  // 1. 顶部视觉横幅背景区
+  bannerContainer: {
+    width: '100%',
+    backgroundColor: HOME_BANNER_TOP_BG,
+    marginBottom: 8,
+    overflow: 'hidden',
   },
-  headerTitleWrap: {
-    flex: 1,
-  },
-  tagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  brandTag: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#B45309',
-    letterSpacing: 1.2,
-    marginRight: 8,
-  },
-  greeting: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#1C1917',
-    letterSpacing: -0.5,
-  },
-  subGreeting: {
-    fontSize: 13,
-    color: '#78716C',
-    marginTop: 4,
-    lineHeight: 18,
-  },
-  headphoneIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E7E5E4',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-    marginLeft: 12,
-  },
-  headphoneIcon: {
-    fontSize: 20,
+  bannerFadeOverlay: {
+    position: 'absolute',
+    left: 0,
   },
 
   // 2. 声学搜索栏
@@ -1218,7 +1185,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
-    backgroundColor: 'rgba(248, 246, 240, 0.85)',
+    backgroundColor: 'rgba(247, 239, 237, 0.86)',
   },
   importingPanel: {
     minWidth: 200,

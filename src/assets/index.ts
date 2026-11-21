@@ -18,6 +18,10 @@ export const AppImages = {
   searchIcon: require('./icons/search_icon.png'),
   refreshWhiteIcon: require('./icons/refresh_white_icon.png'),
   menuIcon: require('./icons/menu_icon.png'),
+  // 首页顶部视觉横幅背景图
+  homeBanner: require('./Image/index_banner.png'),
+  // 从横幅底部延伸到书架背景的暖粉渐变
+  homeBannerFade: require('./Image/index_banner_fade.png'),
 };
 
 export default AppImages;
